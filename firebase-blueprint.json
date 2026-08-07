@@ -1,0 +1,210 @@
+{
+  "entities": {
+    "Student": {
+      "title": "Student",
+      "description": "Student profile registration and course state",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "location": { "type": "string" },
+        "llStatus": { "type": "string", "enum": ["Applied", "Approved", "Driving Test", "Licence Approved"] },
+        "referralCode": { "type": "string" },
+        "joinedDate": { "type": "string" },
+        "courseName": { "type": "string" },
+        "courseNotes": { "type": "string" },
+        "courseSyllabus": { "type": "array" },
+        "password": { "type": "string" },
+        "proposedCourseName": { "type": "string" },
+        "proposedCourseNotes": { "type": "string" },
+        "proposedCourseSyllabus": { "type": "array" },
+        "proposedCourseFee": { "type": "number" },
+        "modificationStatus": { "type": "string", "enum": ["none", "proposed", "paid_pending_approval", "rejected"] },
+        "emailVerified": { "type": "boolean" }
+      },
+      "required": ["id", "name", "phone", "email"]
+    },
+    "EmailVerificationToken": {
+      "title": "EmailVerificationToken",
+      "description": "Secure time-limited tokens for student email validation",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "token": { "type": "string" },
+        "expiresAt": { "type": "number" },
+        "used": { "type": "boolean" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["email", "token", "expiresAt", "used"]
+    },
+    "Trainer": {
+      "title": "Trainer",
+      "description": "Driving coach details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "rating": { "type": "number" },
+        "reviewsCount": { "type": "number" },
+        "photoUrl": { "type": "string" },
+        "carName": { "type": "string" },
+        "carPlate": { "type": "string" },
+        "carPhotoUrl": { "type": "string" },
+        "isAvailable": { "type": "boolean" },
+        "password": { "type": "string" }
+      },
+      "required": ["id", "name", "phone"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Driving lesson bookings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "trainerId": { "type": "string" },
+        "trainerName": { "type": "string" },
+        "carName": { "type": "string" },
+        "carPlate": { "type": "string" },
+        "date": { "type": "string" },
+        "timeSlot": { "type": "string" },
+        "location": { "type": "string" },
+        "status": { "type": "string", "enum": ["upcoming", "completed", "cancelled", "rescheduled"] },
+        "ratingGiven": { "type": "number" },
+        "remarks": { "type": "string" },
+        "pickupStatus": { "type": "string", "enum": ["idle", "en_route", "picked_up"] },
+        "faceVerificationStatus": { "type": "string", "enum": ["pending", "verified", "failed"] },
+        "faceVerificationAttempts": { "type": "number" },
+        "classStatus": { "type": "string", "enum": ["not_started", "class_started", "completed"] },
+        "attendancePresent": { "type": "boolean" },
+        "attendanceLoggedAt": { "type": "string" },
+        "attendanceLocation": { "type": "string" }
+      },
+      "required": ["id", "studentId", "trainerId", "date", "timeSlot", "status"]
+    },
+    "SkillProgress": {
+      "title": "SkillProgress",
+      "description": "Skills mastery tracking per student",
+      "type": "object",
+      "properties": {
+        "steering": { "type": "number" },
+        "clutch": { "type": "number" },
+        "brake": { "type": "number" },
+        "accelerator": { "type": "number" },
+        "gear": { "type": "number" },
+        "reverse": { "type": "number" },
+        "parking": { "type": "number" },
+        "hillStart": { "type": "number" },
+        "traffic": { "type": "number" },
+        "nightDriving": { "type": "number" },
+        "highway": { "type": "number" },
+        "confidence": { "type": "number" }
+      }
+    },
+    "Document": {
+      "title": "Document",
+      "description": "Uploaded verification documents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Verified", "Rejected"] },
+        "uploadedAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "name", "type", "fileUrl", "status"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Course payment transactions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "amount": { "type": "number" },
+        "purpose": { "type": "string" },
+        "paymentMethod": { "type": "string", "enum": ["UPI", "Card", "Net Banking", "Wallet"] },
+        "status": { "type": "string", "enum": ["Success", "Pending", "Failed"] },
+        "transactionId": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "studentId", "amount", "status"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Chat messages between student and coach",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "isRead": { "type": "boolean" }
+      },
+      "required": ["id", "senderId", "receiverId", "text", "timestamp"]
+    },
+    "MockTestAttempt": {
+      "title": "MockTestAttempt",
+      "description": "Mock theory test attempts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "score": { "type": "number" },
+        "totalQuestions": { "type": "number" },
+        "correctAnswers": { "type": "number" },
+        "date": { "type": "string" },
+        "passed": { "type": "boolean" }
+      },
+      "required": ["id", "studentId", "score", "passed"]
+    }
+  },
+  "firestore": {
+    "students/{studentId}": {
+      "schema": "Student",
+      "description": "Registered students collection"
+    },
+    "trainers/{trainerId}": {
+      "schema": "Trainer",
+      "description": "Assigned and available trainers list"
+    },
+    "bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Scheduled driving lessons"
+    },
+    "progress/{studentId}": {
+      "schema": "SkillProgress",
+      "description": "Student skills mastery"
+    },
+    "documents/{docId}": {
+      "schema": "Document",
+      "description": "Aadhar, PAN, and LL uploads"
+    },
+    "payments/{payId}": {
+      "schema": "Payment",
+      "description": "Payment transactions"
+    },
+    "chats/{msgId}": {
+      "schema": "ChatMessage",
+      "description": "In-app communication logs"
+    },
+    "mock_attempts/{attemptId}": {
+      "schema": "MockTestAttempt",
+      "description": "Theory exam scores"
+    },
+    "email_verifications/{tokenId}": {
+      "schema": "EmailVerificationToken",
+      "description": "Secure tokens for student email validation"
+    }
+  }
+}

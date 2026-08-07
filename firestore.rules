@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global safety net - default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common security helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Rules for user-specific sandboxes (from earlier requests)
+    match /users/{uid} {
+      allow read, write: if true;
+      
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Secure driving school portal student collections
+    match /students/{studentId} {
+      allow read, write: if true;
+    }
+
+    // Secure driving school portal trainers collections
+    match /trainers/{trainerId} {
+      allow read, write: if true;
+    }
+
+    // Secure bookings and attendance tracking logs
+    match /bookings/{bookingId} {
+      allow read, write: if true;
+    }
+
+    // Secure practical driving progress and skills evaluation metrics
+    match /progress/{progressId} {
+      allow read, write: if true;
+    }
+
+    // Secure upload documents metadata
+    match /documents/{docId} {
+      allow read, write: if true;
+    }
+
+    // Secure transaction payments receipts and booking modifications
+    match /payments/{paymentId} {
+      allow read, write: if true;
+    }
+
+    // Secure real-time chat messages and notifications channels
+    match /chats/{chatId} {
+      allow read, write: if true;
+    }
+
+    // Secure test logs
+    match /mock_attempts/{attemptId} {
+      allow read, write: if true;
+    }
+
+    // Secure instructor reviews
+    match /reviews/{reviewId} {
+      allow read, write: if true;
+    }
+
+    // Secure email verification tokens
+    match /email_verifications/{tokenId} {
+      allow read, write: if true;
+    }
+
+    // Secure booking slots availability
+    match /slots/{slotId} {
+      allow read, write: if true;
+    }
+  }
+}

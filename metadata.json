@@ -1,0 +1,6 @@
+{
+  "name": "Golden Hands Driving School",
+  "description": "Premium multi-portal application for Golden Hands Driving School. Includes Student Mobile App, Trainer Mobile App, Web Admin Dashboard, and Gemini AI Driving Coach.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
