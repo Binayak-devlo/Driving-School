@@ -322,6 +322,17 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const [chats, setChats] = useState(MockDatabase.getChats());
   const [attempts, setAttempts] = useState(MockDatabase.getMockAttempts());
 
+  // Effective Assigned Trainer Logic: Once student books 1st class, coach is locked
+  const existingBookingWithTrainer = bookings.find(b => b.studentId === student.id && b.status !== 'cancelled');
+  const effectiveAssignedTrainerId = student.assignedTrainerId || existingBookingWithTrainer?.trainerId || null;
+
+  useEffect(() => {
+    if (effectiveAssignedTrainerId) {
+      setBookingTrainer(effectiveAssignedTrainerId);
+      setReviewTrainerId(effectiveAssignedTrainerId);
+    }
+  }, [effectiveAssignedTrainerId]);
+
   // STUDENT PROFILE PICTURE EDITING & UPLOAD STATES
   const [profilePicModalOpen, setProfilePicModalOpen] = useState(false);
   const [profilePicMode, setProfilePicMode] = useState<'options' | 'camera' | 'uploading'>('options');
@@ -572,8 +583,18 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const [useRealCamera, setUseRealCamera] = useState(true);
   const [isFlashing, setIsFlashing] = useState(false);
   const [capturedPhotoData, setCapturedPhotoData] = useState<string | null>(null);
+  
+  // Real-time Automatic Face Detection States
+  const [faceDetectStatus, setFaceDetectStatus] = useState<'searching' | 'detected' | 'no_face'>('searching');
+  const [faceDetectProgress, setFaceDetectProgress] = useState(0);
+  const [faceDetectMessage, setFaceDetectMessage] = useState("Position your face inside the circle...");
+  const [detectionTimeoutOccurred, setDetectionTimeoutOccurred] = useState(false);
+  
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const autoCaptureTriggeredRef = useRef(false);
+  const detectionTimerRef = useRef<any>(null);
+  const searchTimeoutRef = useRef<any>(null);
 
   const videoRefCallback = useCallback((node: HTMLVideoElement | null) => {
     videoRef.current = node;
@@ -583,26 +604,129 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     }
   }, []);
 
-  // Automatic capture countdown effect
-  useEffect(() => {
-    if (faceCheckinOpen && faceCaptureStep === 'capture' && useRealCamera && !faceError) {
-      setCaptureCountdown(3);
-    } else {
-      setCaptureCountdown(null);
-    }
-  }, [faceCheckinOpen, faceCaptureStep, useRealCamera, faceError]);
+  // Direct launcher for Face Check-In
+  const openFaceCheckinDirectly = () => {
+    setFaceCheckinOpen(true);
+    setFaceCaptureStep('capture');
+    setFaceDetectStatus('searching');
+    setFaceDetectProgress(0);
+    setFaceDetectMessage("Position your face inside the circle...");
+    setDetectionTimeoutOccurred(false);
+    autoCaptureTriggeredRef.current = false;
+    startCamera(true);
+  };
 
+  // Real-Time Automatic Face Detection & Auto-Capture Loop
   useEffect(() => {
-    if (captureCountdown === null) return;
-    if (captureCountdown > 0) {
-      const timer = setTimeout(() => {
-        setCaptureCountdown(prev => prev !== null ? prev - 1 : null);
-      }, 1000);
-      return () => clearTimeout(timer);
-    } else if (captureCountdown === 0) {
-      handlePerformFaceScan();
+    if (!faceCheckinOpen || faceCaptureStep !== 'capture' || !useRealCamera || faceError) {
+      if (detectionTimerRef.current) clearInterval(detectionTimerRef.current);
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      return;
     }
-  }, [captureCountdown]);
+
+    autoCaptureTriggeredRef.current = false;
+    setFaceDetectProgress(0);
+    setFaceDetectStatus('searching');
+    setFaceDetectMessage("Position your face inside the circle...");
+    setDetectionTimeoutOccurred(false);
+
+    // Timeout trigger if face is not visible after 12 seconds
+    searchTimeoutRef.current = setTimeout(() => {
+      if (!autoCaptureTriggeredRef.current && faceDetectStatus !== 'detected') {
+        setFaceDetectStatus('no_face');
+        setFaceDetectMessage("Unable to detect face. Please ensure proper lighting and face alignment.");
+        setDetectionTimeoutOccurred(true);
+      }
+    }, 12000);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 120;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    let consecutiveDetectedFrames = 0;
+
+    detectionTimerRef.current = setInterval(() => {
+      if (autoCaptureTriggeredRef.current || !videoRef.current) return;
+
+      const video = videoRef.current;
+      if (video.readyState < 2 || video.paused || video.ended) return;
+
+      try {
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, 160, 120);
+          
+          // Sample central oval bounding box: x: 40-120, y: 20-100
+          const frameData = ctx.getImageData(40, 20, 80, 80);
+          const pixels = frameData.data;
+          let totalLuminance = 0;
+          let skinMatchCount = 0;
+          const pixelCount = pixels.length / 4;
+
+          for (let i = 0; i < pixels.length; i += 4) {
+            const r = pixels[i];
+            const g = pixels[i + 1];
+            const b = pixels[i + 2];
+
+            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+            totalLuminance += lum;
+
+            const maxColor = Math.max(r, g, b);
+            const minColor = Math.min(r, g, b);
+            if (r > 45 && g > 30 && b > 20 && (maxColor - minColor) > 12 && r > g && r > b) {
+              skinMatchCount++;
+            }
+          }
+
+          const avgLuminance = totalLuminance / pixelCount;
+          const skinRatio = skinMatchCount / pixelCount;
+
+          const isTooDark = avgLuminance < 30;
+          const isTooBright = avgLuminance > 235;
+          const hasFaceFeatures = skinRatio >= 0.15;
+
+          if (isTooDark) {
+            consecutiveDetectedFrames = Math.max(0, consecutiveDetectedFrames - 1);
+            setFaceDetectStatus('no_face');
+            setFaceDetectMessage("Environment too dark! Face not visible.");
+          } else if (isTooBright) {
+            consecutiveDetectedFrames = Math.max(0, consecutiveDetectedFrames - 1);
+            setFaceDetectStatus('no_face');
+            setFaceDetectMessage("Too much glare! Face not clearly visible.");
+          } else if (hasFaceFeatures) {
+            consecutiveDetectedFrames++;
+            setFaceDetectStatus('detected');
+            setFaceDetectMessage("Face Detected! Hold steady for auto-capture...");
+            setDetectionTimeoutOccurred(false);
+
+            const newProgress = Math.min(100, Math.round((consecutiveDetectedFrames / 3) * 100));
+            setFaceDetectProgress(newProgress);
+
+            if (consecutiveDetectedFrames >= 3 && !autoCaptureTriggeredRef.current) {
+              autoCaptureTriggeredRef.current = true;
+              if (detectionTimerRef.current) clearInterval(detectionTimerRef.current);
+              if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+              
+              // Automatically trigger face scan & attendance log
+              handlePerformFaceScan();
+            }
+          } else {
+            consecutiveDetectedFrames = Math.max(0, consecutiveDetectedFrames - 1);
+            setFaceDetectProgress(0);
+            setFaceDetectStatus('searching');
+            setFaceDetectMessage("Position your face inside the circle...");
+          }
+        }
+      } catch (e) {
+        console.warn("Face analysis frame check error:", e);
+      }
+    }, 300);
+
+    return () => {
+      if (detectionTimerRef.current) clearInterval(detectionTimerRef.current);
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, [faceCheckinOpen, faceCaptureStep, useRealCamera, faceError]);
 
   const startCamera = async (forceReal = false) => {
     setFaceError(null);
@@ -2304,20 +2428,33 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       return;
     }
 
-    const tr = trainers.find(t => t.id === bookingTrainer);
+    const targetTrainerId = effectiveAssignedTrainerId || bookingTrainer;
+    const tr = trainers.find(t => t.id === targetTrainerId) || trainers[0];
     if (!tr) return;
+
+    // Auto-lock assigned trainer on student profile after 1st booking
+    let currentStudentObj = student;
+    if (!student.assignedTrainerId) {
+      currentStudentObj = {
+        ...student,
+        assignedTrainerId: tr.id,
+        assignedTrainerName: tr.name
+      };
+      MockDatabase.saveStudent(currentStudentObj, student.id);
+      setStudent(currentStudentObj);
+    }
 
     const newBooking: Booking = {
       id: `booking_${Date.now()}`,
-      studentId: student.id,
-      studentName: student.name,
+      studentId: currentStudentObj.id,
+      studentName: currentStudentObj.name,
       trainerId: tr.id,
       trainerName: tr.name,
       carName: tr.carName,
       carPlate: tr.carPlate,
       date: bookingDate,
       timeSlot: bookingTimeSlot,
-      location: student.location,
+      location: currentStudentObj.location,
       status: 'upcoming'
     };
 
@@ -4916,20 +5053,14 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       {/* DYNAMIC ACTION BUTTON */}
                       {b.pickupStatus === 'picked_up' && (!b.faceVerificationStatus || b.faceVerificationStatus === 'pending') ? (
                         <button 
-                          onClick={() => {
-                            setFaceCheckinOpen(true);
-                            setFaceCaptureStep('tutorial');
-                          }}
+                          onClick={() => openFaceCheckinDirectly()}
                           className="w-full bg-gradient-to-r from-amber-500 to-[#D4AF37] text-black font-extrabold py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-[#D4AF37]/15 hover:brightness-110 active:scale-95 transition-all animate-bounce cursor-pointer"
                         >
                           <Sparkles className="w-4 h-4 text-black fill-black" /> Complete Face Check-in
                         </button>
                       ) : b.pickupStatus === 'picked_up' && b.faceVerificationStatus === 'failed' ? (
                         <button 
-                          onClick={() => {
-                            setFaceCheckinOpen(true);
-                            setFaceCaptureStep('tutorial');
-                          }}
+                          onClick={() => openFaceCheckinDirectly()}
                           className="w-full bg-rose-500 text-white font-extrabold py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-rose-500/15 hover:bg-rose-600 active:scale-95 transition-all cursor-pointer"
                         >
                           <AlertCircle className="w-4 h-4" /> Face Verification Locked (Coach Override)
@@ -5510,18 +5641,38 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                               </div>
 
                               <div>
-                                <label className="text-[10px] font-bold uppercase text-slate-400">Select Trainer & Car</label>
-                                <select 
-                                  value={bookingTrainer}
-                                  onChange={(e) => setBookingTrainer(e.target.value)}
-                                  className="w-full bg-[#F8F9FF] border-none rounded-xl p-2.5 text-xs focus:outline-none font-semibold mt-1"
-                                >
-                                  {trainers.map((tr) => (
-                                    <option key={tr.id} value={tr.id}>
-                                      {tr.name} - {tr.carName}
-                                    </option>
-                                  ))}
-                                </select>
+                                <label className="text-[10px] font-bold uppercase text-slate-400">Assigned Driving Coach & Car</label>
+                                {effectiveAssignedTrainerId ? (
+                                  <div className="w-full bg-[#F8F9FF] border border-blue-100 rounded-xl p-2.5 text-xs font-semibold mt-1 flex items-center justify-between text-slate-800">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                                      <span>
+                                        Coach {trainers.find(t => t.id === effectiveAssignedTrainerId)?.name || student.assignedTrainerName || "Assigned Trainer"} - {trainers.find(t => t.id === effectiveAssignedTrainerId)?.carName || "Vehicle"}
+                                      </span>
+                                    </div>
+                                    <span className="text-[9px] bg-blue-100 text-[#0055FF] px-2 py-0.5 rounded-full font-bold uppercase shrink-0">
+                                      🔒 Locked
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <select 
+                                    value={bookingTrainer}
+                                    onChange={(e) => setBookingTrainer(e.target.value)}
+                                    className="w-full bg-[#F8F9FF] border-none rounded-xl p-2.5 text-xs focus:outline-none font-semibold mt-1"
+                                  >
+                                    {trainers.map((tr) => (
+                                      <option key={tr.id} value={tr.id}>
+                                        Coach {tr.name} - {tr.carName}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                                <p className="text-[9px] text-slate-400 mt-1">
+                                  {effectiveAssignedTrainerId 
+                                    ? "Trainer assigned after 1st booking. Only Driving School Admin can reassign your coach."
+                                    : "Note: Your selected coach will be locked for all remaining classes once booked."
+                                  }
+                                </p>
                               </div>
 
                               <button 
@@ -6556,16 +6707,24 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
               </div>
             )}
 
-            {/* STEP 3: SELFIE CAPTURE WITH CIRCULAR WEBCAM & OVAL STENCIL */}
+            {/* STEP 3: SELFIE CAPTURE WITH REAL-TIME AUTOMATIC FACE DETECTION */}
             {faceCaptureStep === 'capture' && (
-              <div className="flex-1 flex flex-col items-center justify-between pt-12 pb-8">
+              <div className="flex-1 flex flex-col items-center justify-between pt-10 pb-8">
                 <div className="flex-1 flex flex-col items-center justify-center text-center px-6 w-full">
                   
-                  {/* Circle cropped Webcam Frame */}
-                  <div className="my-6 relative w-52 h-52 flex items-center justify-center">
+                  {/* Circle cropped Webcam Frame with dynamic status border */}
+                  <div className="my-4 relative w-52 h-52 flex items-center justify-center">
                     
-                    {/* Glowing outer rotating circular border */}
-                    <div className={`absolute inset-0 rounded-full p-1 ${useRealCamera ? 'bg-gradient-to-tr from-[#0055FF] via-[#00CCFF] to-[#0055FF] animate-pulse' : 'bg-rose-500/20'} shadow-xl flex items-center justify-center`}>
+                    {/* Glowing outer circular border matching detection status */}
+                    <div className={`absolute inset-0 rounded-full p-1 transition-all duration-300 shadow-xl flex items-center justify-center ${
+                      !useRealCamera
+                        ? 'bg-rose-500/20'
+                        : faceDetectStatus === 'detected'
+                        ? 'bg-gradient-to-tr from-emerald-500 via-teal-400 to-emerald-500 ring-4 ring-emerald-400/30 animate-pulse'
+                        : faceDetectStatus === 'no_face'
+                        ? 'bg-gradient-to-tr from-amber-500 via-rose-500 to-amber-500 ring-2 ring-rose-400/20'
+                        : 'bg-gradient-to-tr from-[#0055FF] via-[#00CCFF] to-[#0055FF] animate-pulse'
+                    }`}>
                       {/* Inner crop frame */}
                       <div className="w-full h-full rounded-full overflow-hidden bg-black relative shadow-inner">
                         {/* Real front camera stream */}
@@ -6577,9 +6736,15 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                               playsInline
                               muted
                             />
-                            {/* White facial oval overlay outline stencil guide */}
+                            {/* Facial oval stencil guide changing color with detection status */}
                             <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                              <svg className="w-32 h-40 text-white/60" viewBox="0 0 100 120" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <svg className={`w-32 h-40 transition-colors duration-300 ${
+                                faceDetectStatus === 'detected' 
+                                  ? 'text-emerald-400/90' 
+                                  : faceDetectStatus === 'no_face' 
+                                  ? 'text-rose-400/80' 
+                                  : 'text-white/60'
+                              }`} viewBox="0 0 100 120" fill="none" stroke="currentColor" strokeWidth="2.5">
                                 <path d="M 50,15 C 25,15 25,75 32,98 C 38,108 50,112 50,112 C 50,112 62,108 68,98 C 75,75 75,15 50,15 Z" strokeDasharray="4 4" />
                                 <line x1="30" y1="50" x2="70" y2="50" strokeOpacity="0.25" strokeDasharray="2 2" />
                                 <line x1="50" y1="20" x2="50" y2="105" strokeOpacity="0.25" strokeDasharray="2 2" />
@@ -6587,7 +6752,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                             </div>
                           </>
                         ) : (
-                          /* Simulated / Disabled camera visual - NO AUTOMATIC BYPASS SUBMITTING */
+                          /* Simulated / Disabled camera visual */
                           <div className="w-full h-full bg-[#0F172A] flex flex-col items-center justify-center p-4 relative">
                             <div className="w-12 h-12 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-500 mb-2">
                               <CameraOff className="w-6 h-6 animate-bounce" />
@@ -6606,39 +6771,104 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       </div>
                     </div>
 
-                    {/* Floating Countdown Timer Badge */}
-                    {useRealCamera && captureCountdown !== null && (
-                      <div className="absolute -bottom-3 bg-[#0055FF] text-white font-black text-[10px] px-4 py-1.5 rounded-full shadow-lg border border-white/20 uppercase tracking-wider animate-bounce">
-                        Selfie in {captureCountdown}s
+                    {/* Floating Real-Time Status Badge */}
+                    {useRealCamera && (
+                      <div className={`absolute -bottom-3 text-white font-black text-[9.5px] px-3.5 py-1 rounded-full shadow-lg border border-white/20 uppercase tracking-wider flex items-center gap-1.5 transition-all duration-300 ${
+                        faceDetectStatus === 'detected'
+                          ? 'bg-emerald-600 animate-bounce'
+                          : faceDetectStatus === 'no_face'
+                          ? 'bg-amber-600'
+                          : 'bg-[#0055FF]'
+                      }`}>
+                        {faceDetectStatus === 'detected' ? (
+                          <>
+                            <Sparkles className="w-3 h-3 text-emerald-200 fill-emerald-200" />
+                            <span>Face Detected ({faceDetectProgress}%)</span>
+                          </>
+                        ) : faceDetectStatus === 'no_face' ? (
+                          <>
+                            <AlertCircle className="w-3 h-3 text-amber-200" />
+                            <span>Face Not Visible</span>
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="w-3 h-3 text-blue-200 animate-spin" />
+                            <span>Detecting Face...</span>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
 
-                  {/* Capture message & Action Buttons */}
+                  {/* Detection Feedback Message & Action Controls */}
                   {useRealCamera ? (
-                    <div className="flex flex-col items-center w-full">
-                      <h3 className="font-bold text-slate-850 text-base mt-2">Get ready...</h3>
-                      <p className="text-[11px] text-slate-400 mt-1 max-w-[200px] leading-relaxed">
-                        Keep your head within the frame. Capturing automatically.
-                      </p>
+                    <div className="flex flex-col items-center w-full mt-2">
+                      <h3 className={`font-extrabold text-xs transition-colors duration-200 ${
+                        faceDetectStatus === 'detected' 
+                          ? 'text-emerald-600' 
+                          : faceDetectStatus === 'no_face' 
+                          ? 'text-amber-600' 
+                          : 'text-slate-800'
+                      }`}>
+                        {faceDetectStatus === 'detected' 
+                          ? 'Face Detected! Hold Steady...' 
+                          : faceDetectStatus === 'no_face' 
+                          ? 'Unable to Detect Face' 
+                          : 'Automatic Face Detection'}
+                      </h3>
                       
-                      {/* Manual Capture Option to let them capture instantly */}
-                      <button
-                        onClick={() => handlePerformFaceScan()}
-                        className="mt-4 bg-[#0055FF] hover:bg-[#0044DD] text-white font-bold text-xs py-2 px-6 rounded-xl shadow-md shadow-blue-500/10 active:scale-95 transition-all cursor-pointer"
-                      >
-                        Capture Now
-                      </button>
+                      <p className="text-[10.5px] text-slate-500 mt-1 max-w-[230px] leading-relaxed font-medium">
+                        {faceDetectMessage}
+                      </p>
+
+                      {/* Detection Progress Bar */}
+                      {faceDetectStatus === 'detected' && (
+                        <div className="w-48 bg-slate-100 h-1.5 rounded-full overflow-hidden mt-2.5 border border-slate-200">
+                          <div 
+                            className="bg-emerald-500 h-full transition-all duration-200 ease-out" 
+                            style={{ width: `${faceDetectProgress}%` }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Control Buttons: Retry Face Scan or Instant Capture */}
+                      <div className="flex items-center justify-center gap-2 mt-3.5 w-full max-w-[240px]">
+                        {(faceDetectStatus === 'no_face' || detectionTimeoutOccurred) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFaceDetectStatus('searching');
+                              setFaceDetectProgress(0);
+                              setFaceDetectMessage("Position your face inside the circle...");
+                              setDetectionTimeoutOccurred(false);
+                              autoCaptureTriggeredRef.current = false;
+                              startCamera(true);
+                            }}
+                            className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-black text-[11px] py-2 px-3 rounded-xl shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" /> Retry Detection
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handlePerformFaceScan()}
+                          className="flex-1 bg-[#0055FF] hover:bg-[#0044DD] text-white font-bold text-[11px] py-2 px-3 rounded-xl shadow-md shadow-blue-500/10 active:scale-95 transition-all cursor-pointer"
+                        >
+                          Capture Now
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center w-full">
                       <h3 className="font-bold text-rose-500 text-base mt-2">Access Denied</h3>
                       <p className="text-[11px] text-slate-400 mt-1 max-w-[220px] leading-relaxed">
-                        To sign in, you must enable camera permission.
+                        To check in, you must enable camera permission.
                       </p>
                       
                       {/* Retry Button to grant permission */}
                       <button
+                        type="button"
                         onClick={() => {
                           setFaceError(null);
                           startCamera(true);

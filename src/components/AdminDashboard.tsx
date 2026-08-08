@@ -257,6 +257,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
   const [studentBookingLocked, setStudentBookingLocked] = useState(false);
   const [studentLockedReason, setStudentLockedReason] = useState("");
   const [studentAdminManualUnlock, setStudentAdminManualUnlock] = useState(false);
+  const [studentAssignedTrainerId, setStudentAssignedTrainerId] = useState("");
 
   // Slots Form & List States
   const [slots, setSlots] = useState<SlotDay[]>(() => MockDatabase.getSlotDays());
@@ -752,6 +753,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     setStudentBookingLocked(false);
     setStudentLockedReason("");
     setStudentAdminManualUnlock(false);
+    setStudentAssignedTrainerId("");
 
     setStudentModalOpen(true);
   };
@@ -784,6 +786,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     setStudentBookingLocked(!!stud.bookingLocked);
     setStudentLockedReason(stud.lockedReason || "");
     setStudentAdminManualUnlock(!!stud.adminManualUnlock);
+    setStudentAssignedTrainerId(stud.assignedTrainerId || "");
 
     setStudentModalOpen(true);
   };
@@ -802,6 +805,8 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     const targetId = editingStudent ? editingStudent.id : `student_${Date.now()}`;
     const targetJoinedDate = editingStudent ? (editingStudent.joinedDate || new Date().toISOString().split("T")[0]) : new Date().toISOString().split("T")[0];
 
+    const assignedTr = trainers.find(t => t.id === studentAssignedTrainerId);
+
     const updatedStudent: Student = {
       id: targetId,
       name: studentName,
@@ -819,6 +824,10 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       planExtended: studentPlanExtended,
       licenceFeePaid: studentLicenceFeePaid,
       courseEnded: studentCourseEnded,
+
+      // Save assigned trainer
+      assignedTrainerId: studentAssignedTrainerId || undefined,
+      assignedTrainerName: assignedTr ? assignedTr.name : undefined,
 
       // Save custom workflow properties
       totalCourseFee: studentTotalCourseFee,
@@ -3298,6 +3307,22 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Assigned Trainer / Driving Coach</label>
+                    <select 
+                      value={studentAssignedTrainerId}
+                      onChange={(e) => setStudentAssignedTrainerId(e.target.value)}
+                      className="border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#6D3BFF] font-semibold text-slate-800 bg-white"
+                    >
+                      <option value="">-- Unassigned (Student picks on 1st slot) --</option>
+                      {trainers.map((tr) => (
+                        <option key={tr.id} value={tr.id}>
+                          Coach {tr.name} ({tr.carName})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase">Referral Code / Promo</label>
                     <input 

@@ -13,6 +13,10 @@ export interface Student {
   courseSyllabus?: string[]; // list of modules, e.g., ["Clutch control", "Parallel Parking", "Hill start"]
   password?: string;
   
+  // Trainer Assignment & Locking
+  assignedTrainerId?: string;
+  assignedTrainerName?: string;
+  
   // Course Modification Workflow States
   proposedCourseName?: string;
   proposedCourseNotes?: string;

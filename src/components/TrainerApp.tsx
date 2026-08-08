@@ -1043,178 +1043,81 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
             )}
 
             {/* TAB CONTENT: STUDENTS */}
-            {activeTab === 'students' && (
-              <div className="flex flex-col gap-3 animate-fadeIn">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">Active Roll Call</h3>
-                  {MockDatabase.getRegisteredStudents().length > 0 && (
-                    <select
-                      value={selectedStudentId}
-                      onChange={(e) => {
-                        const targetId = e.target.value;
-                        setSelectedStudentId(targetId);
-                        const newStudent = MockDatabase.getStudent(targetId);
-                        setStudent(newStudent);
-                        setProgress(MockDatabase.getProgress(targetId));
-                        setChats(MockDatabase.getChats(targetId));
-                      }}
-                      className="bg-white/10 border border-white/20 rounded-xl px-2.5 py-1 text-[11px] font-bold focus:outline-none text-[#D4AF37]"
-                    >
-                      {MockDatabase.getRegisteredStudents().map(s => (
-                        <option key={s.id} value={s.id} className="bg-[#161623] text-white">
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
+            {activeTab === 'students' && (() => {
+              const allRegisteredStudents = MockDatabase.getRegisteredStudents();
+              const allBookings = MockDatabase.getAllBookings();
 
-                {MockDatabase.getRegisteredStudents().length === 0 ? (
-                  <div className="text-center py-12 bg-white/5 border border-dashed border-white/10 rounded-3xl p-6">
-                    <p className="text-xs font-bold text-slate-400">No active students registered yet.</p>
-                    <p className="text-[10px] text-slate-500 mt-1">Once students register in the portal, they will be listed here.</p>
+              // Filter students to ONLY those who have booked slots with this specific trainer or are assigned to this trainer
+              const trainerStudents = allRegisteredStudents.filter(s => {
+                if (s.assignedTrainerId === currentTrainerId) return true;
+                return allBookings.some(
+                  b => b.studentId === s.id && b.trainerId === currentTrainerId && b.status !== 'cancelled'
+                );
+              });
+
+              const activeStudent = trainerStudents.find(s => s.id === selectedStudentId) || trainerStudents[0];
+
+              return (
+                <div className="flex flex-col gap-3 animate-fadeIn">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                      Active Roll Call ({trainerStudents.length})
+                    </h3>
+                    {trainerStudents.length > 0 && (
+                      <select
+                        value={activeStudent?.id || ''}
+                        onChange={(e) => {
+                          const targetId = e.target.value;
+                          setSelectedStudentId(targetId);
+                          const newStudent = MockDatabase.getStudent(targetId);
+                          setStudent(newStudent);
+                          setProgress(MockDatabase.getProgress(targetId));
+                          setChats(MockDatabase.getChats(targetId));
+                        }}
+                        className="bg-white/10 border border-white/20 rounded-xl px-2.5 py-1 text-[11px] font-bold focus:outline-none text-[#D4AF37]"
+                      >
+                        {trainerStudents.map(s => (
+                          <option key={s.id} value={s.id} className="bg-[#161623] text-white">
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
-                ) : (
-                  <>
+
+                  {trainerStudents.length === 0 ? (
+                    <div className="text-center py-12 bg-white/5 border border-dashed border-white/10 rounded-3xl p-6">
+                      <p className="text-xs font-bold text-slate-400">No active students registered for Coach {currentTrainer.name} yet.</p>
+                      <p className="text-[10px] text-slate-500 mt-1">Once students book a class with you, they will appear in your student list.</p>
+                    </div>
+                  ) : (
                     <div className="bg-white/5 border border-white/10 rounded-3xl p-3.5 flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <img 
-                          src={student?.photoUrl} 
-                          alt={student?.name} 
+                          src={activeStudent?.photoUrl} 
+                          alt={activeStudent?.name} 
                           className="w-10 h-10 rounded-full border border-white/10 object-cover"
                         />
                         <div>
-                          <p className="font-bold text-xs">{student?.name}</p>
-                          <p className="text-[9px] text-slate-400">ID: {student?.id}</p>
-                          <p className="text-[9px] text-[#D4AF37] font-semibold">LL Status: {student?.llStatus}</p>
+                          <p className="font-bold text-xs">{activeStudent?.name}</p>
+                          <p className="text-[9px] text-slate-400">ID: {activeStudent?.id}</p>
+                          <p className="text-[9px] text-[#D4AF37] font-semibold">LL Status: {activeStudent?.llStatus}</p>
                         </div>
                       </div>
 
                       <div className="flex gap-1.5">
                         <a 
-                          href={`tel:${student?.phone || '9040040265'}`}
+                          href={`tel:${activeStudent?.phone || '9040040265'}`}
                           className="w-8 h-8 bg-white/5 hover:bg-white/10 rounded-lg flex items-center justify-center border border-white/5"
                         >
                           <Phone className="w-3.5 h-3.5 text-[#D4AF37]" />
                         </a>
                       </div>
                     </div>
-
-                    <div className="bg-white/5 border border-white/10 rounded-3xl p-4">
-                      <h4 className="font-bold text-xs text-[#D4AF37] mb-2.5">Current Skill Log</h4>
-                      <div className="flex flex-col gap-2">
-                        {[
-                          { label: "Steering Control", val: progress?.steering || 0 },
-                          { label: "Clutch Control", val: progress?.clutch || 0, low: (progress?.clutch || 0) < 75 },
-                          { label: "Braking & Stop Response", val: progress?.brake || 0 },
-                          { label: "Hill Starts Practice", val: progress?.hillStart || 0, low: (progress?.hillStart || 0) < 75 },
-                          { label: "Bhubaneswar Traffic Nav", val: progress?.traffic || 0, low: (progress?.traffic || 0) < 75 }
-                        ].map((item, i) => (
-                          <div key={i} className="flex justify-between items-center text-[10px]">
-                            <span className={item.low ? 'text-rose-400 font-semibold' : 'text-slate-300'}>{item.label}</span>
-                            <span className={`font-black ${item.low ? 'text-rose-400' : 'text-slate-100'}`}>{item.val}%</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {/* Course Customizer Block */}
-                <div className="bg-white/5 border border-white/10 rounded-3xl p-4 flex flex-col gap-3">
-                  <div className="flex justify-between items-center">
-                    <h4 className="font-bold text-xs text-[#D4AF37]">Course Plan Customizer</h4>
-                    <span className="text-[9px] text-[#27AE60] font-extrabold flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-[#D4AF37] fill-[#D4AF37]" /> Live Synced
-                    </span>
-                  </div>
-
-                  <div>
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                      Driving Package / Course Title
-                    </label>
-                    <select
-                      value={editedCourseName}
-                      onChange={(e) => setEditedCourseName(e.target.value)}
-                      className="w-full bg-black/30 border border-white/10 rounded-xl p-2 text-xs focus:outline-none font-semibold text-slate-200"
-                    >
-                      <option value="Refresh Training">Refresh Training</option>
-                      <option value="Basic Package (10 Sessions)">Basic Package (10 Sessions)</option>
-                      <option value="Premium Package (20 Sessions)">Premium Package (20 Sessions)</option>
-                      <option value="Gold Package (30 Sessions)">Gold Package (30 Sessions)</option>
-                      <option value="Platinum Package (40 Sessions)">Platinum Package (40 Sessions)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                      Customized Trainer Notes
-                    </label>
-                    <textarea
-                      value={editedCourseNotes}
-                      onChange={(e) => setEditedCourseNotes(e.target.value)}
-                      placeholder="Add focus areas for this student..."
-                      className="w-full bg-black/30 border border-white/10 rounded-xl p-2.5 text-xs text-slate-300 focus:outline-none font-medium h-14 resize-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
-                      Syllabus Focus Modules
-                    </label>
-                    <div className="flex flex-col gap-1.5">
-                      {["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation", "Night Drive Readiness"].map((module) => {
-                        const isChecked = editedSyllabus.includes(module);
-                        return (
-                          <button
-                            key={module}
-                            type="button"
-                            onClick={() => handleToggleSyllabusModule(module)}
-                            className="flex items-center gap-2 text-left text-[10px] text-slate-300 hover:text-white cursor-pointer"
-                          >
-                            <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                              isChecked ? 'bg-[#D4AF37] border-[#D4AF37] text-black' : 'border-white/20 bg-black/20'
-                            }`}>
-                              {isChecked && <Check className="w-2.5 h-2.5 stroke-[4]" />}
-                            </div>
-                            <span className={isChecked ? 'font-bold text-white' : ''}>{module}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Add Custom Syllabus Point Form */}
-                  <form onSubmit={handleAddCustomSyllabus} className="flex gap-1.5 mt-1">
-                    <input
-                      type="text"
-                      placeholder="Add custom topic..."
-                      value={customSyllabusItem}
-                      onChange={(e) => setCustomSyllabusItem(e.target.value)}
-                      className="flex-1 bg-black/20 border border-white/10 rounded-lg p-1.5 text-[10px] focus:outline-none text-slate-300"
-                    />
-                    <button
-                      type="submit"
-                      className="bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] px-2.5 rounded-lg border border-white/10 cursor-pointer"
-                    >
-                      + Add
-                    </button>
-                  </form>
-
-                  {/* Propose Button */}
-                  <button
-                    type="button"
-                    onClick={handleSaveCoursePlan}
-                    className="w-full bg-gradient-to-r from-amber-500 to-[#D4AF37] text-black font-black py-2.5 rounded-xl text-xs hover:brightness-110 shadow-md flex items-center justify-center gap-1.5 mt-1 cursor-pointer"
-                  >
-                    <Sliders className="w-3.5 h-3.5" /> Propose Course Modifications
-                  </button>
-                  <p className="text-[8px] text-slate-400 text-center mt-1">
-                    *Requires ₹800 student payment and subsequent admin approval to apply.
-                  </p>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* TAB CONTENT: PERFORMANCE METRICS */}
             {activeTab === 'performance' && (
