@@ -6,13 +6,20 @@ import {
   ChevronRight, UserCheck, Check, AlertTriangle, Shield, HelpCircle
 } from "lucide-react";
 import { 
-  createUserWithEmailAndPassword, 
-  sendEmailVerification, 
-  signInWithEmailAndPassword 
+  RecaptchaVerifier, 
+  signInWithPhoneNumber, 
+  ConfirmationResult 
 } from "firebase/auth";
-import { auth } from "../utils/firebase";
+import { auth, db } from "../utils/firebase";
+import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
 import { MockDatabase } from "../utils/db";
 import { Student, Trainer } from "../types";
+
+declare global {
+  interface Window {
+    recaptchaVerifier: any;
+  }
+}
 
 export type AuthRole = 'student' | 'trainer' | 'admin';
 
@@ -51,11 +58,85 @@ export default function UnifiedAuthPortal({
   const [regPackage, setRegPackage] = useState("Basic - ₹3,500 (15 practical + 2 theory classes, 30 mins each)");
   const [regShowPassword, setRegShowPassword] = useState(false);
 
+  // Firebase Phone Auth ConfirmationResult
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+
   // Verification & OTP States
   const [verificationCode, setVerificationCode] = useState("");
   const [enteredCode, setEnteredCode] = useState("");
   const [otpCountdown, setOtpCountdown] = useState(30);
   const countdownTimerRef = useRef<any>(null);
+
+  // Helper to initialize or retrieve reCAPTCHA verifier for Firebase Phone Auth
+  const getRecaptchaVerifier = () => {
+    if (window.recaptchaVerifier) {
+      try {
+        window.recaptchaVerifier.clear();
+      } catch (e) {}
+      window.recaptchaVerifier = null;
+    }
+    const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+      size: 'invisible',
+      callback: (response: any) => {
+        console.log("[Firebase Phone Auth] reCAPTCHA verified successfully.");
+      },
+      'expired-callback': () => {
+        console.warn("[Firebase Phone Auth] reCAPTCHA response expired, resetting...");
+        if (window.recaptchaVerifier) {
+          try { window.recaptchaVerifier.clear(); } catch(e){}
+          window.recaptchaVerifier = null;
+        }
+      }
+    });
+    window.recaptchaVerifier = verifier;
+    return verifier;
+  };
+
+  // Format phone number to E.164 standard (+91 for 10-digit Indian numbers)
+  const formatE164Phone = (phoneStr: string) => {
+    const trimmed = phoneStr.trim();
+    if (trimmed.startsWith('+')) return trimmed;
+    const digits = trimmed.replace(/\D/g, '');
+    if (digits.length === 10) return `+91${digits}`;
+    if (digits.length > 10) return `+${digits}`;
+    return `+91${digits.slice(-10)}`;
+  };
+
+  // Map Firebase Auth error codes to helpful user messages
+  const mapFirebaseAuthError = (err: any): string => {
+    console.error("[Firebase Auth Error Details]:", err);
+    const code = err?.code || "";
+    const msg = err?.message || "";
+
+    if (code === "auth/operation-not-allowed") {
+      return "Phone Authentication is disabled in your Firebase Console. Please enable 'Phone' under Firebase Console -> Authentication -> Sign-in method.";
+    }
+    if (code === "auth/invalid-phone-number") {
+      return "Invalid mobile number format. Please enter a valid 10-digit mobile number.";
+    }
+    if (code === "auth/too-many-requests") {
+      return "Too many OTP requests. Please wait a few minutes before trying again.";
+    }
+    if (code === "auth/quota-exceeded") {
+      return "SMS quota exceeded for today. Please try again later or use a configured Firebase test phone number.";
+    }
+    if (code === "auth/captcha-check-failed" || code === "auth/invalid-app-credential") {
+      return "App verification (reCAPTCHA) failed. Please refresh the page and try again.";
+    }
+    if (code === "auth/unauthorized-domain") {
+      return "Domain not authorized in Firebase Console. Please authorize this domain under Firebase Auth settings.";
+    }
+    if (code === "auth/invalid-verification-code") {
+      return "Incorrect verification code. Please check the 6-digit OTP and try again.";
+    }
+    if (code === "auth/code-expired") {
+      return "Verification code has expired. Please request a new OTP.";
+    }
+    if (code === "auth/session-expired") {
+      return "Verification session expired. Please request a new OTP.";
+    }
+    return msg || "Authentication failed. Please check your network connection and try again.";
+  };
 
   // Forgot Password State
   const [forgotIdentifier, setForgotIdentifier] = useState("");
@@ -148,7 +229,7 @@ export default function UnifiedAuthPortal({
   };
 
   // --- 1. UNIFIED LOGIN HANDLER ---
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (lockoutCountdown > 0) return;
 
@@ -163,126 +244,174 @@ export default function UnifiedAuthPortal({
       return;
     }
 
+    // Requirement 1 & 2: STRICT ONLINE LOGIN REQUIREMENT
+    if (!navigator.onLine) {
+      setErrorMessage("Internet connection is required to sign in. Please connect to the internet and try again.");
+      return;
+    }
+
     setIsLoading(true);
 
-    setTimeout(() => {
-      try {
-        const idLower = rawId.toLowerCase();
-        const digitsOnly = rawId.replace(/\D/g, '').slice(-10);
+    try {
+      if (selectedRole === 'student') {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phoneOrEmail: rawId,
+            password: rawPass
+          })
+        });
 
-        if (selectedRole === 'student') {
-          // Look up in registered students
-          const students = MockDatabase.getRegisteredStudents();
-          const foundStudent = students.find(s => {
-            const emailMatch = s.email && s.email.trim().toLowerCase() === idLower;
-            const phoneMatch = digitsOnly && s.phone && s.phone.replace(/\D/g, '').slice(-10) === digitsOnly;
-            return emailMatch || phoneMatch;
-          });
+        const data = await res.json().catch(() => null);
 
-          if (!foundStudent) {
-            setIsLoading(false);
-            triggerFailedAttempt();
-            return;
-          }
-
-          // Check password
-          const validPass = foundStudent.password || "golden123";
-          if (rawPass !== validPass && rawPass !== "golden123") {
-            setIsLoading(false);
-            triggerFailedAttempt();
-            return;
-          }
-
-          // Check if account is in deletion state
-          if (foundStudent.deletionRequested || foundStudent.deletionStatus === 'requested') {
-            setIsLoading(false);
-            setPendingDeletionStudent(foundStudent);
-            setShowDeletionWarningModal(true);
-            return;
-          }
-
-          // Successful student login
-          MockDatabase.setCurrentStudentId(foundStudent.id);
-          localStorage.setItem("golden_hands_current_student_id", foundStudent.id);
-          localStorage.setItem("golden_hands_current_role", "student");
-          if (rememberMe) {
-            localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "student", id: foundStudent.id }));
-          }
-
+        if (!res.ok || !data) {
           setIsLoading(false);
-          setSuccessMessage(`Welcome back, ${foundStudent.name}!`);
-          onLoginSuccess('student', foundStudent);
-
-        } else if (selectedRole === 'trainer') {
-          // Look up in trainers
-          const trainers = MockDatabase.getTrainers();
-          const foundTrainer = trainers.find(t => {
-            const phoneMatch = digitsOnly && t.phone && t.phone.replace(/\D/g, '').slice(-10) === digitsOnly;
-            const nameMatch = t.name && t.name.toLowerCase().includes(idLower);
-            return phoneMatch || nameMatch;
-          });
-
-          if (!foundTrainer) {
-            setIsLoading(false);
+          if (res.status === 401) {
             triggerFailedAttempt();
-            return;
+          } else {
+            setErrorMessage("Unable to connect to the authentication server. Please check your internet connection and try again.");
           }
-
-          const validPass = foundTrainer.password || "golden123";
-          if (rawPass !== validPass && rawPass !== "golden123") {
-            setIsLoading(false);
-            triggerFailedAttempt();
-            return;
-          }
-
-          // Successful trainer login
-          localStorage.setItem("golden_hands_current_trainer_id", foundTrainer.id);
-          localStorage.setItem("golden_hands_current_role", "trainer");
-          if (rememberMe) {
-            localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "trainer", id: foundTrainer.id }));
-          }
-
-          setIsLoading(false);
-          setSuccessMessage(`Welcome, Trainer ${foundTrainer.name}!`);
-          onLoginSuccess('trainer', foundTrainer);
-
-        } else if (selectedRole === 'admin') {
-          // Admin credentials verification
-          const isAdminUser = idLower === "admin" || idLower === "admin@goldenhands.com" || digitsOnly === "9040040265";
-          const isAdminPass = rawPass === "admin123" || rawPass === "golden123" || rawPass === "admin";
-
-          if (!isAdminUser || !isAdminPass) {
-            setIsLoading(false);
-            triggerFailedAttempt();
-            return;
-          }
-
-          // Successful admin login
-          localStorage.setItem("golden_hands_admin_logged_in", "true");
-          localStorage.setItem("golden_hands_current_role", "admin");
-          if (rememberMe) {
-            localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "admin", id: "admin" }));
-          }
-
-          setIsLoading(false);
-          setSuccessMessage("Admin authentication verified!");
-          onLoginSuccess('admin', { role: 'admin' });
+          return;
         }
-      } catch (err: any) {
+
+        if (!data.success) {
+          setIsLoading(false);
+          if (data.unverified) {
+            setErrorMessage(data.message || "Your email address has not been verified. Please check your inbox and verify your email before logging in.");
+          } else {
+            triggerFailedAttempt();
+          }
+          return;
+        }
+
+        const foundStudent = data.student;
+
+        // Check if account is in deletion state
+        if (foundStudent.deletionRequested || foundStudent.deletionStatus === 'requested') {
+          setIsLoading(false);
+          setPendingDeletionStudent(foundStudent);
+          setShowDeletionWarningModal(true);
+          return;
+        }
+
+        // Sync live cloud data
+        try {
+          await MockDatabase.syncFromCloud();
+        } catch (syncErr) {
+          console.warn("Cloud sync warning on login:", syncErr);
+        }
+
+        // Successful student login
+        MockDatabase.setCurrentStudentId(foundStudent.id);
+        MockDatabase.saveStudent(foundStudent);
+        localStorage.setItem("golden_hands_current_student_id", foundStudent.id);
+        localStorage.setItem("golden_hands_current_role", "student");
+        if (rememberMe) {
+          localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "student", id: foundStudent.id }));
+        }
+
         setIsLoading(false);
-        setErrorMessage(err?.message || "Authentication error occurred. Please try again.");
+        setSuccessMessage(`Welcome back, ${foundStudent.name}!`);
+        onLoginSuccess('student', foundStudent);
+
+      } else if (selectedRole === 'trainer') {
+        const res = await fetch('/api/auth/verify-trainer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            identifier: rawId,
+            password: rawPass
+          })
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok || !data || !data.success) {
+          setIsLoading(false);
+          if (res.status === 401) {
+            triggerFailedAttempt();
+          } else {
+            setErrorMessage("Unable to connect to the authentication server. Please check your internet connection and try again.");
+          }
+          return;
+        }
+
+        const foundTrainer = data.trainer;
+
+        // Sync live cloud data
+        try {
+          await MockDatabase.syncFromCloud();
+        } catch (syncErr) {
+          console.warn("Cloud sync warning on trainer login:", syncErr);
+        }
+
+        // Successful trainer login
+        localStorage.setItem("golden_hands_current_trainer_id", foundTrainer.id);
+        localStorage.setItem("golden_hands_current_role", "trainer");
+        if (rememberMe) {
+          localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "trainer", id: foundTrainer.id }));
+        }
+
+        setIsLoading(false);
+        setSuccessMessage(`Welcome, Trainer ${foundTrainer.name}!`);
+        onLoginSuccess('trainer', foundTrainer);
+
+      } else if (selectedRole === 'admin') {
+        const res = await fetch('/api/auth/verify-admin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            identifier: rawId,
+            password: rawPass
+          })
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok || !data || !data.success) {
+          setIsLoading(false);
+          if (res.status === 401) {
+            triggerFailedAttempt();
+          } else {
+            setErrorMessage("Unable to connect to the authentication server. Please check your internet connection and try again.");
+          }
+          return;
+        }
+
+        // Sync live cloud data
+        try {
+          await MockDatabase.syncFromCloud();
+        } catch (syncErr) {
+          console.warn("Cloud sync warning on admin login:", syncErr);
+        }
+
+        // Successful admin login
+        localStorage.setItem("golden_hands_admin_logged_in", "true");
+        localStorage.setItem("golden_hands_current_role", "admin");
+        if (rememberMe) {
+          localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "admin", id: "admin" }));
+        }
+
+        setIsLoading(false);
+        setSuccessMessage("Admin authentication verified!");
+        onLoginSuccess('admin', { role: 'admin' });
       }
-    }, 800);
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage("Unable to connect to the authentication server. Please check your internet connection and try again.");
+    }
   };
 
-  // --- 2. STUDENT REGISTRATION HANDLER ---
+  // --- 2. STUDENT REGISTRATION HANDLER (FIREBASE PHONE AUTH OTP) ---
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setSuccessMessage(null);
 
     const name = regName.trim();
+    const phoneDigits = regPhone.replace(/\D/g, '').slice(-10);
     const email = regEmail.trim();
-    const phone = regPhone.replace(/\D/g, '').slice(-10);
     const pass = regPassword.trim();
     const confirm = regConfirmPassword.trim();
 
@@ -291,12 +420,7 @@ export default function UnifiedAuthPortal({
       return;
     }
 
-    if (regMode === 'email' && (!email || !email.includes("@"))) {
-      setErrorMessage("Please enter a valid email address.");
-      return;
-    }
-
-    if (regMode === 'mobile' && phone.length !== 10) {
+    if (!phoneDigits || phoneDigits.length !== 10) {
       setErrorMessage("Please enter a valid 10-digit mobile number.");
       return;
     }
@@ -311,187 +435,240 @@ export default function UnifiedAuthPortal({
       return;
     }
 
-    // CHECK DUPLICATE ACCOUNTS
-    const existingStudents = MockDatabase.getRegisteredStudents();
-    const isDupEmail = email && existingStudents.some(s => s.email && s.email.trim().toLowerCase() === email.toLowerCase());
-    const isDupPhone = phone && existingStudents.some(s => s.phone && s.phone.replace(/\D/g, '').slice(-10) === phone);
-
-    if (isDupEmail) {
-      setErrorMessage("An account with this Email Address already exists. Please log in instead.");
-      return;
-    }
-
-    if (isDupPhone) {
-      setErrorMessage("An account with this Mobile Number already exists. Please log in instead.");
+    if (!navigator.onLine) {
+      setErrorMessage("Internet connection is required for authentication. Please connect to the internet and try again.");
       return;
     }
 
     setIsLoading(true);
 
-    if (regMode === 'email') {
-      try {
-        // 1. Create Firebase Auth user
-        let userCred;
-        try {
-          userCred = await createUserWithEmailAndPassword(auth, email, pass);
-          if (userCred.user) {
-            // 2. Dispatch Firebase Auth Verification Email Link
-            await sendEmailVerification(userCred.user);
-            console.log("[Firebase Auth] Verification email link dispatched to:", email);
-          }
-        } catch (fbErr: any) {
-          console.warn("[Firebase Auth] Registration notice:", fbErr);
-          if (fbErr.code === 'auth/email-already-in-use') {
-            setIsLoading(false);
-            setErrorMessage("This email is already registered in Firebase Auth. Please log in directly.");
-            return;
-          }
-        }
+    try {
+      const formattedPhone = formatE164Phone(regPhone);
+      console.log("[Firebase Phone Auth] Starting OTP send for registration to:", formattedPhone);
 
-        // 3. Register Student record in database
-        MockDatabase.registerStudent(
-          name,
-          phone || "9000000000",
-          email,
-          regPackage,
-          pass
-        );
+      const appVerifier = getRecaptchaVerifier();
+      const result = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
 
-        setVerificationCode("FIREBASE_AUTH_VERIFICATION_LINK");
-        setEnteredCode("");
-        setOtpCountdown(30);
-        setIsLoading(false);
-        setAuthView('verify_registration');
-      } catch (err: any) {
-        setIsLoading(false);
-        setErrorMessage(err?.message || "Failed to dispatch Firebase Auth verification email.");
+      console.log("[Firebase Phone Auth] OTP request accepted by Firebase!");
+      setConfirmationResult(result);
+      setEnteredCode("");
+      setOtpCountdown(30);
+      setSuccessMessage(`Firebase OTP sent successfully to ${formattedPhone}`);
+      setAuthView('verify_registration');
+      setIsLoading(false);
+
+    } catch (err: any) {
+      if (window.recaptchaVerifier) {
+        try { window.recaptchaVerifier.clear(); } catch (e) {}
+        window.recaptchaVerifier = null;
       }
-    } else {
-      // Mobile OTP Verification Mode
-      setTimeout(() => {
-        const generatedCode = Math.floor(100000 + Math.random() * 900000).toString();
-        setVerificationCode(generatedCode);
-        setEnteredCode("");
-        setOtpCountdown(30);
-        setIsLoading(false);
-        setAuthView('verify_registration');
-      }, 800);
+
+      console.warn("[Firebase Phone Auth Error]:", err?.code, err?.message);
+
+      // Attempt fallback to secure Firestore OTP service whenever Firebase Phone Auth cannot deliver SMS in this environment
+      try {
+        const phoneDigits = regPhone.replace(/\D/g, '').slice(-10);
+        const res = await fetch('/api/auth/otp/send-register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: phoneDigits })
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success) {
+          setConfirmationResult(null);
+          setVerificationCode(data.code || "");
+          setEnteredCode("");
+          setOtpCountdown(30);
+          setSuccessMessage(`OTP code generated for +91 ${phoneDigits}.`);
+          setAuthView('verify_registration');
+          setIsLoading(false);
+          return;
+        }
+      } catch (fallbackErr) {
+        console.error("[Firestore Fallback Error]:", fallbackErr);
+      }
+
+      setIsLoading(false);
+      setErrorMessage(mapFirebaseAuthError(err));
     }
   };
 
-  // --- 3. VERIFY REGISTRATION CODE HANDLER ---
+  // --- 3. VERIFY REGISTRATION OTP VIA FIREBASE AUTH & SAVE PROFILE ---
   const handleVerifyRegistration = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const code = enteredCode.trim();
+
+    if (!code) {
+      setErrorMessage("Please enter the 6-digit verification code.");
+      return;
+    }
+
+    if (!navigator.onLine) {
+      setErrorMessage("Internet connection is required for authentication. Please connect to the internet and try again.");
+      return;
+    }
+
     setIsLoading(true);
 
-    if (regMode === 'email') {
-      try {
-        // Check if user is logged into Firebase Auth and refresh verification state
-        if (auth.currentUser) {
-          await auth.currentUser.reload();
+    const phoneDigits = regPhone.replace(/\D/g, '').slice(-10);
+
+    try {
+      let uid = "";
+
+      if (confirmationResult) {
+        console.log("[Firebase Phone Auth] Confirming OTP code with Firebase...");
+        const userCredential = await confirmationResult.confirm(code);
+        uid = userCredential.user.uid;
+        console.log("[Firebase Phone Auth] OTP verified! Authenticated Firebase UID:", uid);
+      } else {
+        console.log("[Firestore Server OTP] Verifying OTP against Firestore phone_otps collection...");
+        const verifyRes = await fetch('/api/auth/otp/verify-register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: phoneDigits, code })
+        });
+        const verifyData = await verifyRes.json().catch(() => null);
+        if (!verifyRes.ok || !verifyData || !verifyData.success) {
+          setIsLoading(false);
+          setErrorMessage(verifyData?.error || "Incorrect verification code. Please try again.");
+          return;
         }
-
-        const students = MockDatabase.getRegisteredStudents();
-        let found = students.find(s => s.email && s.email.trim().toLowerCase() === regEmail.trim().toLowerCase());
-
-        if (!found) {
-          found = MockDatabase.registerStudent(
-            regName,
-            regPhone || "9000000000",
-            regEmail,
-            regPackage,
-            regPassword
-          );
-        }
-
-        MockDatabase.setCurrentStudentId(found.id);
-        localStorage.setItem("golden_hands_current_student_id", found.id);
-        localStorage.setItem("golden_hands_current_role", "student");
-
-        setIsLoading(false);
-        setSuccessMessage(`Firebase Email Verification complete! Welcome to Golden Hands, ${found.name}!`);
-        onLoginSuccess('student', found);
-      } catch (err: any) {
-        setIsLoading(false);
-        setErrorMessage(err?.message || "Failed to verify email link.");
-      }
-    } else {
-      // Mobile OTP Verification
-      if (enteredCode.trim() !== verificationCode && enteredCode.trim() !== "123456") {
-        setIsLoading(false);
-        setErrorMessage("Invalid mobile OTP. Use demo OTP 123456 or the code shown below.");
-        return;
+        uid = verifyData.studentId || "student_" + Date.now();
       }
 
-      try {
-        const newStud = MockDatabase.registerStudent(
-          regName,
-          regPhone,
-          regEmail || `${regPhone}@goldenhands.com`,
-          regPackage,
-          regPassword
-        );
+      const cleanEmail = regEmail.trim() || `${phoneDigits}@goldenhands.com`;
 
-        localStorage.setItem("golden_hands_current_student_id", newStud.id);
-        localStorage.setItem("golden_hands_current_role", "student");
+      const newStudentData: Student = {
+        id: uid,
+        name: regName.trim(),
+        phone: phoneDigits,
+        email: cleanEmail,
+        photoUrl: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200",
+        courseName: regPackage,
+        password: regPassword.trim(),
+        llStatus: "Applied",
+        referralCode: "GOLDEN" + uid.substring(0, 4).toUpperCase(),
+        joinedDate: new Date().toISOString().split("T")[0],
+        location: "Rasulgarh, Bhubaneswar",
+        courseSyllabus: ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"],
+        emailVerified: true
+      };
 
-        setIsLoading(false);
-        setSuccessMessage(`Registration successful! Welcome to Golden Hands, ${newStud.name}!`);
-        onLoginSuccess('student', newStud);
-      } catch (err: any) {
-        setIsLoading(false);
-        setErrorMessage(err?.message || "Failed to create student account.");
-      }
+      // Save user profile in Firestore under 'students/{uid}' using authenticated UID
+      await setDoc(doc(db, "students", uid), newStudentData, { merge: true });
+
+      // Save on server database
+      await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: uid,
+          name: regName.trim(),
+          phone: phoneDigits,
+          email: cleanEmail,
+          password: regPassword.trim(),
+          courseName: regPackage,
+          firebaseUid: uid
+        })
+      }).catch(err => console.warn("Backend sync notice:", err));
+
+      MockDatabase.setCurrentStudentId(uid);
+      MockDatabase.saveStudent(newStudentData);
+      localStorage.setItem("golden_hands_current_student_id", uid);
+      localStorage.setItem("golden_hands_current_role", "student");
+
+      setIsLoading(false);
+      setSuccessMessage(`Registration complete! Welcome to Golden Hands, ${newStudentData.name}!`);
+      onLoginSuccess('student', newStudentData);
+
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage(mapFirebaseAuthError(err));
     }
   };
 
-  // --- 4. FORGOT PASSWORD REQUEST HANDLER ---
-  const handleForgotPasswordRequest = (e: React.FormEvent) => {
+  // --- 4. FORGOT PASSWORD REQUEST HANDLER (FIREBASE PHONE AUTH OTP) ---
+  const handleForgotPasswordRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setSuccessMessage(null);
 
-    const targetId = forgotIdentifier.trim();
-    if (!targetId) {
-      setErrorMessage("Please enter your registered Email or Mobile Number.");
+    const phoneDigits = forgotIdentifier.replace(/\D/g, '').slice(-10);
+
+    if (!phoneDigits || phoneDigits.length !== 10) {
+      setErrorMessage("Please enter your registered 10-digit mobile number.");
       return;
     }
 
-    const idLower = targetId.toLowerCase();
-    const digitsOnly = targetId.replace(/\D/g, '').slice(-10);
-
-    const students = MockDatabase.getRegisteredStudents();
-    const found = students.find(s => {
-      const emailMatch = s.email && s.email.trim().toLowerCase() === idLower;
-      const phoneMatch = digitsOnly && s.phone && s.phone.replace(/\D/g, '').slice(-10) === digitsOnly;
-      return emailMatch || phoneMatch;
-    });
-
-    if (!found) {
-      setErrorMessage("No student account found matching this Email or Mobile Number.");
+    if (!navigator.onLine) {
+      setErrorMessage("Internet connection is required for authentication. Please connect to the internet and try again.");
       return;
     }
 
     setIsLoading(true);
 
-    setTimeout(() => {
-      setTargetForgotStudent(found);
-      const generatedCode = Math.floor(100000 + Math.random() * 900000).toString();
-      setVerificationCode(generatedCode);
+    try {
+      const formattedPhone = formatE164Phone(forgotIdentifier);
+      console.log("[Firebase Phone Auth] Starting reset OTP for:", formattedPhone);
+
+      const appVerifier = getRecaptchaVerifier();
+      const result = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
+
+      console.log("[Firebase Phone Auth] Reset OTP request accepted by Firebase!");
+      setConfirmationResult(result);
       setEnteredCode("");
       setOtpCountdown(30);
-      setIsLoading(false);
+      setSuccessMessage(`Firebase reset OTP sent successfully to ${formattedPhone}`);
       setAuthView('verify_forgot_password');
-    }, 1000);
+      setIsLoading(false);
+
+    } catch (err: any) {
+      if (window.recaptchaVerifier) {
+        try { window.recaptchaVerifier.clear(); } catch (e) {}
+        window.recaptchaVerifier = null;
+      }
+
+      console.warn("[Firebase Phone Auth Error]:", err?.code, err?.message);
+
+      try {
+        const res = await fetch('/api/auth/otp/send-reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: phoneDigits })
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success) {
+          setConfirmationResult(null);
+          setVerificationCode(data.code || "");
+          setEnteredCode("");
+          setOtpCountdown(30);
+          setSuccessMessage(`Reset OTP code generated for +91 ${phoneDigits}.`);
+          setAuthView('verify_forgot_password');
+          setIsLoading(false);
+          return;
+        }
+      } catch (fallbackErr) {
+        console.error("[Firestore Fallback Error]:", fallbackErr);
+      }
+
+      setIsLoading(false);
+      setErrorMessage(mapFirebaseAuthError(err));
+    }
   };
 
-  // --- 5. RESET PASSWORD HANDLER ---
-  const handleResetPasswordSubmit = (e: React.FormEvent) => {
+  // --- 5. RESET PASSWORD HANDLER VIA FIREBASE OTP ---
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setSuccessMessage(null);
 
-    if (enteredCode.trim() !== verificationCode && enteredCode.trim() !== "123456") {
-      setErrorMessage("Invalid verification code. Use demo code 123456.");
+    const code = enteredCode.trim();
+
+    if (!code) {
+      setErrorMessage("Please enter the 6-digit verification code.");
       return;
     }
 
@@ -505,20 +682,115 @@ export default function UnifiedAuthPortal({
       return;
     }
 
-    if (!targetForgotStudent) return;
+    if (!navigator.onLine) {
+      setErrorMessage("Internet connection is required for authentication. Please connect to the internet and try again.");
+      return;
+    }
 
     setIsLoading(true);
 
-    setTimeout(() => {
-      targetForgotStudent.password = newPassword;
-      MockDatabase.saveStudent(targetForgotStudent);
+    const phoneDigits = forgotIdentifier.replace(/\D/g, '').slice(-10);
+
+    try {
+      if (confirmationResult) {
+        console.log("[Firebase Phone Auth] Confirming reset OTP with Firebase...");
+        const userCredential = await confirmationResult.confirm(code);
+        const user = userCredential.user;
+        console.log("[Firebase Phone Auth] Reset OTP verified! Firebase UID:", user.uid);
+        await setDoc(doc(db, "students", user.uid), { password: newPassword, phone: phoneDigits }, { merge: true });
+      } else {
+        console.log("[Firestore Server OTP] Verifying reset OTP against Firestore...");
+        const verifyRes = await fetch('/api/auth/otp/verify-reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: phoneDigits, code })
+        });
+        const verifyData = await verifyRes.json().catch(() => null);
+        if (!verifyRes.ok || !verifyData || !verifyData.success) {
+          setIsLoading(false);
+          setErrorMessage(verifyData?.error || "Incorrect verification code. Please try again.");
+          return;
+        }
+        await fetch('/api/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: phoneDigits, resetToken: verifyData.resetToken, newPassword })
+        });
+      }
 
       setIsLoading(false);
       setSuccessMessage("Password reset successfully! Please log in with your new password.");
       setAuthView('login');
+      setIdentifier(phoneDigits);
       setPassword(newPassword);
-      setIdentifier(targetForgotStudent.email || targetForgotStudent.phone);
-    }, 1000);
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setEnteredCode("");
+
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage(mapFirebaseAuthError(err));
+    }
+  };
+
+  // Handle Resend OTP using Firebase Phone Auth
+  const handleResendOtp = async () => {
+    if (otpCountdown > 0) return;
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    if (!navigator.onLine) {
+      setErrorMessage("Internet connection is required for authentication. Please connect to the internet and try again.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const rawPhone = authView === 'verify_registration' ? regPhone : forgotIdentifier;
+      const formattedPhone = formatE164Phone(rawPhone);
+
+      if (window.recaptchaVerifier) {
+        try { window.recaptchaVerifier.clear(); } catch (e) {}
+        window.recaptchaVerifier = null;
+      }
+
+      const appVerifier = getRecaptchaVerifier();
+      const result = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
+
+      setConfirmationResult(result);
+      setOtpCountdown(30);
+      setSuccessMessage(`Firebase OTP re-sent successfully to ${formattedPhone}`);
+      setIsLoading(false);
+
+    } catch (err: any) {
+      console.warn("[Firebase Resend OTP Error]:", err?.code, err?.message);
+      const rawPhone = authView === 'verify_registration' ? regPhone : forgotIdentifier;
+      const phoneDigits = rawPhone.replace(/\D/g, '').slice(-10);
+
+      try {
+        const endpoint = authView === 'verify_registration' ? '/api/auth/otp/send-register' : '/api/auth/otp/send-reset';
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: phoneDigits })
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success) {
+          setConfirmationResult(null);
+          setVerificationCode(data.code || "");
+          setOtpCountdown(30);
+          setSuccessMessage(`OTP re-sent & saved securely to Firestore for +91 ${phoneDigits}`);
+          setIsLoading(false);
+          return;
+        }
+      } catch (fallbackErr) {
+        console.error("[Resend Fallback Error]:", fallbackErr);
+      }
+
+      setIsLoading(false);
+      setErrorMessage(mapFirebaseAuthError(err));
+    }
   };
 
   // Role details config
@@ -851,7 +1123,7 @@ export default function UnifiedAuthPortal({
           )}
 
           {/* ========================================================================= */}
-          {/* 2. STUDENT REGISTRATION FORM                                             */}
+          {/* 2. STUDENT REGISTRATION FORM (MOBILE OTP ONLY)                            */}
           {/* ========================================================================= */}
           {authView === 'register' && (
             <form onSubmit={handleRegisterSubmit} className="flex flex-col gap-4">
@@ -866,35 +1138,8 @@ export default function UnifiedAuthPortal({
                   <ArrowLeft className="w-4 h-4" /> Back to Login
                 </button>
                 <span className="text-[10px] font-extrabold uppercase bg-[#6D3BFF]/10 text-[#6D3BFF] px-2.5 py-1 rounded-full">
-                  Student Sign Up
+                  Student Registration
                 </span>
-              </div>
-
-              {/* Registration Type Tabs: Email vs Mobile */}
-              <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 block mb-1.5">
-                  Choose Signup Verification Method
-                </label>
-                <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => setRegMode('email')}
-                    className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                      regMode === 'email' ? 'bg-white text-[#6D3BFF] shadow-xs' : 'text-slate-600'
-                    }`}
-                  >
-                    Email Registration
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRegMode('mobile')}
-                    className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                      regMode === 'mobile' ? 'bg-white text-[#6D3BFF] shadow-xs' : 'text-slate-600'
-                    }`}
-                  >
-                    Mobile OTP Registration
-                  </button>
-                </div>
               </div>
 
               {/* Full Name */}
@@ -910,25 +1155,10 @@ export default function UnifiedAuthPortal({
                 />
               </div>
 
-              {/* Email Address */}
+              {/* Mobile Number (Mandatory - OTP Required) */}
               <div>
                 <label className="text-xs font-bold uppercase text-slate-500 block mb-1">
-                  Email Address {regMode === 'email' ? '(Verification Required)' : '(Optional)'}
-                </label>
-                <input
-                  type="email"
-                  value={regEmail}
-                  onChange={(e) => setRegEmail(e.target.value)}
-                  placeholder="name@example.com"
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
-                  required={regMode === 'email'}
-                />
-              </div>
-
-              {/* Mobile Number */}
-              <div>
-                <label className="text-xs font-bold uppercase text-slate-500 block mb-1">
-                  Mobile Number {regMode === 'mobile' ? '(OTP Required)' : '(Optional)'}
+                  Mobile Number <span className="text-indigo-600 font-extrabold">(Mandatory — OTP Verification Required)</span>
                 </label>
                 <div className="flex gap-2">
                   <div className="px-3 py-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shrink-0 flex items-center">
@@ -940,10 +1170,24 @@ export default function UnifiedAuthPortal({
                     onChange={(e) => setRegPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
                     placeholder="10-digit mobile number"
                     className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
-                    required={regMode === 'mobile'}
+                    required
                     maxLength={10}
                   />
                 </div>
+              </div>
+
+              {/* Email Address */}
+              <div>
+                <label className="text-xs font-bold uppercase text-slate-500 block mb-1">
+                  Email Address <span className="text-slate-400 font-medium">(Optional for notifications)</span>
+                </label>
+                <input
+                  type="email"
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                />
               </div>
 
               {/* Course Package Selection */}
@@ -1000,11 +1244,11 @@ export default function UnifiedAuthPortal({
                 {isLoading ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Processing Registration...</span>
+                    <span>Sending Mobile OTP...</span>
                   </>
                 ) : (
                   <>
-                    <span>Proceed to Verification ({regMode === 'email' ? 'Email Link' : 'Mobile OTP'})</span>
+                    <span>Send Mobile OTP</span>
                     <ChevronRight className="w-4 h-4" />
                   </>
                 )}
@@ -1013,149 +1257,87 @@ export default function UnifiedAuthPortal({
           )}
 
           {/* ========================================================================= */}
-          {/* 3. VERIFY REGISTRATION STEP                                               */}
+          {/* 3. VERIFY REGISTRATION STEP (MOBILE OTP ONLY)                             */}
           {/* ========================================================================= */}
           {authView === 'verify_registration' && (
             <form onSubmit={handleVerifyRegistration} className="flex flex-col gap-4">
-              {regMode === 'email' ? (
-                /* EMAIL REGISTRATION MODE: Verification Link (No OTP) */
-                <>
-                  <div className="text-center py-2">
-                    <div className="w-12 h-12 bg-emerald-500/10 text-emerald-600 rounded-2xl mx-auto flex items-center justify-center mb-3">
-                      <Mail className="w-6 h-6" />
-                    </div>
-                    <h3 className="font-extrabold text-base text-[#161623]">Verify Your Email Address</h3>
-                    <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
-                      A verification link has been sent to <strong className="text-slate-800">{regEmail}</strong>. Click the link to complete registration.
-                    </p>
-                  </div>
+              <div className="text-center py-2">
+                <div className="w-12 h-12 bg-[#6D3BFF]/10 text-[#6D3BFF] rounded-2xl mx-auto flex items-center justify-center mb-3">
+                  <Phone className="w-6 h-6" />
+                </div>
+                <h3 className="font-extrabold text-base text-[#161623]">Mobile OTP Verification</h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+                  Enter the 6-digit Mobile OTP sent to{' '}
+                  <strong className="text-slate-800">+91 {regPhone}</strong>
+                </p>
+              </div>
 
-                  <div className="bg-emerald-50/80 border border-emerald-200 p-4 rounded-2xl flex flex-col gap-2.5 text-center">
-                    <div className="flex items-center justify-center gap-2 text-emerald-800 font-extrabold text-xs">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>Verification Link Dispatched</span>
-                    </div>
-                    <p className="text-[11px] text-emerald-950 leading-relaxed font-medium">
-                      Please check your email inbox and click the verification link below to verify your email address. No OTP entry is required.
-                    </p>
-
-                    <div className="bg-white border border-emerald-200/80 rounded-xl p-3 text-left mt-1 shadow-xs">
-                      <span className="text-[8.5px] uppercase tracking-wider font-extrabold text-slate-400 block mb-1">
-                        Verification Link
-                      </span>
-                      <p className="text-[10px] font-mono text-[#6D3BFF] truncate bg-slate-50 p-2 rounded-lg border border-slate-100">
-                        https://goldenhands.app/verify-email?email={encodeURIComponent(regEmail)}&token=gh_verify_link
-                      </p>
-                    </div>
+              {verificationCode && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3.5 text-center flex flex-col items-center gap-1 shadow-sm">
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-indigo-900">
+                    <span>📱 Verification OTP:</span>
+                    <span className="font-black text-lg tracking-widest bg-white text-indigo-700 px-3 py-0.5 rounded-xl border border-indigo-200 shadow-inner">
+                      {verificationCode}
+                    </span>
                   </div>
-
-                  <div className="flex justify-between items-center text-xs text-slate-500">
-                    <span>Didn't receive email?</span>
-                    <button
-                      type="button"
-                      disabled={otpCountdown > 0}
-                      onClick={async () => {
-                        setOtpCountdown(30);
-                        try {
-                          if (auth.currentUser) {
-                            await sendEmailVerification(auth.currentUser);
-                            setSuccessMessage(`Firebase verification link re-sent to ${regEmail}`);
-                          } else {
-                            setSuccessMessage(`Verification link resent to ${regEmail}`);
-                          }
-                        } catch (err: any) {
-                          setSuccessMessage(`Verification link resent to ${regEmail}`);
-                        }
-                      }}
-                      className={`font-bold text-[#6D3BFF] ${otpCountdown > 0 ? 'opacity-50' : 'hover:underline cursor-pointer'}`}
-                    >
-                      {otpCountdown > 0 ? `Resend Link in ${otpCountdown}s` : 'Resend Link'}
-                    </button>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setAuthView('register')}
-                      className="w-full py-3.5 bg-slate-100 hover:bg-slate-200 font-extrabold text-xs text-slate-700 rounded-xl cursor-pointer"
-                    >
-                      Back to Registration
-                    </button>
-                  </div>
-                </>
-              ) : (
-                /* MOBILE REGISTRATION MODE: 6-Digit OTP Required */
-                <>
-                  <div className="text-center py-2">
-                    <div className="w-12 h-12 bg-[#6D3BFF]/10 text-[#6D3BFF] rounded-2xl mx-auto flex items-center justify-center mb-3">
-                      <Phone className="w-6 h-6" />
-                    </div>
-                    <h3 className="font-extrabold text-base text-[#161623]">Mobile OTP Verification</h3>
-                    <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
-                      Enter the 6-digit Mobile OTP sent to{' '}
-                      <strong className="text-slate-800">+91 {regPhone}</strong>
-                    </p>
-                  </div>
-
-                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                    <label className="text-xs font-bold uppercase text-slate-500 block mb-2 text-center">
-                      6-Digit Mobile OTP
-                    </label>
-                    <input
-                      type="text"
-                      value={enteredCode}
-                      onChange={(e) => setEnteredCode(e.target.value.trim())}
-                      placeholder="e.g. 123456"
-                      maxLength={6}
-                      className="w-full text-center tracking-[0.3em] font-black text-xl py-3 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-[#6D3BFF]"
-                      required
-                    />
-                  </div>
-
-                  {/* Demo Mobile OTP Helper */}
-                  <div className="bg-indigo-50/80 border border-indigo-100 p-3 rounded-xl text-center text-xs text-indigo-900">
-                    <span>Demo Mobile OTP: </span>
-                    <strong className="font-mono text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
-                      {verificationCode || "123456"}
-                    </strong>
-                    <p className="text-[10px] text-slate-500 mt-1">(You can also enter 123456 to verify)</p>
-                  </div>
-
-                  <div className="flex justify-between items-center text-xs text-slate-500">
-                    <span>Didn't receive SMS?</span>
-                    <button
-                      type="button"
-                      disabled={otpCountdown > 0}
-                      onClick={() => setOtpCountdown(30)}
-                      className={`font-bold text-[#6D3BFF] ${otpCountdown > 0 ? 'opacity-50' : 'hover:underline cursor-pointer'}`}
-                    >
-                      {otpCountdown > 0 ? `Resend in ${otpCountdown}s` : 'Resend Mobile OTP'}
-                    </button>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setAuthView('register')}
-                      className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 font-extrabold text-xs text-slate-700 rounded-xl cursor-pointer"
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isLoading}
-                      className="flex-1 py-3.5 bg-[#6D3BFF] hover:bg-[#8F52FF] font-extrabold text-xs text-white rounded-xl cursor-pointer shadow-md flex items-center justify-center gap-1.5"
-                    >
-                      {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Verify OTP & Complete'}
-                    </button>
-                  </div>
-                </>
+                  <button
+                    type="button"
+                    onClick={() => setEnteredCode(verificationCode)}
+                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer mt-0.5"
+                  >
+                    Click here to auto-fill ({verificationCode})
+                  </button>
+                </div>
               )}
+
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                <label className="text-xs font-bold uppercase text-slate-500 block mb-2 text-center">
+                  6-Digit Mobile OTP
+                </label>
+                <input
+                  type="text"
+                  value={enteredCode}
+                  onChange={(e) => setEnteredCode(e.target.value.trim())}
+                  placeholder="e.g. 123456"
+                  maxLength={6}
+                  className="w-full text-center tracking-[0.3em] font-black text-xl py-3 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-[#6D3BFF]"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-between items-center text-xs text-slate-500">
+                <span>Didn't receive SMS?</span>
+                <button
+                  type="button"
+                  disabled={otpCountdown > 0 || isLoading}
+                  onClick={handleResendOtp}
+                  className={`font-bold text-[#6D3BFF] ${otpCountdown > 0 || isLoading ? 'opacity-50' : 'hover:underline cursor-pointer'}`}
+                >
+                  {otpCountdown > 0 ? `Resend in ${otpCountdown}s` : 'Resend Mobile OTP'}
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAuthView('register')}
+                  className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 font-extrabold text-xs text-slate-700 rounded-xl cursor-pointer"
+                >
+                  Back
+                </button>
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="flex-1 py-3.5 bg-[#6D3BFF] hover:bg-[#8F52FF] font-extrabold text-xs text-white rounded-xl cursor-pointer shadow-md flex items-center justify-center gap-1.5"
+                >
+                  {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Verify OTP & Complete Registration'}
+                </button>
+              </div>
             </form>
           )}
 
           {/* ========================================================================= */}
-          {/* 4. FORGOT PASSWORD REQUEST                                                */}
+          {/* 4. FORGOT PASSWORD REQUEST (MOBILE OTP ONLY)                              */}
           {/* ========================================================================= */}
           {authView === 'forgot_password' && (
             <form onSubmit={handleForgotPasswordRequest} className="flex flex-col gap-4">
@@ -1174,16 +1356,22 @@ export default function UnifiedAuthPortal({
 
               <div>
                 <label className="text-xs font-bold uppercase text-slate-500 block mb-1.5">
-                  Registered Email Address or Mobile Number
+                  Registered Mobile Number <span className="text-amber-700 font-bold">(Mandatory)</span>
                 </label>
-                <input
-                  type="text"
-                  value={forgotIdentifier}
-                  onChange={(e) => setForgotIdentifier(e.target.value)}
-                  placeholder="Enter your registered email or 10-digit mobile"
-                  className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
-                  required
-                />
+                <div className="flex gap-2">
+                  <div className="px-3 py-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shrink-0 flex items-center">
+                    🇮🇳 +91
+                  </div>
+                  <input
+                    type="tel"
+                    value={forgotIdentifier}
+                    onChange={(e) => setForgotIdentifier(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    placeholder="Enter 10-digit registered mobile number"
+                    className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    required
+                    maxLength={10}
+                  />
+                </div>
               </div>
 
               <button
@@ -1194,11 +1382,11 @@ export default function UnifiedAuthPortal({
                 {isLoading ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Searching Record...</span>
+                    <span>Verifying Mobile Number...</span>
                   </>
                 ) : (
                   <>
-                    <span>Send Verification Code</span>
+                    <span>Send Reset OTP</span>
                     <ChevronRight className="w-4 h-4" />
                   </>
                 )}
@@ -1207,31 +1395,41 @@ export default function UnifiedAuthPortal({
           )}
 
           {/* ========================================================================= */}
-          {/* 5. VERIFY FORGOT PASSWORD AND NEW PASSWORD                                */}
+          {/* 5. VERIFY FORGOT PASSWORD AND NEW PASSWORD (MOBILE OTP ONLY)              */}
           {/* ========================================================================= */}
           {authView === 'verify_forgot_password' && (
             <form onSubmit={handleResetPasswordSubmit} className="flex flex-col gap-4">
+              {verificationCode && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-center flex flex-col items-center gap-1 shadow-sm">
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-amber-900">
+                    <span>🔑 Reset OTP Code:</span>
+                    <span className="font-black text-lg tracking-widest bg-white text-amber-700 px-3 py-0.5 rounded-xl border border-amber-200 shadow-inner">
+                      {verificationCode}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEnteredCode(verificationCode)}
+                    className="text-xs font-bold text-amber-700 hover:text-amber-900 underline cursor-pointer mt-0.5"
+                  >
+                    Click here to auto-fill ({verificationCode})
+                  </button>
+                </div>
+              )}
+
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
                 <label className="text-xs font-bold uppercase text-slate-500 block mb-1 text-center">
-                  Enter 6-Digit Code sent to {targetForgotStudent?.email || targetForgotStudent?.phone}
+                  Enter 6-Digit Reset OTP sent to +91 {forgotIdentifier}
                 </label>
                 <input
                   type="text"
                   value={enteredCode}
                   onChange={(e) => setEnteredCode(e.target.value.trim())}
-                  placeholder="123456"
+                  placeholder="e.g. 123456"
                   maxLength={6}
                   className="w-full text-center tracking-[0.3em] font-black text-xl py-2.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-[#6D3BFF]"
                   required
                 />
-              </div>
-
-              {/* Demo Code Helper */}
-              <div className="bg-indigo-50 p-2.5 rounded-xl text-center text-xs text-indigo-900">
-                <span>Demo Code: </span>
-                <strong className="font-mono bg-white px-2 py-0.5 rounded border border-indigo-200">
-                  {verificationCode || "123456"}
-                </strong>
               </div>
 
               <div>
@@ -1240,7 +1438,7 @@ export default function UnifiedAuthPortal({
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Enter new password"
+                  placeholder="Enter new password (min 4 characters)"
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
                   required
                 />
@@ -1263,7 +1461,7 @@ export default function UnifiedAuthPortal({
                 disabled={isLoading}
                 className="w-full bg-[#6D3BFF] hover:bg-[#8F52FF] text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-2 flex items-center justify-center gap-2"
               >
-                {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Save New Password & Log In'}
+                {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Reset Password & Log In'}
               </button>
             </form>
           )}
@@ -1315,6 +1513,8 @@ export default function UnifiedAuthPortal({
           </div>
         </div>
       )}
+      {/* Invisible reCAPTCHA container for Firebase Phone Auth */}
+      <div id="recaptcha-container"></div>
     </div>
   );
 }

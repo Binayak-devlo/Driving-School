@@ -40,6 +40,23 @@
       },
       "required": ["email", "token", "expiresAt", "used"]
     },
+    "PhoneOtp": {
+      "title": "PhoneOtp",
+      "description": "Secure phone OTP verification records",
+      "type": "object",
+      "properties": {
+        "phone": { "type": "string" },
+        "code": { "type": "string" },
+        "expiresAt": { "type": "number" },
+        "used": { "type": "boolean" },
+        "verified": { "type": "boolean" },
+        "attempts": { "type": "number" },
+        "resetToken": { "type": "string" },
+        "resetTokenExpiresAt": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["phone", "code", "expiresAt"]
+    },
     "Trainer": {
       "title": "Trainer",
       "description": "Driving coach details",
@@ -205,6 +222,10 @@
     "email_verifications/{tokenId}": {
       "schema": "EmailVerificationToken",
       "description": "Secure tokens for student email validation"
+    },
+    "phone_otps/{otpId}": {
+      "schema": "PhoneOtp",
+      "description": "Secure OTP records for mobile registration and password resets"
     }
   }
 }

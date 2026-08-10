@@ -1,27 +1,16 @@
 import { initializeApp } from "firebase/app";
-import { initializeFirestore, doc, setDoc, deleteDoc, getDocs, collection, getDocFromServer, enableIndexedDbPersistence } from "firebase/firestore";
+import { initializeFirestore, doc, setDoc, deleteDoc, getDocs, getDocsFromServer, collection, getDocFromServer, enableIndexedDbPersistence } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import appletConfig from "../../firebase-applet-config.json";
 
-// Config for Auth (user's custom auth project where student/trainer credentials reside)
-const authFirebaseConfig = {
-  apiKey: "AIzaSyCN2N8Pm92laUqBAngxLVyyb7NMHvo__cs",
-  authDomain: "golden-hands-81be8.firebaseapp.com",
-  projectId: "golden-hands-81be8",
-  storageBucket: "golden-hands-81be8.firebasestorage.app",
-  messagingSenderId: "922377829851",
-  appId: "1:922377829851:web:de1fb3d8360cd428453bfe"
-};
+// Initialize single Firebase app with official applet config
+const app = initializeApp(appletConfig);
 
-// Initialize app for Auth
-const authApp = initializeApp(authFirebaseConfig, "authApp");
-export const auth = getAuth(authApp);
+// Firebase Authentication instance
+export const auth = getAuth(app);
 
-// Initialize app for Firestore Database (platform-managed db)
-const dbApp = initializeApp(appletConfig);
-
-// Initialize Firestore with custom database ID AND long polling for maximum mobile/webview connection stability
-export const db = initializeFirestore(dbApp, {
+// Initialize Firestore with custom database ID AND long polling for maximum connection stability
+export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 }, appletConfig.firestoreDatabaseId);
 
@@ -175,7 +164,7 @@ export async function deleteFromCloud(collectionName: string, docId: string) {
 export async function loadCollectionFromCloud(collectionName: string): Promise<any[]> {
   try {
     const querySnapshot = await withTimeout(
-      getDocs(collection(db, collectionName)),
+      getDocsFromServer(collection(db, collectionName)),
       8000,
       `Loading collection ${collectionName} timed out`
     );

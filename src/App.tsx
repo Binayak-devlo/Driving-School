@@ -16,67 +16,21 @@ import { MockDatabase } from "./utils/db";
 import { NavState } from "./types";
 
 function getInitialNavState(): NavState {
-  const isStudentLoggedIn = !!localStorage.getItem("golden_hands_current_student_id");
-  const isTrainerLoggedIn = !!localStorage.getItem("golden_hands_current_trainer_id");
-  const isAdminLoggedIn = localStorage.getItem("golden_hands_admin_logged_in") === "true";
-
-  if (isStudentLoggedIn) {
-    return {
-      activeView: 'student',
-      studentScreen: 'app',
-      studentTab: 'home',
-      studentSubPage: null,
-      trainerLoggedIn: false,
-      trainerTab: 'schedule',
-      trainerSelectedBookingId: null,
-      adminLoggedIn: false,
-      adminTab: 'analytics',
-      adminPreviewDocId: null,
-      seq: 2
-    };
-  } else if (isTrainerLoggedIn) {
-    return {
-      activeView: 'trainer',
-      studentScreen: 'login',
-      studentTab: 'home',
-      studentSubPage: null,
-      trainerLoggedIn: true,
-      trainerTab: 'schedule',
-      trainerSelectedBookingId: null,
-      adminLoggedIn: false,
-      adminTab: 'analytics',
-      adminPreviewDocId: null,
-      seq: 2
-    };
-  } else if (isAdminLoggedIn) {
-    return {
-      activeView: 'admin',
-      studentScreen: 'login',
-      studentTab: 'home',
-      studentSubPage: null,
-      trainerLoggedIn: false,
-      trainerTab: 'schedule',
-      trainerSelectedBookingId: null,
-      adminLoggedIn: true,
-      adminTab: 'analytics',
-      adminPreviewDocId: null,
-      seq: 2
-    };
-  } else {
-    return {
-      activeView: 'portal',
-      studentScreen: 'login',
-      studentTab: 'home',
-      studentSubPage: null,
-      trainerLoggedIn: false,
-      trainerTab: 'schedule',
-      trainerSelectedBookingId: null,
-      adminLoggedIn: false,
-      adminTab: 'analytics',
-      adminPreviewDocId: null,
-      seq: 2
-    };
-  }
+  // Default to 'portal' hub so application opens cleanly on main landing/auth portal
+  // Live server session validation will run on mount and confirm session with live backend if online
+  return {
+    activeView: 'portal',
+    studentScreen: 'login',
+    studentTab: 'home',
+    studentSubPage: null,
+    trainerLoggedIn: false,
+    trainerTab: 'schedule',
+    trainerSelectedBookingId: null,
+    adminLoggedIn: false,
+    adminTab: 'analytics',
+    adminPreviewDocId: null,
+    seq: 2
+  };
 }
 
 export default function App() {
@@ -106,7 +60,7 @@ export default function App() {
   // Back navigation management states
   const [currentNavState, setCurrentNavState] = useState<NavState>(() => {
     const histState = window.history.state;
-    if (histState && histState.activeView) {
+    if (histState && histState.activeView && histState.activeView !== 'admin') {
       return histState;
     }
     return getInitialNavState();
@@ -141,6 +95,107 @@ export default function App() {
   useEffect(() => {
     currentNavStateRef.current = currentNavState;
   }, [currentNavState]);
+
+  // Requirement 4 & 8: Validate startup session with live server and block offline cached auth restoration
+  useEffect(() => {
+    const validateStartupSession = async () => {
+      const currentStudentId = localStorage.getItem("golden_hands_current_student_id");
+      const currentTrainerId = localStorage.getItem("golden_hands_current_trainer_id");
+      const isAdminLoggedIn = localStorage.getItem("golden_hands_admin_logged_in") === "true";
+
+        // Clear any stale local admin auto-login flag so app opens on main Auth Portal
+        localStorage.removeItem("golden_hands_admin_logged_in");
+
+        if (currentStudentId || currentTrainerId) {
+          // Step 1: Check offline status
+          if (!navigator.onLine) {
+            console.warn("Offline detected during startup session validation. Access blocked.");
+            localStorage.removeItem("golden_hands_current_student_id");
+            localStorage.removeItem("golden_hands_current_trainer_id");
+
+            setCurrentNavState(prev => ({
+              ...prev,
+              activeView: 'portal',
+              studentScreen: 'login',
+              trainerLoggedIn: false,
+              adminLoggedIn: false
+            }));
+            triggerAppToast("Internet connection is required to sign in. Please connect to the internet and try again.");
+            return;
+          }
+
+          // Step 2: Live Server Session Verification
+          try {
+            let role: 'student' | 'trainer' = 'student';
+            let id = currentStudentId || "";
+
+            if (currentTrainerId) {
+              role = 'trainer';
+              id = currentTrainerId;
+            }
+
+            const res = await fetch('/api/auth/verify-session', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ role, id })
+            });
+
+            const data = await res.json().catch(() => null);
+
+            if (!res.ok || !data || !data.valid) {
+              console.warn("Live server session validation failed:", data?.error || "Invalid session");
+              localStorage.removeItem("golden_hands_current_student_id");
+              localStorage.removeItem("golden_hands_current_trainer_id");
+
+              setCurrentNavState(prev => ({
+                ...prev,
+                activeView: 'portal',
+                studentScreen: 'login',
+                trainerLoggedIn: false,
+                adminLoggedIn: false
+              }));
+              if (data?.error) {
+                triggerAppToast(data.error);
+              }
+              return;
+            }
+
+            // Live server confirmed session! Restore view and sync cloud data
+            await MockDatabase.syncFromCloud();
+
+            if (role === 'student') {
+              setCurrentNavState(prev => ({
+                ...prev,
+                activeView: 'student',
+                studentScreen: 'app'
+              }));
+            } else if (role === 'trainer') {
+              setCurrentNavState(prev => ({
+                ...prev,
+                activeView: 'trainer',
+                trainerLoggedIn: true
+              }));
+            }
+
+          } catch (err) {
+            console.warn("Live server connection error during startup:", err);
+            localStorage.removeItem("golden_hands_current_student_id");
+            localStorage.removeItem("golden_hands_current_trainer_id");
+
+            setCurrentNavState(prev => ({
+              ...prev,
+              activeView: 'portal',
+              studentScreen: 'login',
+              trainerLoggedIn: false,
+              adminLoggedIn: false
+            }));
+            triggerAppToast("Internet connection is required to securely sign in. Please connect to the internet and try again.");
+          }
+        }
+    };
+
+    validateStartupSession();
+  }, []);
 
   const triggerAppToast = (msg: string) => {
     setAppToast(msg);

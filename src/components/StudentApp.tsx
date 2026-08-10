@@ -1626,6 +1626,12 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+
+    if (!navigator.onLine) {
+      setAuthError("Internet connection is required to securely sign in. Please connect to the internet and try again.");
+      return;
+    }
+
     if (!phoneInput) return;
 
     if (authMode === 'otp') {
@@ -1913,6 +1919,11 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+
+    if (!navigator.onLine) {
+      setAuthError("Internet connection is required to process registration. Please connect to the internet and try again.");
+      return;
+    }
 
     if (!nameInput) {
       setAuthError("Please fill in your Name.");

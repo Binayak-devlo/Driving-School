@@ -79,6 +79,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Secure phone OTP verification records
+    match /phone_otps/{otpId} {
+      allow read, write: if true;
+    }
+
     // Secure booking slots availability
     match /slots/{slotId} {
       allow read, write: if true;

@@ -31,7 +31,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     if (navState && navState.activeView === 'admin' && navState.adminLoggedIn !== undefined) {
       return navState.adminLoggedIn;
     }
-    return localStorage.getItem("golden_hands_admin_logged_in") === "true";
+    return false;
   });
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPasswordInput, setAdminPasswordInput] = useState("");
@@ -1077,27 +1077,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
         <div className="flex flex-wrap items-center gap-3 md:gap-4 w-full md:w-auto">
           <div className="text-right hidden sm:block mr-2">
             <p className="text-xs font-black text-[#161623]">System Administrator</p>
-            <p className="text-[10px] text-emerald-500 font-bold flex items-center gap-1 justify-end">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Server: Active (Port 3000)
-            </p>
           </div>
-          <button 
-            onClick={() => {
-              askConfirmation(
-                "Restore Sandbox Defaults",
-                "Are you sure you want to reset the database to original sandboxed default settings? All custom progress updates and registered entries will be cleared.",
-                () => {
-                  MockDatabase.resetAll();
-                  onStateChange();
-                  showToast("Sandbox database restored to original parameters.");
-                }
-              );
-            }}
-            className="flex-1 sm:flex-none p-3.5 sm:p-2.5 bg-amber-50 hover:bg-amber-100 rounded-xl text-amber-600 font-bold text-sm sm:text-xs flex items-center justify-center gap-2 transition-all cursor-pointer min-h-[44px]"
-            title="Reset Database to original parameters"
-          >
-            <RefreshCw className="w-4 h-4 animate-spin-slow shrink-0" /> <span className="text-xs">Reset DB</span>
-          </button>
           <button 
             onClick={() => {
               setIsAdminLoggedIn(false);
