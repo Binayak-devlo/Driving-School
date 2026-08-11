@@ -1,16 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "motion/react";
 import { 
   Users, Calendar, FileText, IndianRupee, ShieldCheck, UserCheck, Car, Star, 
   Download, RefreshCw, Trash2, Search, Check, X, AlertTriangle, TrendingUp, BarChart2,
-  Plus, Edit, KeyRound, Lock, LogOut, Eye, ArrowLeft, ChevronRight, Clock, UserX, AlertCircle, ShieldAlert
+  Plus, Edit, KeyRound, Lock, LogOut, Eye, ArrowLeft, ChevronRight, Clock, UserX, AlertCircle, ShieldAlert,
+  Camera, Upload, Image as ImageIcon, FileCheck, CheckCircle, ExternalLink
 } from "lucide-react";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Legend, PieChart, Pie, Cell, ComposedChart, Line
 } from "recharts";
 import { MockDatabase } from "../utils/db";
-import { Student, Trainer, Booking, Document, Payment, SkillProgress, Review, SlotDay, NavState } from "../types";
+import { Student, Trainer, Booking, Document, Payment, SkillProgress, Review, SlotDay, NavState, DrivingLicenceApplication, DrivingLicenceDocumentItem } from "../types";
+import { compressImageIfNeeded, STUDENT_AVATAR_PRESETS, TRAINER_AVATAR_PRESETS, CAR_AVATAR_PRESETS } from "../utils/imageUtils";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 
 interface AdminDashboardProps {
@@ -21,7 +23,7 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ onStateChange, onLogout, navState }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'analytics' | 'students' | 'trainers' | 'bookings' | 'documents' | 'payments' | 'feedback' | 'approvals' | 'slots' | 'deletions'>(() => {
+  const [activeTab, setActiveTab] = useState<'analytics' | 'students' | 'trainers' | 'bookings' | 'documents' | 'payments' | 'feedback' | 'approvals' | 'slots' | 'deletions' | 'dl_applications'>(() => {
     if (navState && navState.activeView === 'admin' && navState.adminTab) {
       return navState.adminTab as any;
     }
@@ -77,6 +79,25 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
   const [payments, setPayments] = useState(MockDatabase.getAllPayments());
   const [progress, setProgress] = useState(MockDatabase.getProgress());
   const [reviews, setReviews] = useState(MockDatabase.getReviews());
+  const [dlApplications, setDlApplications] = useState<DrivingLicenceApplication[]>(() => MockDatabase.getLicenceApplications());
+  const [selectedDlApp, setSelectedDlApp] = useState<DrivingLicenceApplication | null>(null);
+  const [viewingDocPreview, setViewingDocPreview] = useState<{ title: string; url: string; fileName: string } | null>(null);
+
+  const refreshDlApps = useCallback(() => {
+    const apps = MockDatabase.getLicenceApplications();
+    setDlApplications(apps);
+  }, []);
+
+  useEffect(() => {
+    refreshDlApps();
+    const handleStorage = () => refreshDlApps();
+    window.addEventListener("storage", handleStorage);
+    const interval = setInterval(refreshDlApps, 1500);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      clearInterval(interval);
+    };
+  }, [refreshDlApps]);
 
   // Interactive student skills select state
   const [selectedStudentForChart, setSelectedStudentForChart] = useState<string>("");
@@ -192,15 +213,17 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
 
   // Back navigation support: Report local navigation state changes to global coordinator
   useEffect(() => {
-    if (navState && navState.activeView === 'admin') {
-      const matchesParent = 
-        isAdminLoggedIn === navState.adminLoggedIn &&
-        activeTab === navState.adminTab &&
-        (previewDoc?.id || null) === (navState.adminPreviewDocId || null);
-      
-      if (matchesParent) {
-        return; // Already in sync with parent, do not report!
-      }
+    if (!navState || navState.activeView !== 'admin') {
+      return;
+    }
+
+    const matchesParent = 
+      isAdminLoggedIn === navState.adminLoggedIn &&
+      activeTab === navState.adminTab &&
+      (previewDoc?.id || null) === (navState.adminPreviewDocId || null);
+    
+    if (matchesParent) {
+      return; // Already in sync with parent, do not report!
     }
 
     window.dispatchEvent(new CustomEvent('app-nav-reported', {
@@ -851,6 +874,135 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     showToast(`Successfully saved student profile for ${studentName}`);
   };
 
+  // Curated Avatar Presets for Trainers and Vehicles
+  const TRAINER_AVATAR_PRESETS = [
+    { label: "Coach 1", url: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=200" },
+    { label: "Coach 2", url: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200" },
+    { label: "Coach 3", url: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200" },
+    { label: "Coach 4", url: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200" },
+    { label: "Coach 5", url: "https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&q=80&w=200" },
+    { label: "Coach 6", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200" },
+  ];
+
+  const CAR_AVATAR_PRESETS = [
+    { label: "Maruti Swift", url: "https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=300" },
+    { label: "Hyundai i20", url: "https://images.unsplash.com/photo-1552519507-da3b142c6e3d?auto=format&fit=crop&q=80&w=300" },
+    { label: "Tata Nexon", url: "https://images.unsplash.com/photo-1583121274602-3e2820c69888?auto=format&fit=crop&q=80&w=300" },
+    { label: "White Sedan", url: "https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&q=80&w=300" },
+  ];
+
+  // Photo Upload Handler for Modal (Trainer Photo & Car Photo)
+  const handleTrainerPhotoFileUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'trainer' | 'car') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      showToast("Selected image size exceeds 10MB limit. Please select a smaller photo.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const rawDataUrl = event.target?.result as string;
+      if (rawDataUrl) {
+        const compressedUrl = await compressImageIfNeeded(rawDataUrl, 400, 0.85);
+        if (target === 'trainer') {
+          setTrainerPhotoUrl(compressedUrl);
+          showToast("Trainer photo updated and compressed!");
+        } else {
+          setTrainerCarPhotoUrl(compressedUrl);
+          showToast("Vehicle photo updated and compressed!");
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Direct Trainer Card Photo Update Handler
+  const handleDirectTrainerPhotoUpdate = (trainerId: string, trainerName: string, file: File) => {
+    if (file.size > 10 * 1024 * 1024) {
+      showToast("Photo file size exceeds 10MB limit. Please choose a smaller file.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const rawDataUrl = event.target?.result as string;
+      if (rawDataUrl) {
+        const compressedUrl = await compressImageIfNeeded(rawDataUrl, 400, 0.85);
+        const updatedTrainers = trainers.map(t => {
+          if (t.id === trainerId) {
+            return { ...t, photoUrl: compressedUrl };
+          }
+          return t;
+        });
+        MockDatabase.saveTrainers(updatedTrainers);
+        setTrainers(updatedTrainers);
+        onStateChange();
+        showToast(`Updated and saved photo for Coach ${trainerName} to database!`);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Student Photo Upload Handler for Modal
+  const handleStudentPhotoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      showToast("Selected image size exceeds 10MB limit. Please select a smaller photo.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const rawDataUrl = event.target?.result as string;
+      if (rawDataUrl) {
+        const compressedUrl = await compressImageIfNeeded(rawDataUrl, 400, 0.85);
+        setStudentPhotoUrl(compressedUrl);
+        showToast("Student profile photo updated & compressed!");
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Direct Student Photo Update Handler (from student list)
+  const handleDirectStudentPhotoUpdate = (studentId: string, studentName: string, file: File) => {
+    if (file.size > 10 * 1024 * 1024) {
+      showToast("Photo file size exceeds 10MB limit. Please choose a smaller file.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const rawDataUrl = event.target?.result as string;
+      if (rawDataUrl) {
+        const compressedUrl = await compressImageIfNeeded(rawDataUrl, 400, 0.85);
+        const studentsList = MockDatabase.getRegisteredStudents();
+        const updatedStudents = studentsList.map(s => {
+          if (s.id === studentId) {
+            return { ...s, photoUrl: compressedUrl };
+          }
+          return s;
+        });
+        MockDatabase.saveRegisteredStudents(updatedStudents);
+
+        const currentStud = MockDatabase.getStudent(studentId);
+        if (currentStud && currentStud.id === studentId) {
+          currentStud.photoUrl = compressedUrl;
+          MockDatabase.saveStudent(currentStud, studentId);
+        }
+
+        setStudents(updatedStudents);
+        setStudent(MockDatabase.getStudent());
+        onStateChange();
+        showToast(`Updated photo for ${studentName} and saved to database!`);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Trainer management handlers
   const handleOpenAddTrainer = () => {
     setEditingTrainer(null);
@@ -1108,6 +1260,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
           <div className="flex flex-row lg:flex-col gap-2 shrink-0">
             {[
               { id: 'analytics', label: 'Analytics Dashboard', icon: <BarChart2 className="w-5 h-5 lg:w-4 lg:h-4" /> },
+              { id: 'dl_applications', label: 'Driving Licence Applications', icon: <FileCheck className="w-5 h-5 lg:w-4 lg:h-4 text-[#D4AF37]" /> },
               { id: 'students', label: 'Student Directory', icon: <Users className="w-5 h-5 lg:w-4 lg:h-4" /> },
               { id: 'trainers', label: 'Trainer Allocations', icon: <Car className="w-5 h-5 lg:w-4 lg:h-4" /> },
               { id: 'bookings', label: 'Driving Slots', icon: <Calendar className="w-5 h-5 lg:w-4 lg:h-4" /> },
@@ -1120,6 +1273,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
             ].map((tab) => {
               const isActive = activeTab === tab.id;
               const deletionRequestsCount = MockDatabase.getAccountDeletionRequests().length;
+              const dlAppsCount = dlApplications.length;
               return (
                 <button
                    key={tab.id}
@@ -1135,6 +1289,11 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                     <span>{tab.label}</span>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {tab.id === 'dl_applications' && dlAppsCount > 0 && (
+                      <span className="bg-[#D4AF37] text-[#161623] text-[9px] font-black px-1.5 lg:px-2 py-0.5 rounded-full shrink-0">
+                        {dlAppsCount}
+                      </span>
+                    )}
                     {tab.id === 'deletions' && deletionRequestsCount > 0 && (
                       <span className="bg-rose-500 text-white text-[9px] font-black px-1.5 lg:px-2 py-0.5 rounded-full animate-pulse shrink-0">
                         {deletionRequestsCount}
@@ -1319,7 +1478,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                     {[
                       { text: `${student.name || "Guest Student"} requested clutch & parking coaching via AI Coach`, time: "2 mins ago" },
                       { text: `Licence verification status changed to '${student.llStatus || "Applied"}' for student ${student.name || "Guest Student"}`, time: "1 hour ago" },
-                      { text: `Trainer ${trainers[0]?.name || "Rajesh Kumar"} completed scheduled class '${trainers[0]?.carPlate || "OD 02 AB 1234"}'`, time: "3 hours ago" }
+                      { text: `Trainer ${trainers[0]?.name || "Chief Trainer"} completed scheduled class '${trainers[0]?.carPlate || "OD 02 AB 1234"}'`, time: "3 hours ago" }
                     ].map((log, idx) => (
                       <div key={idx} className="flex justify-between items-center border-b border-slate-50 pb-2 text-[11px]">
                         <span className="text-slate-600 font-semibold">{log.text}</span>
@@ -1329,6 +1488,401 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* TAB: DRIVING LICENCE APPLICATIONS */}
+          {activeTab === 'dl_applications' && (
+            <div className="flex flex-col gap-6 animate-fadeIn">
+              {/* Top Header Card */}
+              <div className="bg-gradient-to-r from-[#161623] to-[#252538] text-white rounded-3xl p-6 shadow-sm border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[#D4AF37] bg-[#D4AF37]/10 px-2.5 py-0.5 rounded-full border border-[#D4AF37]/30">
+                      RTO Verification Desk
+                    </span>
+                  </div>
+                  <h2 className="text-xl font-black text-white">Driving Licence Applications</h2>
+                  <p className="text-xs text-slate-300 mt-1">
+                    Review student document uploads across the 4 sections: Aadhaar, Two-Wheeler Licence, Learner Licence, and Other Documents.
+                  </p>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-md px-5 py-3 rounded-2xl border border-white/10 shrink-0 text-center">
+                  <span className="text-[10px] font-bold text-slate-300 uppercase block tracking-wider">Total Applications</span>
+                  <span className="text-2xl font-black text-[#D4AF37]">{dlApplications.length}</span>
+                </div>
+              </div>
+
+              {/* Search & Filter */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="relative w-full sm:w-80">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input 
+                    type="text" 
+                    placeholder="Search student name, phone, or DL ID..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs font-semibold focus:outline-none focus:border-[#6D3BFF]"
+                  />
+                </div>
+                <div className="text-xs text-slate-500 font-bold">
+                  Showing <span className="text-[#6D3BFF] font-extrabold">{dlApplications.length}</span> record(s) from cloud database
+                </div>
+              </div>
+
+              {/* Applications Cards List */}
+              {dlApplications.length === 0 ? (
+                <div className="bg-white border border-slate-100 rounded-3xl p-12 text-center flex flex-col items-center justify-center">
+                  <div className="w-16 h-16 bg-[#D4AF37]/10 text-[#D4AF37] rounded-3xl flex items-center justify-center mb-3">
+                    <FileCheck className="w-8 h-8" />
+                  </div>
+                  <h3 className="font-extrabold text-base text-[#161623]">No Driving Licence Applications Yet</h3>
+                  <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                    When students click "Apply for Driving Licence" and upload their documents in the Student Portal, their application will appear here instantly.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {dlApplications
+                    .filter(app => 
+                      !searchQuery || 
+                      app.studentName.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                      app.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      app.studentPhone.includes(searchQuery)
+                    )
+                    .map(app => {
+                      const docsCount = Object.values(app.documents || {}).filter(Boolean).length;
+                      return (
+                        <div key={app.id} className="bg-white border border-slate-100 hover:border-[#6D3BFF]/40 rounded-3xl p-5 shadow-sm transition-all hover:shadow-md flex flex-col justify-between gap-4">
+                          <div>
+                            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3 mb-3">
+                              <span className="font-mono text-xs font-black text-[#6D3BFF] bg-[#6D3BFF]/10 px-2.5 py-0.5 rounded-lg">
+                                {app.id}
+                              </span>
+                              <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                                app.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
+                                app.status === 'Under Review' ? 'bg-purple-100 text-purple-700' :
+                                app.status === 'Rejected' ? 'bg-rose-100 text-rose-700' :
+                                'bg-amber-100 text-amber-700'
+                              }`}>
+                                {app.status}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <img 
+                                src={app.studentPhotoUrl || getStudentDetails(app.studentId).photoUrl} 
+                                alt={app.studentName} 
+                                className="w-12 h-12 rounded-2xl object-cover border border-slate-100 shadow-sm shrink-0"
+                                referrerPolicy="no-referrer"
+                              />
+                              <div>
+                                <h4 className="font-extrabold text-sm text-[#161623]">{app.studentName}</h4>
+                                <p className="text-[11px] text-slate-400 font-medium">{app.studentPhone}</p>
+                                <p className="text-[10px] text-slate-400 truncate max-w-[180px]">{app.studentEmail}</p>
+                              </div>
+                            </div>
+
+                            {/* Documents count pill */}
+                            <div className="mt-4 bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                              <div className="flex items-center justify-between text-xs font-extrabold text-slate-700 mb-2">
+                                <span>Documents Uploaded</span>
+                                <span className="text-[#6D3BFF]">{docsCount} / 4</span>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-1.5 text-[10px] font-bold">
+                                <span className={app.documents?.aadhaar ? 'text-emerald-600' : 'text-slate-400'}>
+                                  {app.documents?.aadhaar ? '✓ Aadhaar' : '✕ Aadhaar'}
+                                </span>
+                                <span className={app.documents?.twoWheelerLicence ? 'text-emerald-600' : 'text-slate-400'}>
+                                  {app.documents?.twoWheelerLicence ? '✓ 2W Licence' : '✕ 2W Licence'}
+                                </span>
+                                <span className={app.documents?.learnerLicence ? 'text-emerald-600' : 'text-slate-400'}>
+                                  {app.documents?.learnerLicence ? '✓ Learner Lic' : '✕ Learner Lic'}
+                                </span>
+                                <span className={app.documents?.otherDocuments ? 'text-emerald-600' : 'text-slate-400'}>
+                                  {app.documents?.otherDocuments ? '✓ Other Docs' : '✕ Other Docs'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-slate-400 font-medium">
+                              Applied: {new Date(app.appliedAt).toLocaleDateString()}
+                            </span>
+                            <button
+                              onClick={() => setSelectedDlApp(app)}
+                              className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-xs font-extrabold px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> View Documents
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+
+              {/* ADMIN VIEW STUDENT DOCUMENTS MODAL */}
+              {selectedDlApp && (
+                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
+                  <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 my-8 max-h-[90vh] overflow-y-auto flex flex-col gap-6 relative">
+                    <button
+                      onClick={() => setSelectedDlApp(null)}
+                      className="absolute top-5 right-5 w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center transition-all cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+
+                    {/* Student Header */}
+                    <div className="flex items-center gap-4 border-b border-slate-100 pb-5 pr-8">
+                      <img 
+                        src={selectedDlApp.studentPhotoUrl || getStudentDetails(selectedDlApp.studentId).photoUrl} 
+                        alt={selectedDlApp.studentName} 
+                        className="w-16 h-16 rounded-2xl object-cover border-2 border-[#6D3BFF]/20 shadow-md"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-black text-[#6D3BFF] bg-[#6D3BFF]/10 px-2.5 py-0.5 rounded-lg">
+                            {selectedDlApp.id}
+                          </span>
+                          <span className="text-xs text-slate-400 font-bold">
+                            Applied: {new Date(selectedDlApp.appliedAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <h3 className="font-extrabold text-lg text-[#161623] mt-0.5">{selectedDlApp.studentName}</h3>
+                        <p className="text-xs text-slate-500">{selectedDlApp.studentPhone} • {selectedDlApp.studentEmail}</p>
+                      </div>
+                    </div>
+
+                    {/* Admin Status Changer */}
+                    <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Application Status</span>
+                        <p className="text-xs font-extrabold text-[#161623]">Current Status: <span className="text-[#6D3BFF]">{selectedDlApp.status}</span></p>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(['Applied', 'Under Review', 'Approved', 'Rejected'] as const).map(status => (
+                          <button
+                            key={status}
+                            onClick={() => {
+                              MockDatabase.updateLicenceApplicationStatus(selectedDlApp.id, status);
+                              refreshDlApps();
+                            }}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                              selectedDlApp.status === status 
+                                ? 'bg-[#6D3BFF] text-white shadow-sm' 
+                                : 'bg-white text-slate-600 hover:bg-slate-200 border border-slate-200'
+                            }`}
+                          >
+                            {status}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* The 4 Document Sections */}
+                    <div className="flex flex-col gap-4">
+                      <h4 className="font-black text-sm text-[#161623]">Uploaded Documents (4 Sections)</h4>
+
+                      {/* Section 1: Aadhaar */}
+                      <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-indigo-500/10 text-indigo-600 rounded-xl flex items-center justify-center font-black text-xs shrink-0">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h5 className="font-extrabold text-xs text-[#161623]">1. Aadhaar Card</h5>
+                            {selectedDlApp.documents?.aadhaar ? (
+                              <p className="text-[10px] text-slate-500 font-medium">{selectedDlApp.documents.aadhaar.fileName} • {selectedDlApp.documents.aadhaar.uploadedAt}</p>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-bold block">Not Uploaded</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {selectedDlApp.documents?.aadhaar ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setViewingDocPreview({
+                                title: "Aadhaar Card",
+                                url: selectedDlApp.documents!.aadhaar!.fileUrl,
+                                fileName: selectedDlApp.documents!.aadhaar!.fileName
+                              })}
+                              className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> View / Download
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="bg-slate-100 text-slate-400 text-[10px] font-bold px-3 py-1 rounded-lg">Not Uploaded</span>
+                        )}
+                      </div>
+
+                      {/* Section 2: Two-Wheeler Licence */}
+                      <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-amber-500/10 text-amber-600 rounded-xl flex items-center justify-center font-black text-xs shrink-0">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h5 className="font-extrabold text-xs text-[#161623]">2. Two-Wheeler Licence</h5>
+                            {selectedDlApp.documents?.twoWheelerLicence ? (
+                              <p className="text-[10px] text-slate-500 font-medium">{selectedDlApp.documents.twoWheelerLicence.fileName} • {selectedDlApp.documents.twoWheelerLicence.uploadedAt}</p>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-bold block">Not Uploaded</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {selectedDlApp.documents?.twoWheelerLicence ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setViewingDocPreview({
+                                title: "Two-Wheeler Licence",
+                                url: selectedDlApp.documents!.twoWheelerLicence!.fileUrl,
+                                fileName: selectedDlApp.documents!.twoWheelerLicence!.fileName
+                              })}
+                              className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> View / Download
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="bg-slate-100 text-slate-400 text-[10px] font-bold px-3 py-1 rounded-lg">Not Uploaded</span>
+                        )}
+                      </div>
+
+                      {/* Section 3: Learner Licence */}
+                      <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-emerald-500/10 text-emerald-600 rounded-xl flex items-center justify-center font-black text-xs shrink-0">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h5 className="font-extrabold text-xs text-[#161623]">3. Learner Licence</h5>
+                            {selectedDlApp.documents?.learnerLicence ? (
+                              <p className="text-[10px] text-slate-500 font-medium">{selectedDlApp.documents.learnerLicence.fileName} • {selectedDlApp.documents.learnerLicence.uploadedAt}</p>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-bold block">Not Uploaded</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {selectedDlApp.documents?.learnerLicence ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setViewingDocPreview({
+                                title: "Learner Licence",
+                                url: selectedDlApp.documents!.learnerLicence!.fileUrl,
+                                fileName: selectedDlApp.documents!.learnerLicence!.fileName
+                              })}
+                              className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> View / Download
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="bg-slate-100 text-slate-400 text-[10px] font-bold px-3 py-1 rounded-lg">Not Uploaded</span>
+                        )}
+                      </div>
+
+                      {/* Section 4: Other Documents */}
+                      <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-purple-500/10 text-purple-600 rounded-xl flex items-center justify-center font-black text-xs shrink-0">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h5 className="font-extrabold text-xs text-[#161623]">4. Other Documents</h5>
+                            {selectedDlApp.documents?.otherDocuments ? (
+                              <p className="text-[10px] text-slate-500 font-medium">{selectedDlApp.documents.otherDocuments.fileName} • {selectedDlApp.documents.otherDocuments.uploadedAt}</p>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-bold block">Not Uploaded</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {selectedDlApp.documents?.otherDocuments ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setViewingDocPreview({
+                                title: "Other Documents",
+                                url: selectedDlApp.documents!.otherDocuments!.fileUrl,
+                                fileName: selectedDlApp.documents!.otherDocuments!.fileName
+                              })}
+                              className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> View / Download
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="bg-slate-100 text-slate-400 text-[10px] font-bold px-3 py-1 rounded-lg">Not Uploaded</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-100 flex justify-end">
+                      <button
+                        onClick={() => setSelectedDlApp(null)}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-5 py-2.5 rounded-xl transition-all cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* FULL SCREEN / PREVIEW LIGHTBOX FOR DOCUMENT */}
+              {viewingDocPreview && (
+                <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+                  <div className="bg-white rounded-3xl max-w-3xl w-full p-6 shadow-2xl relative flex flex-col gap-4 max-h-[90vh]">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                      <div>
+                        <h3 className="font-extrabold text-base text-[#161623]">{viewingDocPreview.title}</h3>
+                        <p className="text-xs text-slate-400">{viewingDocPreview.fileName}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={viewingDocPreview.url}
+                          download={viewingDocPreview.fileName}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Open / Download
+                        </a>
+                        <button
+                          onClick={() => setViewingDocPreview(null)}
+                          className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center cursor-pointer"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-auto flex items-center justify-center bg-slate-900 rounded-2xl p-4 min-h-[300px]">
+                      {viewingDocPreview.url.startsWith("data:image") || viewingDocPreview.url.includes("unsplash") || viewingDocPreview.url.startsWith("http") ? (
+                        <img 
+                          src={viewingDocPreview.url} 
+                          alt={viewingDocPreview.title} 
+                          className="max-h-[60vh] max-w-full object-contain rounded-lg shadow-lg"
+                        />
+                      ) : (
+                        <iframe 
+                          src={viewingDocPreview.url} 
+                          title={viewingDocPreview.title} 
+                          className="w-full h-[60vh] rounded-lg border-0 bg-white"
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1390,7 +1944,30 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                         return (
                           <tr key={stud.id} className="border-b border-slate-50 hover:bg-[#F8F9FF] transition-all">
                             <td className="py-4 px-2 flex items-center gap-3">
-                              <img src={stud.photoUrl} alt={stud.name} className="w-9 h-9 rounded-full object-cover border border-slate-100 shadow-sm" />
+                              <div className="relative group shrink-0">
+                                <img 
+                                  src={stud.photoUrl || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200"} 
+                                  alt={stud.name} 
+                                  className="w-10 h-10 rounded-full object-cover border border-slate-200 shadow-sm" 
+                                />
+                                <label 
+                                  htmlFor={`table-student-photo-${stud.id}`} 
+                                  className="absolute inset-0 bg-[#161623]/75 rounded-full flex flex-col items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all cursor-pointer text-[7px] font-extrabold"
+                                  title="Click to update student photo"
+                                >
+                                  <Camera className="w-3 h-3 text-amber-400" />
+                                </label>
+                                <input 
+                                  id={`table-student-photo-${stud.id}`}
+                                  type="file" 
+                                  accept="image/*" 
+                                  className="hidden" 
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleDirectStudentPhotoUpdate(stud.id, stud.name, file);
+                                  }}
+                                />
+                              </div>
                               <div>
                                 <p className="font-extrabold text-[#161623]">{stud.name}</p>
                                 <p className="text-[10px] text-slate-400">ID: {stud.id} • Joined {stud.joinedDate || "June 2026"}</p>
@@ -1493,10 +2070,40 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                     <div className="flex flex-col gap-4">
                       <div className="flex justify-between items-start">
                         <div className="flex items-center gap-3">
-                          <img src={tr.photoUrl} alt={tr.name} className="w-12 h-12 rounded-full object-cover border border-slate-100 shadow-sm shrink-0" />
+                          <div className="relative group shrink-0">
+                            <img 
+                              src={tr.photoUrl || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=200"} 
+                              alt={tr.name} 
+                              className="w-13 h-13 rounded-2xl object-cover border border-slate-200 shadow-sm" 
+                            />
+                            <label 
+                              htmlFor={`card-trainer-photo-${tr.id}`} 
+                              className="absolute inset-0 bg-[#161623]/75 backdrop-blur-[2px] rounded-2xl flex flex-col items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all cursor-pointer text-[8px] font-extrabold"
+                              title="Click to update trainer photo"
+                            >
+                              <Camera className="w-4 h-4 mb-0.5 text-amber-400" />
+                              <span>Update</span>
+                            </label>
+                            <input 
+                              id={`card-trainer-photo-${tr.id}`}
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleDirectTrainerPhotoUpdate(tr.id, tr.name, file);
+                              }}
+                            />
+                          </div>
                           <div>
                             <h4 className="font-extrabold text-[#161623] text-sm leading-tight">{tr.name}</h4>
                             <span className="text-[10px] text-slate-400">ID: {tr.id} • Rasulgarh Division</span>
+                            <label 
+                              htmlFor={`card-trainer-photo-${tr.id}`} 
+                              className="text-[9px] text-[#6D3BFF] font-bold block hover:underline cursor-pointer mt-0.5"
+                            >
+                              📷 Update Photo
+                            </label>
                           </div>
                         </div>
                         <span className="bg-[#27AE60]/10 text-[#27AE60] text-[9px] font-bold px-2 py-0.5 rounded-full uppercase shrink-0">
@@ -3040,33 +3647,93 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Profile Photo URL</label>
+                {/* Trainer Profile Photo Section */}
+                <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 flex flex-col gap-3">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5 text-[#6D3BFF]" /> Instructor Profile Photo
+                  </label>
+                  
+                  <div className="flex flex-col sm:flex-row items-center gap-4">
+                    <div className="relative group shrink-0">
+                      <img 
+                        src={trainerPhotoUrl || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=200"} 
+                        alt="Trainer Preview" 
+                        className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-md bg-white"
+                      />
+                      <label 
+                        htmlFor="modal-trainer-photo-file" 
+                        className="absolute inset-0 bg-black/60 rounded-2xl flex flex-col items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all cursor-pointer text-[9px] font-bold"
+                      >
+                        <Camera className="w-4 h-4 mb-0.5 text-amber-400" />
+                        <span>Upload</span>
+                      </label>
+                    </div>
+
+                    <div className="flex-1 w-full flex flex-col gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label 
+                          htmlFor="modal-trainer-photo-file" 
+                          className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-xs font-bold px-3 py-1.5 rounded-xl inline-flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
+                        >
+                          <Upload className="w-3.5 h-3.5" /> Upload Device Photo
+                        </label>
+                        <input 
+                          id="modal-trainer-photo-file"
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={(e) => handleTrainerPhotoFileUpload(e, 'trainer')}
+                        />
+                        <span className="text-[10px] text-slate-400 font-medium">PNG, JPG or WebP (max 5MB)</span>
+                      </div>
+
+                      {/* Quick Avatar Presets */}
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                        <span className="text-[9px] font-extrabold text-slate-400 uppercase shrink-0">Presets:</span>
+                        {TRAINER_AVATAR_PRESETS.map((preset, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setTrainerPhotoUrl(preset.url)}
+                            className={`shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-lg border transition-all cursor-pointer ${
+                              trainerPhotoUrl === preset.url 
+                                ? 'bg-[#6D3BFF] text-white border-[#6D3BFF]' 
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-[#6D3BFF]'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1 mt-1">
+                    <label className="text-[9px] font-bold text-slate-400 uppercase">Or Direct Image URL</label>
                     <input 
                       type="text"
                       placeholder="https://images.unsplash.com/..."
                       value={trainerPhotoUrl}
                       onChange={(e) => setTrainerPhotoUrl(e.target.value)}
-                      className="border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#6D3BFF] text-slate-500 font-mono"
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-[#6D3BFF] text-slate-600 font-mono"
                     />
                   </div>
+                </div>
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Login Password *</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                        <KeyRound className="w-3.5 h-3.5" />
-                      </span>
-                      <input 
-                        type="text"
-                        placeholder="coach123"
-                        value={trainerPassword}
-                        onChange={(e) => setTrainerPassword(e.target.value)}
-                        className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-[#6D3BFF] font-mono font-semibold"
-                        required
-                      />
-                    </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Login Password *</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                      <KeyRound className="w-3.5 h-3.5" />
+                    </span>
+                    <input 
+                      type="text"
+                      placeholder="coach123"
+                      value={trainerPassword}
+                      onChange={(e) => setTrainerPassword(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-[#6D3BFF] font-mono font-semibold"
+                      required
+                    />
                   </div>
                 </div>
               </div>
@@ -3103,14 +3770,62 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Vehicle Image URL</label>
+                {/* Car Photo Section */}
+                <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 flex flex-col gap-3">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5">
+                    <Car className="w-3.5 h-3.5 text-[#6D3BFF]" /> Vehicle Photo
+                  </label>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-4">
+                    <img 
+                      src={trainerCarPhotoUrl || "https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=300"} 
+                      alt="Car Preview" 
+                      className="w-24 h-16 rounded-xl object-cover border border-slate-200 shadow-sm bg-white shrink-0"
+                    />
+
+                    <div className="flex-1 w-full flex flex-col gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label 
+                          htmlFor="modal-car-photo-file" 
+                          className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-3 py-1 rounded-xl inline-flex items-center gap-1.5 cursor-pointer transition-all"
+                        >
+                          <Upload className="w-3.5 h-3.5" /> Upload Vehicle Photo
+                        </label>
+                        <input 
+                          id="modal-car-photo-file"
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={(e) => handleTrainerPhotoFileUpload(e, 'car')}
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                        <span className="text-[9px] font-extrabold text-slate-400 uppercase shrink-0">Presets:</span>
+                        {CAR_AVATAR_PRESETS.map((preset, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setTrainerCarPhotoUrl(preset.url)}
+                            className={`shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-lg border transition-all cursor-pointer ${
+                              trainerCarPhotoUrl === preset.url 
+                                ? 'bg-slate-800 text-white border-slate-800' 
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-slate-800'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
                   <input 
                     type="text"
-                    placeholder="https://images.unsplash.com/..."
+                    placeholder="Vehicle Image URL: https://..."
                     value={trainerCarPhotoUrl}
                     onChange={(e) => setTrainerCarPhotoUrl(e.target.value)}
-                    className="border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#6D3BFF] text-slate-500 font-mono"
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-[#6D3BFF] text-slate-600 font-mono mt-1"
                   />
                 </div>
               </div>
@@ -3227,27 +3942,87 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Location *</label>
-                    <input 
-                      type="text"
-                      placeholder="e.g. Patia, Bhubaneswar"
-                      value={studentLocation}
-                      onChange={(e) => setStudentLocation(e.target.value)}
-                      className="border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#6D3BFF] font-semibold text-slate-800"
-                      required
-                    />
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Location *</label>
+                  <input 
+                    type="text"
+                    placeholder="e.g. Patia, Bhubaneswar"
+                    value={studentLocation}
+                    onChange={(e) => setStudentLocation(e.target.value)}
+                    className="border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#6D3BFF] font-semibold text-slate-800"
+                    required
+                  />
+                </div>
+
+                {/* Student Profile Photo Upload Section */}
+                <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 flex flex-col gap-3">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5 text-[#6D3BFF]" /> Profile Photo
+                  </label>
+                  
+                  <div className="flex flex-col sm:flex-row items-center gap-4">
+                    <div className="relative group shrink-0">
+                      <img 
+                        src={studentPhotoUrl || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200"} 
+                        alt="Student Preview" 
+                        className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-md bg-white"
+                      />
+                      <label 
+                        htmlFor="modal-student-photo-file" 
+                        className="absolute inset-0 bg-black/60 rounded-2xl flex flex-col items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all cursor-pointer text-[9px] font-bold"
+                      >
+                        <Camera className="w-4 h-4 mb-0.5 text-amber-400" />
+                        <span>Upload</span>
+                      </label>
+                    </div>
+
+                    <div className="flex-1 w-full flex flex-col gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label 
+                          htmlFor="modal-student-photo-file" 
+                          className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-xs font-bold px-3 py-1.5 rounded-xl inline-flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
+                        >
+                          <Upload className="w-3.5 h-3.5" /> Upload Device Photo
+                        </label>
+                        <input 
+                          id="modal-student-photo-file"
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={handleStudentPhotoFileUpload}
+                        />
+                        <span className="text-[10px] text-slate-400 font-medium">PNG, JPG or WebP (Auto-compressed)</span>
+                      </div>
+
+                      {/* Quick Avatar Presets */}
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                        <span className="text-[9px] font-extrabold text-slate-400 uppercase shrink-0">Presets:</span>
+                        {STUDENT_AVATAR_PRESETS.map((preset, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setStudentPhotoUrl(preset.url)}
+                            className={`shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-lg border transition-all cursor-pointer ${
+                              studentPhotoUrl === preset.url 
+                                ? 'bg-[#6D3BFF] text-white border-[#6D3BFF]' 
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-[#6D3BFF]'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Profile Photo URL</label>
+                  <div className="flex flex-col gap-1 mt-1">
+                    <label className="text-[9px] font-bold text-slate-400 uppercase">Or Direct Image URL</label>
                     <input 
                       type="text"
                       placeholder="https://images.unsplash.com/..."
                       value={studentPhotoUrl}
                       onChange={(e) => setStudentPhotoUrl(e.target.value)}
-                      className="border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#6D3BFF] font-mono text-slate-500"
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-[#6D3BFF] text-slate-600 font-mono"
                     />
                   </div>
                 </div>

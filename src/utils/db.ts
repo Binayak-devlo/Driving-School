@@ -1,4 +1,4 @@
-import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay } from "../types";
+import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay, TrackingSession, DrivingLicenceApplication, DrivingLicenceDocumentItem } from "../types";
 import { saveToCloud, deleteFromCloud, loadCollectionFromCloud } from "./firebase";
 
 
@@ -295,7 +295,11 @@ export class MockDatabase {
   }
 
   private static setStored<T>(key: string, value: T): void {
-    localStorage.setItem(`golden_hands_${key}`, JSON.stringify(value));
+    try {
+      localStorage.setItem(`golden_hands_${key}`, JSON.stringify(value));
+    } catch (e) {
+      console.warn(`localStorage quota exceeded for key golden_hands_${key}:`, e);
+    }
   }
 
   static getCurrentStudentId(): string {
@@ -429,10 +433,10 @@ export class MockDatabase {
     const welcomeChats: ChatMessage[] = [
       {
         id: `msg_welcome_${id}`,
-        senderId: "trainer_1",
-        senderName: "Rajesh Kumar",
+        senderId: "system",
+        senderName: "Golden Hands Team",
         receiverId: id,
-        text: `Welcome to Golden Hands, ${name}! I am Rajesh Kumar, your chief driving instructor. I have set up your custom ${courseName} syllabus. Please upload your Documents and book your first class to get started!`,
+        text: `Welcome to Golden Hands, ${name}! Your custom ${courseName} syllabus is ready. Please upload your Documents and book your first class to get started!`,
         timestamp: new Date().toISOString(),
         isRead: false
       }
@@ -808,10 +812,10 @@ export class MockDatabase {
     const welcomeChats: ChatMessage[] = [
       {
         id: `msg_welcome_${id}`,
-        senderId: "trainer_1",
-        senderName: "Rajesh Kumar",
+        senderId: "system",
+        senderName: "Golden Hands Team",
         receiverId: id,
-        text: `Welcome to Golden Hands! I am Rajesh Kumar, your assigned chief trainer. Please upload your documents and book your first class session to start.`,
+        text: `Welcome to Golden Hands! Please upload your documents and book your first class session to start.`,
         timestamp: new Date().toISOString(),
         isRead: false
       }
@@ -878,6 +882,95 @@ export class MockDatabase {
       });
     } catch (e) {
       console.error("Firebase attempts write error:", e);
+    }
+  }
+
+  static getTrackingSessions(): TrackingSession[] {
+    return this.getStored("tracking_sessions", []);
+  }
+
+  static getTrackingSessionByClassId(classId: string): TrackingSession | null {
+    const sessions = this.getTrackingSessions();
+    return sessions.find(s => s.classId === classId) || null;
+  }
+
+  static getTrackingSessionByStudent(studentId: string): TrackingSession | null {
+    const sessions = this.getTrackingSessions();
+    const studentSessions = sessions.filter(s => s.studentId === studentId);
+    if (studentSessions.length === 0) return null;
+    const active = studentSessions.find(s => s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED');
+    if (active) return active;
+    return studentSessions[studentSessions.length - 1];
+  }
+
+  static saveTrackingSession(session: TrackingSession) {
+    const sessions = this.getTrackingSessions();
+    const idx = sessions.findIndex(s => s.trackingSessionId === session.trackingSessionId);
+    if (idx >= 0) {
+      sessions[idx] = session;
+    } else {
+      sessions.push(session);
+    }
+    this.setStored("tracking_sessions", sessions);
+    try {
+      saveToCloud("trackingSessions", session.trackingSessionId, session);
+    } catch (e) {
+      console.error("Firebase trackingSession write error:", e);
+    }
+  }
+
+  static deleteTrackingSession(trackingSessionId: string) {
+    const sessions = this.getTrackingSessions();
+    const filtered = sessions.filter(s => s.trackingSessionId !== trackingSessionId);
+    this.setStored("tracking_sessions", filtered);
+    try {
+      deleteFromCloud("trackingSessions", trackingSessionId);
+    } catch (e) {
+      console.error("Firebase trackingSession delete error:", e);
+    }
+  }
+
+  // --- Driving Licence Applications Methods ---
+  static getLicenceApplications(): DrivingLicenceApplication[] {
+    return this.getStored("dl_applications", []);
+  }
+
+  static getLicenceApplicationForStudent(studentId?: string): DrivingLicenceApplication | null {
+    const sId = studentId || this.getCurrentStudentId();
+    if (!sId) return null;
+    const apps = this.getLicenceApplications();
+    return apps.find(a => a.studentId === sId) || null;
+  }
+
+  static saveLicenceApplication(app: DrivingLicenceApplication) {
+    const apps = this.getLicenceApplications();
+    const existingIndex = apps.findIndex(a => a.id === app.id || a.studentId === app.studentId);
+    if (existingIndex >= 0) {
+      apps[existingIndex] = app;
+    } else {
+      apps.push(app);
+    }
+    this.setStored("dl_applications", apps);
+    try {
+      saveToCloud("dl_applications", app.id, app);
+    } catch (e) {
+      console.error("Firebase dl_applications write error:", e);
+    }
+  }
+
+  static updateLicenceApplicationStatus(appId: string, newStatus: 'Applied' | 'Under Review' | 'Approved' | 'Rejected') {
+    const apps = this.getLicenceApplications();
+    const app = apps.find(a => a.id === appId);
+    if (app) {
+      app.status = newStatus;
+      app.updatedAt = new Date().toISOString();
+      this.saveLicenceApplication(app);
+      
+      const student = this.getStudent(app.studentId);
+      if (student) {
+        student.llStatus = newStatus === 'Approved' ? 'Licence Approved' : newStatus === 'Under Review' ? 'Approved' : 'Applied';
+        this.saveStudent(student, app.studentId);
+      }
     }
   }
 
@@ -1115,6 +1208,12 @@ export class MockDatabase {
       const cloudSlots = await loadCollectionFromCloud("slots");
       if (cloudSlots.length > 0) {
         this.setStored("slots", cloudSlots);
+      }
+
+      // 11. Fetch DL Applications
+      const cloudDlApps = await loadCollectionFromCloud("dl_applications");
+      if (cloudDlApps.length > 0) {
+        this.setStored("dl_applications", cloudDlApps);
       }
 
       console.log("[Firebase] Synchronization complete.");

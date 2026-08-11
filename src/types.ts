@@ -75,7 +75,7 @@ export interface Booking {
   date: string; // YYYY-MM-DD
   timeSlot: string; // "10:30 AM - 11:30 AM" etc
   location: string;
-  status: 'upcoming' | 'completed' | 'cancelled' | 'rescheduled';
+  status: 'upcoming' | 'requested' | 'confirmed' | 'completed' | 'cancelled' | 'rescheduled';
   ratingGiven?: number;
   remarks?: string;
   
@@ -113,6 +113,32 @@ export interface Document {
   fileUrl: string;
   status: 'Pending' | 'Verified' | 'Rejected';
   uploadedAt: string;
+}
+
+export interface DrivingLicenceDocumentItem {
+  name: string;
+  fileName: string;
+  fileUrl: string;
+  type?: 'Image' | 'PDF' | 'File';
+  uploadedAt: string;
+}
+
+export interface DrivingLicenceApplication {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  studentPhone: string;
+  studentPhotoUrl?: string;
+  status: 'Applied' | 'Under Review' | 'Approved' | 'Rejected';
+  appliedAt: string;
+  updatedAt: string;
+  documents: {
+    aadhaar?: DrivingLicenceDocumentItem | null;
+    twoWheelerLicence?: DrivingLicenceDocumentItem | null;
+    learnerLicence?: DrivingLicenceDocumentItem | null;
+    otherDocuments?: DrivingLicenceDocumentItem | null;
+  };
 }
 
 export interface Payment {
@@ -188,6 +214,28 @@ export interface AICoachAdvice {
   strengths: string[];
   weaknesses: string[];
   actionItems: string[];
+}
+
+export type TrackingStatus = 'WAITING' | 'PICKUP_STARTED' | 'ARRIVED' | 'CLASS_STARTED' | 'CLASS_COMPLETED';
+
+export interface TrackingSession {
+  trackingSessionId: string;
+  studentId: string;
+  trainerId: string;
+  classId: string;
+  status: TrackingStatus;
+  latitude?: number;
+  longitude?: number;
+  accuracy?: number;
+  heading?: number;
+  speed?: number;
+  timestamp?: number;
+  startedAt?: string;
+  lastUpdatedAt?: string;
+  endedAt?: string;
+  studentLat?: number;
+  studentLng?: number;
+  locationUnavailable?: boolean;
 }
 
 export interface NavState {

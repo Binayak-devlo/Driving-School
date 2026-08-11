@@ -59,10 +59,6 @@ export default function App() {
 
   // Back navigation management states
   const [currentNavState, setCurrentNavState] = useState<NavState>(() => {
-    const histState = window.history.state;
-    if (histState && histState.activeView && histState.activeView !== 'admin') {
-      return histState;
-    }
     return getInitialNavState();
   });
 
@@ -98,115 +94,29 @@ export default function App() {
 
   // Requirement 4 & 8: Validate startup session with live server and block offline cached auth restoration
   useEffect(() => {
-    const validateStartupSession = async () => {
-      const currentStudentId = localStorage.getItem("golden_hands_current_student_id");
-      const currentTrainerId = localStorage.getItem("golden_hands_current_trainer_id");
-      const isAdminLoggedIn = localStorage.getItem("golden_hands_admin_logged_in") === "true";
+    const initAppOnAuthPortal = async () => {
+      // Clear cached auto-login session so user must log in through the database
+      localStorage.removeItem("golden_hands_current_student_id");
+      localStorage.removeItem("golden_hands_current_trainer_id");
+      localStorage.removeItem("golden_hands_admin_logged_in");
 
-        // Clear any stale local admin auto-login flag so app opens on main Auth Portal
-        localStorage.removeItem("golden_hands_admin_logged_in");
+      setCurrentNavState(prev => ({
+        ...prev,
+        activeView: 'portal',
+        studentScreen: 'login',
+        trainerLoggedIn: false,
+        adminLoggedIn: false
+      }));
 
-        if (currentStudentId || currentTrainerId) {
-          // Step 1: Check offline status
-          if (!navigator.onLine) {
-            console.warn("Offline detected during startup session validation. Access blocked.");
-            localStorage.removeItem("golden_hands_current_student_id");
-            localStorage.removeItem("golden_hands_current_trainer_id");
-
-            setCurrentNavState(prev => ({
-              ...prev,
-              activeView: 'portal',
-              studentScreen: 'login',
-              trainerLoggedIn: false,
-              adminLoggedIn: false
-            }));
-            triggerAppToast("Internet connection is required to sign in. Please connect to the internet and try again.");
-            return;
-          }
-
-          // Step 2: Live Session Verification
-          try {
-            let role: 'student' | 'trainer' = 'student';
-            let id = currentStudentId || "";
-
-            if (currentTrainerId) {
-              role = 'trainer';
-              id = currentTrainerId;
-            }
-
-            let isValidSession = false;
-
-            try {
-              const res = await fetch('/api/auth/verify-session', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ role, id })
-              });
-
-              const data = await res.json().catch(() => null);
-              if (res.ok && data && data.valid) {
-                isValidSession = true;
-              }
-            } catch (fetchErr) {
-              console.warn("Live API endpoint unreachable, checking Firestore/local session...", fetchErr);
-            }
-
-            if (!isValidSession) {
-              // Direct check against Firestore / local database
-              if (role === 'student') {
-                const stud = MockDatabase.getStudent(id);
-                if (stud && stud.id) isValidSession = true;
-              } else if (role === 'trainer') {
-                const trainer = MockDatabase.getTrainers().find(t => t.id === id);
-                if (trainer && trainer.id) isValidSession = true;
-              }
-            }
-
-            if (!isValidSession) {
-              console.warn("Session validation failed for:", role, id);
-              localStorage.removeItem("golden_hands_current_student_id");
-              localStorage.removeItem("golden_hands_current_trainer_id");
-
-              setCurrentNavState(prev => ({
-                ...prev,
-                activeView: 'portal',
-                studentScreen: 'login',
-                trainerLoggedIn: false,
-                adminLoggedIn: false
-              }));
-              return;
-            }
-
-            // Valid session confirmed! Restore view and sync cloud data
-            await MockDatabase.syncFromCloud();
-
-            if (role === 'student') {
-              setCurrentNavState(prev => ({
-                ...prev,
-                activeView: 'student',
-                studentScreen: 'app'
-              }));
-            } else if (role === 'trainer') {
-              setCurrentNavState(prev => ({
-                ...prev,
-                activeView: 'trainer',
-                trainerLoggedIn: true
-              }));
-            }
-
-          } catch (err) {
-            console.warn("Session validation notice during startup:", err);
-            // Keep session active if offline/network error occurs while logged in
-            if (currentStudentId) {
-              setCurrentNavState(prev => ({ ...prev, activeView: 'student', studentScreen: 'app' }));
-            } else if (currentTrainerId) {
-              setCurrentNavState(prev => ({ ...prev, activeView: 'trainer', trainerLoggedIn: true }));
-            }
-          }
-        }
+      // Sync latest cloud data on load
+      try {
+        await MockDatabase.syncFromCloud();
+      } catch (err) {
+        console.warn("Cloud sync on app startup:", err);
+      }
     };
 
-    validateStartupSession();
+    initAppOnAuthPortal();
   }, []);
 
   const triggerAppToast = (msg: string) => {
@@ -387,7 +297,9 @@ export default function App() {
       { name: "chats", prefix: "chats_" },
       { name: "mock_attempts", prefix: "mock_attempts_" },
       { name: "reviews", key: "reviews" },
-      { name: "slots", key: "slots" }
+      { name: "slots", key: "slots" },
+      { name: "trackingSessions", key: "tracking_sessions" },
+      { name: "dl_applications", key: "dl_applications" }
     ];
 
     collectionsToSync.forEach(col => {

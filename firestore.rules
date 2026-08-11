@@ -88,5 +88,19 @@ service cloud.firestore {
     match /slots/{slotId} {
       allow read, write: if true;
     }
+
+    // Secure live GPS pickup tracking sessions
+    match /trackingSessions/{sessionId} {
+      allow read, write: if true;
+    }
+
+    match /tracking_sessions/{sessionId} {
+      allow read, write: if true;
+    }
+
+    // Secure driving licence applications
+    match /dl_applications/{appId} {
+      allow read, write: if true;
+    }
   }
 }

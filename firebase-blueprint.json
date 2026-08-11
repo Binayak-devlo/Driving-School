@@ -184,6 +184,24 @@
         "passed": { "type": "boolean" }
       },
       "required": ["id", "studentId", "score", "passed"]
+    },
+    "DrivingLicenceApplication": {
+      "title": "DrivingLicenceApplication",
+      "description": "Driving licence application and 4-tab document uploads",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "studentPhone": { "type": "string" },
+        "studentPhotoUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["Applied", "Under Review", "Approved", "Rejected"] },
+        "appliedAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "documents": { "type": "object" }
+      },
+      "required": ["id", "studentId", "studentName", "status", "appliedAt"]
     }
   },
   "firestore": {
@@ -226,6 +244,10 @@
     "phone_otps/{otpId}": {
       "schema": "PhoneOtp",
       "description": "Secure OTP records for mobile registration and password resets"
+    },
+    "dl_applications/{appId}": {
+      "schema": "DrivingLicenceApplication",
+      "description": "Driving licence application records"
     }
   }
 }

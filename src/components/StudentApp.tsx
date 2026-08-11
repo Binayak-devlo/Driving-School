@@ -8,10 +8,10 @@ import {
     Calendar,
     Car,
     Camera, CameraOff,
-    Check, CheckCircle2, ChevronLeft, ChevronRight,
+    Check, CheckCircle, CheckCircle2, ChevronLeft, ChevronRight,
     Clock, Compass,
     DollarSign, FileText, CreditCard,
-    FileUp,
+    FileUp, Upload, FileCheck,
     KeyRound,
     Lock,
     LogOut,
@@ -29,6 +29,7 @@ import {
     Star,
     Sliders,
     User,
+    UserX,
     X,
     Folder,
     Users,
@@ -44,9 +45,11 @@ import {
 } from "lucide-react";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion } from "motion/react";
-import { Booking, ChatMessage, Document, MockTestAttempt, Payment, SlotDay, NavState, Student } from "../types";
+import { Booking, ChatMessage, Document, MockTestAttempt, Payment, SlotDay, NavState, Student, Trainer, TrackingSession, TrackingStatus, DrivingLicenceApplication, DrivingLicenceDocumentItem } from "../types";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import { MOCK_TEST_QUESTIONS, MockDatabase } from "../utils/db";
+import { LiveTrackingMap } from "./LiveTrackingMap";
+import { calculateDistanceKm, calculateEtaMinutes, formatTimeAgo, DEFAULT_BHUBANESWAR_LOCATION } from "../utils/geo";
 import { auth, db } from "../utils/firebase";
 import {
   collection,
@@ -199,8 +202,35 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       return navState.studentSubPage;
     }
     return null;
-  }); // 'ai-coach', 'mock-test', 'documents', 'payments', 'licence', 'vault-files', 'vault-notes', 'vault-team'
+  }); // 'ai-coach', 'mock-test', 'documents', 'payments', 'licence', 'licence-apply', 'vault-files', 'vault-notes', 'vault-team'
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Driving Licence Application state (4-tab document upload system)
+  const [dlApp, setDlApp] = useState<DrivingLicenceApplication | null>(() => {
+    const currentStud = MockDatabase.getStudent();
+    return MockDatabase.getLicenceApplicationForStudent(currentStud.id);
+  });
+  const [dlActiveTab, setDlActiveTab] = useState<'aadhaar' | 'twoWheeler' | 'learner' | 'other'>('aadhaar');
+  const [dlUploading, setDlUploading] = useState(false);
+
+  const refreshDlApp = useCallback(() => {
+    const currentStud = MockDatabase.getStudent();
+    if (currentStud?.id) {
+      const app = MockDatabase.getLicenceApplicationForStudent(currentStud.id);
+      setDlApp(app);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDlApp();
+    const handleStorage = () => refreshDlApp();
+    window.addEventListener("storage", handleStorage);
+    const interval = setInterval(refreshDlApp, 1500);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      clearInterval(interval);
+    };
+  }, [refreshDlApp]);
 
   // Firebase User & Storage States (My Files, My Notes, Team Members)
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
@@ -276,15 +306,17 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
   // Back navigation support: Report local navigation state changes to global coordinator
   useEffect(() => {
-    if (navState && navState.activeView === 'student') {
-      const matchesParent = 
-        currentScreen === navState.studentScreen &&
-        activeTab === navState.studentTab &&
-        activeSubPage === navState.studentSubPage;
-      
-      if (matchesParent) {
-        return; // Already in sync with parent, do not report!
-      }
+    if (!navState || navState.activeView !== 'student') {
+      return;
+    }
+
+    const matchesParent = 
+      currentScreen === navState.studentScreen &&
+      activeTab === navState.studentTab &&
+      activeSubPage === navState.studentSubPage;
+    
+    if (matchesParent) {
+      return; // Already in sync with parent, do not report!
     }
 
     window.dispatchEvent(new CustomEvent('app-nav-reported', {
@@ -322,16 +354,93 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const [chats, setChats] = useState(MockDatabase.getChats());
   const [attempts, setAttempts] = useState(MockDatabase.getMockAttempts());
 
-  // Effective Assigned Trainer Logic: Once student books 1st class, coach is locked
-  const existingBookingWithTrainer = bookings.find(b => b.studentId === student.id && b.status !== 'cancelled');
-  const effectiveAssignedTrainerId = student.assignedTrainerId || existingBookingWithTrainer?.trainerId || null;
+  // Priority-based Trainer Resolution Logic:
+  // 1. Active assigned trainer (student.assignedTrainerId)
+  // 2. Completed class trainer (at least 1 completed class with a trainer)
+  // 3. Null (No trainer assigned yet - do NOT fallback to Rajesh Kumar or default trainer)
+  const getResolvedTrainer = (
+    studentObj: Student,
+    allTrainers: Trainer[],
+    allBookings: Booking[]
+  ): Trainer | null => {
+    if (!studentObj || !studentObj.id) return null;
+
+    // Priority 1: Check active assigned trainer
+    if (studentObj.assignedTrainerId) {
+      const assignedTr = allTrainers.find(t => t.id === studentObj.assignedTrainerId);
+      if (assignedTr) return assignedTr;
+
+      if (studentObj.assignedTrainerName) {
+        return {
+          id: studentObj.assignedTrainerId,
+          name: studentObj.assignedTrainerName,
+          phone: "9040040288",
+          rating: 4.9,
+          reviewsCount: 100,
+          photoUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200",
+          carName: "Maruti Swift",
+          carPlate: "OD 02 AB 1234",
+          carPhotoUrl: "https://images.unsplash.com/photo-1541899481282-d53bffe3c35d?auto=format&fit=crop&q=80&w=400",
+          isAvailable: true,
+          password: ""
+        };
+      }
+    }
+
+    // Priority 2: Check any non-cancelled class booking (completed or upcoming)
+    const studentValidBookings = allBookings.filter(
+      b => b.studentId === studentObj.id && b.status !== 'cancelled'
+    );
+
+    if (studentValidBookings.length > 0) {
+      const lastBooking = studentValidBookings[studentValidBookings.length - 1];
+      if (lastBooking.trainerId) {
+        const bookedTr = allTrainers.find(t => t.id === lastBooking.trainerId);
+        if (bookedTr) return bookedTr;
+
+        if (lastBooking.trainerName) {
+          return {
+            id: lastBooking.trainerId,
+            name: lastBooking.trainerName,
+            phone: "9040040288",
+            rating: 4.9,
+            reviewsCount: 100,
+            photoUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200",
+            carName: lastBooking.carName || "Vehicle",
+            carPlate: lastBooking.carPlate || "OD 02 AB 1234",
+            carPhotoUrl: "https://images.unsplash.com/photo-1541899481282-d53bffe3c35d?auto=format&fit=crop&q=80&w=400",
+            isAvailable: true,
+            password: ""
+          };
+        }
+      }
+    }
+
+    // Priority 3: Neither exists -> null
+    return null;
+  };
+
+  const assignedTrainer = getResolvedTrainer(student, trainers, bookings);
+  const effectiveAssignedTrainerId = assignedTrainer?.id || student.assignedTrainerId || null;
 
   useEffect(() => {
-    if (effectiveAssignedTrainerId) {
-      setBookingTrainer(effectiveAssignedTrainerId);
-      setReviewTrainerId(effectiveAssignedTrainerId);
+    if (assignedTrainer) {
+      setBookingTrainer(assignedTrainer.id);
+      setReviewTrainerId(assignedTrainer.id);
+      if (!student.assignedTrainerId && assignedTrainer.id) {
+        const updatedStudent = {
+          ...student,
+          assignedTrainerId: assignedTrainer.id,
+          assignedTrainerName: assignedTrainer.name
+        };
+        MockDatabase.saveStudent(updatedStudent, student.id);
+        setStudent(updatedStudent);
+      }
+    } else if (trainers.length > 0 && !bookingTrainer) {
+      setBookingTrainer(trainers[0].id);
+      setReviewTrainerId(trainers[0].id);
     }
-  }, [effectiveAssignedTrainerId]);
+  }, [assignedTrainer?.id, trainers]);
 
   // STUDENT PROFILE PICTURE EDITING & UPLOAD STATES
   const [profilePicModalOpen, setProfilePicModalOpen] = useState(false);
@@ -972,6 +1081,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     setPayments(MockDatabase.getPayments());
     setChats(MockDatabase.getChats());
     setAttempts(MockDatabase.getMockAttempts());
+    setTrackingSession(MockDatabase.getTrackingSessionByStudent(currentStud.id));
 
     setStudentEditCourseName(currentStud.proposedCourseName || currentStud.courseName || "Premium Package (20 Sessions)");
     setStudentEditCourseNotes(currentStud.proposedCourseNotes || currentStud.courseNotes || "");
@@ -989,18 +1099,32 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     return today.getFullYear();
   });
   const [bookingTimeSlot, setBookingTimeSlot] = useState("Morning");
-  const [bookingTrainer, setBookingTrainer] = useState("trainer_1");
+  const [bookingTrainer, setBookingTrainer] = useState("");
   const [bookingSuccessMsg, setBookingSuccessMsg] = useState(false);
   const [lastBookingCreated, setLastBookingCreated] = useState<Booking | null>(null);
 
   // Trainer review & rating form states
-  const [reviewTrainerId, setReviewTrainerId] = useState("trainer_1");
+  const [reviewTrainerId, setReviewTrainerId] = useState("");
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState("");
 
   // Live GPS Tracking State
-  const [trackerLocation, setTrackerLocation] = useState({ latitude: 20.2925, longitude: 85.8650, eta: 8, distanceKm: "2.3" });
-  const [trackingActive, setTrackingActive] = useState(true);
+  const [trackingSession, setTrackingSession] = useState<TrackingSession | null>(() => {
+    return MockDatabase.getTrackingSessionByStudent(student?.id || "student_1");
+  });
+  const [studentGps, setStudentGps] = useState<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setStudentGps({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        },
+        (err) => console.log("Student device location notice:", err),
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 }
+      );
+    }
+  }, []);
 
   // AI Driving Coach States
   const [coachInput, setCoachInput] = useState("");
@@ -1284,7 +1408,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const [testSubmitted, setTestSubmitted] = useState(false);
   const [testAnswers, setTestAnswers] = useState<number[]>([]);
 
-  // Personal chat with trainer Rajesh
+  // Personal chat with assigned trainer
   const [chatMessageInput, setChatMessageInput] = useState("");
 
   // Document Upload States
@@ -1424,76 +1548,6 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       clearInterval(syncInterval);
     };
   }, []);
-
-  // Live GPS tracker simulation trigger
-  useEffect(() => {
-    if (!trackingActive) return;
-    const interval = setInterval(async () => {
-      try {
-        const simLat = localStorage.getItem('golden_hands_simulated_lat');
-        const simLng = localStorage.getItem('golden_hands_simulated_lng');
-        
-        if (simLat && simLng) {
-          const lat = parseFloat(simLat);
-          const lng = parseFloat(simLng);
-          const targetLat = 20.2965;
-          const targetLng = 85.8682;
-          const dist = Math.sqrt(Math.pow(targetLat - lat, 2) + Math.pow(targetLng - lng, 2));
-          const distKm = (dist * 111).toFixed(1);
-          const eta = Math.max(1, Math.ceil(dist * 1200));
-          
-          setTrackerLocation({
-            latitude: lat,
-            longitude: lng,
-            eta: eta,
-            distanceKm: distKm
-          });
-        } else {
-          const res = await fetch(getApiUrl("/api/tracker/location"));
-          if (res.ok) {
-            const data = await res.json();
-            setTrackerLocation({
-              latitude: data.latitude,
-              longitude: data.longitude,
-              eta: data.eta,
-              distanceKm: data.distanceKm
-            });
-          }
-        }
-      } catch (err) {
-        // Fallback simulated tracking if server is unavailable or offline
-        const simLat = localStorage.getItem('golden_hands_simulated_lat');
-        const simLng = localStorage.getItem('golden_hands_simulated_lng');
-        if (simLat && simLng) {
-          const lat = parseFloat(simLat);
-          const lng = parseFloat(simLng);
-          const targetLat = 20.2965;
-          const targetLng = 85.8682;
-          const dist = Math.sqrt(Math.pow(targetLat - lat, 2) + Math.pow(targetLng - lng, 2));
-          const distKm = (dist * 111).toFixed(1);
-          const eta = Math.max(1, Math.ceil(dist * 1200));
-          setTrackerLocation({
-            latitude: lat,
-            longitude: lng,
-            eta: eta,
-            distanceKm: distKm
-          });
-        } else {
-          setTrackerLocation(prev => {
-            const nextEta = Math.max(1, prev.eta - 1);
-            const nextDist = (parseFloat(prev.distanceKm) * 0.85).toFixed(1);
-            return {
-              latitude: prev.latitude + (20.2965 - prev.latitude) * 0.1,
-              longitude: prev.longitude + (85.8682 - prev.longitude) * 0.1,
-              eta: nextEta,
-              distanceKm: nextDist
-            };
-          });
-        }
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [trackingActive]);
 
   // OTP Countdown timer
   useEffect(() => {
@@ -2466,7 +2520,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       date: bookingDate,
       timeSlot: bookingTimeSlot,
       location: currentStudentObj.location,
-      status: 'upcoming'
+      status: 'requested'
     };
 
     // Keep SlotDay booked count synchronized in real-time
@@ -2485,7 +2539,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     setLastBookingCreated(newBooking);
     setBookingSuccessMsg(true);
     onStateChange();
-    showNotification(`Successfully booked class on ${bookingDate} with ${tr.name}!`);
+    showNotification("Booking Requested / Waiting for Trainer Confirmation");
   };
 
   // Reschedule handler
@@ -2802,7 +2856,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       setTimeout(() => {
         setCoachChat(prev => [...prev, { 
           role: 'model', 
-          text: `Thanks for asking! Regarding **${userMsg}**, safety is paramount. Keep your hands at 10-and-2 or 9-and-3 on the steering wheel for optimal control. At high speeds on Cuttack-Puri highway, ensure you mirror check every 8 seconds. Let's work on this in your next class with Rajesh!` 
+          text: `Thanks for asking! Regarding **${userMsg}**, safety is paramount. Keep your hands at 10-and-2 or 9-and-3 on the steering wheel for optimal control. At high speeds on Cuttack-Puri highway, ensure you mirror check every 8 seconds. Let's work on this in your next class with ${assignedTrainer ? assignedTrainer.name : "your assigned instructor"}!` 
         }]);
       }, 1500);
     } finally {
@@ -2862,40 +2916,42 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     setTestAnswers([]);
   };
 
-  // Chat message send handler (Rajesh Kumar chat)
+  // Chat message send handler
   const handleSendChatMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatMessageInput.trim()) return;
+    if (!chatMessageInput.trim() || !assignedTrainer) return;
 
     const newMsg: ChatMessage = {
       id: `msg_${Date.now()}`,
-      senderId: "student_1",
+      senderId: student.id,
       senderName: student.name,
-      receiverId: "trainer_1",
+      receiverId: assignedTrainer.id,
       text: chatMessageInput,
       timestamp: new Date().toISOString(),
       isRead: true
     };
 
     const updatedChats = [...chats, newMsg];
-    MockDatabase.saveChats(updatedChats);
+    MockDatabase.saveChats(updatedChats, student.id);
     setChats(updatedChats);
     setChatMessageInput("");
     onStateChange();
 
     // Trigger trainer simulated reply after 2 seconds
+    const targetTrainerName = assignedTrainer.name;
+    const targetTrainerId = assignedTrainer.id;
     setTimeout(() => {
       const trainerReply: ChatMessage = {
         id: `msg_trainer_${Date.now()}`,
-        senderId: "trainer_1",
-        senderName: "Rajesh Kumar",
-        receiverId: "student_1",
+        senderId: targetTrainerId,
+        senderName: targetTrainerName,
+        receiverId: student.id,
         text: "Got it! Looking forward to our session.",
         timestamp: new Date().toISOString(),
         isRead: false
       };
-      const chatsWithReply = [...MockDatabase.getChats(), trainerReply];
-      MockDatabase.saveChats(chatsWithReply);
+      const chatsWithReply = [...MockDatabase.getChats(student.id), trainerReply];
+      MockDatabase.saveChats(chatsWithReply, student.id);
       setChats(chatsWithReply);
       onStateChange();
     }, 2000);
@@ -3220,17 +3276,18 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
   // Developer Helper to instantly simulate 15 completed classes
   const handleSimulate15Classes = () => {
-    // Generate 15 completed bookings
+    // Generate 15 completed bookings using assigned trainer or first available trainer
+    const targetTrainer = assignedTrainer || trainers[0];
     const simulatedBookings: Booking[] = [];
     for (let i = 1; i <= 15; i++) {
       simulatedBookings.push({
         id: `sim_completed_${i}`,
         studentId: student.id,
         studentName: student.name,
-        trainerId: "trainer_1",
-        trainerName: "Rajesh Kumar",
-        carName: "Maruti Swift",
-        carPlate: "OD 02 AB 1234",
+        trainerId: targetTrainer ? targetTrainer.id : "trainer_assigned",
+        trainerName: targetTrainer ? targetTrainer.name : "Assigned Instructor",
+        carName: targetTrainer ? targetTrainer.carName : "Maruti Swift",
+        carPlate: targetTrainer ? targetTrainer.carPlate : "OD 02 AB 1234",
         date: `2026-06-${10 + i}`,
         timeSlot: "10:30 AM - 11:30 AM",
         location: student.location,
@@ -4731,6 +4788,293 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
               </div>
             )}
 
+            {/* SUBPAGE: DRIVING LICENCE APPLICATION (4-TAB DOCUMENT UPLOAD) */}
+            {(activeSubPage === 'licence' || activeSubPage === 'licence-apply') && (
+              <div className="pt-2 animate-fadeIn text-[#161623] pb-10">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-4">
+                  <button 
+                    onClick={() => setActiveSubPage(null)} 
+                    className="flex items-center gap-1.5 text-xs text-slate-600 font-extrabold hover:text-[#6D3BFF] transition-all cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" /> Back to Student Portal
+                  </button>
+                  {dlApp && (
+                    <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                      dlApp.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
+                      dlApp.status === 'Under Review' ? 'bg-purple-100 text-purple-700' :
+                      dlApp.status === 'Rejected' ? 'bg-rose-100 text-rose-700' :
+                      'bg-amber-100 text-amber-700'
+                    }`}>
+                      Status: {dlApp.status}
+                    </span>
+                  )}
+                </div>
+
+                {/* Hero Card */}
+                <div className="bg-gradient-to-r from-[#161623] to-[#252538] text-white rounded-3xl p-5 sm:p-6 shadow-xl border border-slate-800 mb-6">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[#D4AF37] bg-[#D4AF37]/10 px-2.5 py-0.5 rounded-full border border-[#D4AF37]/30">
+                      STUDENT PORTAL
+                    </span>
+                  </div>
+                  <h2 className="text-xl font-black text-white">Driving Licence Application</h2>
+                  <p className="text-xs text-slate-300 mt-1 max-w-xl">
+                    Upload your documents across the 4 tabs below. Your existing profile info will be linked automatically. No manual details required!
+                  </p>
+
+                  {/* Auto-used profile info preview */}
+                  <div className="mt-4 pt-4 border-t border-white/10 flex flex-wrap items-center gap-4 text-xs">
+                    <div className="flex items-center gap-2">
+                      <img src={student.photoUrl} alt={student.name} className="w-7 h-7 rounded-full object-cover border border-[#D4AF37]" referrerPolicy="no-referrer" />
+                      <span className="font-extrabold text-white">{student.name}</span>
+                    </div>
+                    <div className="text-slate-400 font-medium">📞 {student.phone}</div>
+                    <div className="text-slate-400 font-medium">✉️ {student.email}</div>
+                  </div>
+                </div>
+
+                {/* 4 EXACT TABS */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
+                  {[
+                    { id: 'aadhaar', label: '1. Aadhaar', doc: dlApp?.documents?.aadhaar },
+                    { id: 'twoWheeler', label: '2. Two-Wheeler Licence', doc: dlApp?.documents?.twoWheelerLicence },
+                    { id: 'learner', label: '3. Learner Licence', doc: dlApp?.documents?.learnerLicence },
+                    { id: 'other', label: '4. Other Documents', doc: dlApp?.documents?.otherDocuments }
+                  ].map((tab) => {
+                    const isActive = dlActiveTab === tab.id;
+                    const isUploaded = !!tab.doc;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setDlActiveTab(tab.id as any)}
+                        className={`flex flex-col items-center justify-center p-3 rounded-2xl text-xs font-black transition-all cursor-pointer border text-center relative ${
+                          isActive
+                            ? 'bg-[#6D3BFF] text-white border-[#6D3BFF] shadow-md shadow-[#6D3BFF]/20'
+                            : isUploaded
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        {isUploaded && (
+                          <span className={`absolute top-1.5 right-1.5 w-2 h-2 rounded-full ${isActive ? 'bg-white' : 'bg-emerald-500'}`} />
+                        )}
+                        <span>{tab.label}</span>
+                        <span className={`text-[9px] mt-0.5 font-bold ${isActive ? 'text-white/80' : isUploaded ? 'text-emerald-600' : 'text-slate-400'}`}>
+                          {isUploaded ? '✓ Uploaded' : 'Optional'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* ACTIVE TAB CONTENT AREA */}
+                <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm mb-6">
+                  {(() => {
+                    let title = "Aadhaar Card";
+                    let docKey: 'aadhaar' | 'twoWheelerLicence' | 'learnerLicence' | 'otherDocuments' = 'aadhaar';
+                    let isOptional = false;
+
+                    if (dlActiveTab === 'twoWheeler') {
+                      title = "Two-Wheeler Licence";
+                      docKey = "twoWheelerLicence";
+                      isOptional = true;
+                    } else if (dlActiveTab === 'learner') {
+                      title = "Learner Licence";
+                      docKey = "learnerLicence";
+                      isOptional = true;
+                    } else if (dlActiveTab === 'other') {
+                      title = "Other Documents";
+                      docKey = "otherDocuments";
+                      isOptional = true;
+                    }
+
+                    const currentDoc = dlApp?.documents?.[docKey];
+
+                    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+
+                      const reader = new FileReader();
+                      reader.onload = async (evt) => {
+                        let rawUrl = evt.target?.result as string;
+                        if (rawUrl) {
+                          try {
+                            rawUrl = await compressImageIfNeeded(rawUrl);
+                          } catch (err) {
+                            console.warn("Failed to compress document:", err);
+                          }
+                        }
+
+                        const item: DrivingLicenceDocumentItem = {
+                          name: title,
+                          fileName: file.name,
+                          fileUrl: rawUrl,
+                          uploadedAt: new Date().toLocaleDateString()
+                        };
+
+                        const updatedDocs = {
+                          ...(dlApp?.documents || {}),
+                          [docKey]: item
+                        };
+
+                        const updatedApp: DrivingLicenceApplication = {
+                          id: dlApp?.id || `DL_${Date.now()}`,
+                          studentId: student.id,
+                          studentName: student.name,
+                          studentPhone: student.phone,
+                          studentEmail: student.email,
+                          studentPhotoUrl: student.photoUrl,
+                          status: dlApp?.status || 'Applied',
+                          appliedAt: dlApp?.appliedAt || new Date().toISOString(),
+                          updatedAt: new Date().toISOString(),
+                          documents: updatedDocs
+                        };
+
+                        MockDatabase.saveLicenceApplication(updatedApp);
+                        setDlApp(updatedApp);
+                        showNotification(`${title} uploaded successfully!`);
+                      };
+                      reader.readAsDataURL(file);
+                    };
+
+                    const handleRemoveDoc = () => {
+                      if (!dlApp) return;
+                      const updatedDocs = { ...dlApp.documents };
+                      delete updatedDocs[docKey];
+
+                      const updatedApp: DrivingLicenceApplication = {
+                        ...dlApp,
+                        documents: updatedDocs
+                      };
+
+                      MockDatabase.saveLicenceApplication(updatedApp);
+                      setDlApp(updatedApp);
+                      showNotification(`${title} removed.`);
+                    };
+
+                    return (
+                      <div className="flex flex-col gap-5">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                          <div>
+                            <h3 className="text-base font-black text-[#161623]">{title}</h3>
+                            <p className="text-xs text-slate-400">
+                              {isOptional ? "This document is completely optional. Leave empty if not applicable." : "Upload clear photo or PDF copy."}
+                            </p>
+                          </div>
+                          {isOptional && (
+                            <span className="text-[10px] font-extrabold uppercase bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full">
+                              Optional
+                            </span>
+                          )}
+                        </div>
+
+                        {currentDoc ? (
+                          /* SHOW UPLOADED FILE WITH FILE NAME, PREVIEW, REPLACE & REMOVE */
+                          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div className="flex items-center gap-3.5 w-full sm:w-auto">
+                              {currentDoc.fileUrl.startsWith("data:image") || currentDoc.fileUrl.includes("unsplash") || currentDoc.fileUrl.startsWith("http") ? (
+                                <img 
+                                  src={currentDoc.fileUrl} 
+                                  alt={title} 
+                                  className="w-16 h-16 rounded-xl object-cover border border-slate-200 shadow-xs shrink-0"
+                                />
+                              ) : (
+                                <div className="w-16 h-16 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold shrink-0 border border-indigo-100">
+                                  <FileText className="w-8 h-8" />
+                                </div>
+                              )}
+
+                              <div className="overflow-hidden">
+                                <span className="text-[10px] font-black uppercase text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-md">
+                                  ✓ Document Attached
+                                </span>
+                                <h4 className="font-extrabold text-xs text-[#161623] truncate max-w-xs mt-1">{currentDoc.fileName}</h4>
+                                <p className="text-[10px] text-slate-400 font-medium">Uploaded: {currentDoc.uploadedAt}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+                              <label className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-xs font-bold px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-xs flex items-center gap-1.5">
+                                <Upload className="w-3.5 h-3.5" /> Replace
+                                <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileUpload} />
+                              </label>
+
+                              <button
+                                onClick={handleRemoveDoc}
+                                className="bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold px-3.5 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> Remove
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          /* UPLOAD BUTTON BOX */
+                          <div className="border-2 border-dashed border-slate-200 hover:border-[#6D3BFF] rounded-2xl p-8 text-center flex flex-col items-center justify-center gap-3 transition-all bg-slate-50/50">
+                            <div className="w-12 h-12 bg-[#6D3BFF]/10 text-[#6D3BFF] rounded-2xl flex items-center justify-center">
+                              <Upload className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h4 className="font-extrabold text-xs text-[#161623]">{title}</h4>
+                              <p className="text-[10px] text-slate-400 mt-0.5">Supports PNG, JPG, JPEG, or PDF files</p>
+                            </div>
+
+                            <label className="bg-[#6D3BFF] hover:bg-[#8F52FF] active:scale-95 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-2 mt-1">
+                              <Upload className="w-4 h-4" /> [ Upload Document ]
+                              <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileUpload} />
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* SUBMIT BUTTON AT BOTTOM */}
+                <div className="bg-gradient-to-r from-[#161623] to-[#252538] text-white rounded-3xl p-6 shadow-xl border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div>
+                    <h4 className="font-extrabold text-sm text-white">Ready to Submit Driving Licence Application?</h4>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      {dlApp 
+                        ? "Your application is saved and updated in real-time. Admin will verify your documents." 
+                        : "Clicking submit will log your application with your profile details for RTO processing."}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const docsCount = Object.values(dlApp?.documents || {}).filter(Boolean).length;
+                      if (docsCount === 0) {
+                        alert("Please upload at least 1 document (e.g. Aadhaar Card) before submitting.");
+                        return;
+                      }
+
+                      const updatedApp: DrivingLicenceApplication = {
+                        id: dlApp?.id || `DL_${Date.now()}`,
+                        studentId: student.id,
+                        studentName: student.name,
+                        studentPhone: student.phone,
+                        studentEmail: student.email,
+                        studentPhotoUrl: student.photoUrl,
+                        status: 'Applied',
+                        appliedAt: dlApp?.appliedAt || new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
+                        documents: dlApp?.documents || {}
+                      };
+
+                      MockDatabase.saveLicenceApplication(updatedApp);
+                      setDlApp(updatedApp);
+                      showNotification("Driving Licence Application submitted successfully! Status: Applied.");
+                    }}
+                    className="bg-[#D4AF37] hover:bg-[#f0c842] active:scale-95 text-[#161623] font-black text-xs px-6 py-3.5 rounded-2xl transition-all shadow-lg flex items-center gap-2 cursor-pointer shrink-0"
+                  >
+                    <FileCheck className="w-4 h-4" /> Submit Driving Licence Application
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* PRIMARY TAB SCREENS */}
 
             {/* TAB 1: HOME */}
@@ -4970,8 +5314,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
 
                 {/* Today's Driving Class Card */}
-                {bookings.some(b => b.status === 'upcoming') ? (
-                  bookings.filter(b => b.status === 'upcoming').slice(0, 1).map((b) => (
+                {bookings.some(b => b.status === 'upcoming' || b.status === 'confirmed' || b.status === 'requested') ? (
+                  bookings.filter(b => b.status === 'upcoming' || b.status === 'confirmed' || b.status === 'requested').slice(0, 1).map((b) => (
                     <div key={b.id} className="bg-[#161623] text-white rounded-3xl p-4 shadow-xl relative overflow-hidden border border-white/5">
                       {/* Decorative gradient corner */}
                       <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-[#D4AF37]/5 to-transparent rounded-full pointer-events-none" />
@@ -4980,7 +5324,11 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         <span className="text-[#D4AF37] text-[10px] uppercase tracking-widest font-extrabold">TODAY'S CLASS</span>
                         
                         {/* Attendance state tags */}
-                        {b.faceVerificationStatus === 'verified' ? (
+                        {b.status === 'requested' ? (
+                          <span className="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 border border-amber-500/20 animate-pulse">
+                            <Clock className="w-2.5 h-2.5 text-amber-400" /> Booking Requested / Waiting Confirmation
+                          </span>
+                        ) : b.faceVerificationStatus === 'verified' ? (
                           <span className="bg-emerald-500/20 text-emerald-400 text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-500/20 animate-fadeIn">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Present & Verified
                           </span>
@@ -4993,8 +5341,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                             🚗 Coach En Route
                           </span>
                         ) : (
-                          <span className="bg-white/10 text-white text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <Clock className="w-2.5 h-2.5 text-[#D4AF37]" /> Upcoming
+                          <span className="bg-emerald-500/20 text-emerald-400 text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-500/20">
+                            <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" /> Class Confirmed
                           </span>
                         )}
                       </div>
@@ -5014,14 +5362,21 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       </div>
 
                       {/* Dynamic status notifications */}
-                      {b.pickupStatus === 'en_route' && (
+                      {b.status === 'requested' && (
+                        <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] p-2.5 rounded-xl font-medium mb-3 flex items-center gap-2 animate-fadeIn">
+                          <Clock className="w-4 h-4 animate-spin text-amber-400 shrink-0" />
+                          <span>Booking Requested / Waiting for Trainer Confirmation. GPS tracking will activate once confirmed.</span>
+                        </div>
+                      )}
+
+                      {b.status !== 'requested' && b.pickupStatus === 'en_route' && (
                         <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] p-2.5 rounded-xl font-medium mb-3 flex items-center gap-2 animate-fadeIn">
                           <Compass className="w-4 h-4 animate-spin" />
                           <span>Coach is driving to your pickup location! Keep your phone ready.</span>
                         </div>
                       )}
 
-                      {b.pickupStatus === 'picked_up' && b.faceVerificationStatus !== 'verified' && (
+                      {b.status !== 'requested' && b.pickupStatus === 'picked_up' && b.faceVerificationStatus !== 'verified' && (
                         <div className="bg-[#6D3BFF]/10 border border-[#6D3BFF]/25 text-[#9E7CFF] text-[10px] p-2.5 rounded-xl font-medium mb-3 flex flex-col gap-1.5 animate-fadeIn">
                           <p className="font-bold text-white flex items-center gap-1.5">
                             📌 Picked Up & On Board!
@@ -5032,7 +5387,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         </div>
                       )}
 
-                      {b.faceVerificationStatus === 'verified' && (
+                      {b.status !== 'requested' && b.faceVerificationStatus === 'verified' && (
                         <div className="bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-[10px] p-2.5 rounded-xl font-medium mb-3 animate-fadeIn">
                           <p className="font-bold text-white flex items-center gap-1.5 mb-1">
                             ✓ Attendance Confirmed Present
@@ -5062,7 +5417,14 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       </div>
 
                       {/* DYNAMIC ACTION BUTTON */}
-                      {b.pickupStatus === 'picked_up' && (!b.faceVerificationStatus || b.faceVerificationStatus === 'pending') ? (
+                      {b.status === 'requested' ? (
+                        <button 
+                          disabled
+                          className="w-full bg-amber-500/15 text-amber-400 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 border border-amber-500/30 opacity-90 cursor-not-allowed"
+                        >
+                          <Clock className="w-3.5 h-3.5 text-amber-400 animate-spin" /> Booking Requested / Waiting for Confirmation
+                        </button>
+                      ) : b.pickupStatus === 'picked_up' && (!b.faceVerificationStatus || b.faceVerificationStatus === 'pending') ? (
                         <button 
                           onClick={() => openFaceCheckinDirectly()}
                           className="w-full bg-gradient-to-r from-amber-500 to-[#D4AF37] text-black font-extrabold py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-[#D4AF37]/15 hover:brightness-110 active:scale-95 transition-all animate-bounce cursor-pointer"
@@ -5418,13 +5780,13 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                     </div>
                   ) : (
                     bookingSuccessMsg && lastBookingCreated ? (
-                      <div className="bg-emerald-50/70 border border-emerald-500/20 rounded-2xl p-5 flex flex-col items-center text-center gap-3 animate-scaleIn">
-                        <div className="w-12 h-12 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/10">
-                          <Check className="w-6 h-6 stroke-[3]" />
+                      <div className="bg-amber-50/80 border border-amber-500/20 rounded-2xl p-5 flex flex-col items-center text-center gap-3 animate-scaleIn">
+                        <div className="w-12 h-12 rounded-full bg-amber-500 text-white flex items-center justify-center shadow-lg shadow-amber-500/10">
+                          <Clock className="w-6 h-6 stroke-[2.5]" />
                         </div>
                         <div>
-                          <h4 className="font-extrabold text-[#161623] text-sm">Class Booked Successfully!</h4>
-                          <p className="text-[10px] text-slate-500 mt-1">Your reservation is locked in.</p>
+                          <h4 className="font-extrabold text-[#161623] text-sm">Booking Requested!</h4>
+                          <p className="text-[10px] text-slate-500 mt-1">Waiting for Trainer Confirmation</p>
                         </div>
                         <div className="w-full bg-white rounded-xl border border-slate-100 p-3.5 flex flex-col gap-2 text-left text-xs font-semibold">
                           <div className="flex justify-between border-b border-slate-50 pb-1.5">
@@ -5439,9 +5801,11 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                             <span className="text-slate-400 font-bold uppercase text-[9px]">Session</span>
                             <span className="text-[#161623] font-black text-[#6D3BFF]">{lastBookingCreated.timeSlot}</span>
                           </div>
-                          <div className="flex justify-between">
+                          <div className="flex justify-between items-center">
                             <span className="text-slate-400 font-bold uppercase text-[9px]">Booking Status</span>
-                            <span className="bg-emerald-500/15 text-emerald-600 font-extrabold text-[9px] uppercase px-2 py-0.5 rounded-full">Confirmed</span>
+                            <span className="bg-amber-500/15 text-amber-700 font-extrabold text-[9px] uppercase px-2 py-0.5 rounded-full">
+                              Booking Requested / Waiting for Trainer Confirmation
+                            </span>
                           </div>
                         </div>
                         <button
@@ -5450,7 +5814,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                             setBookingSuccessMsg(false);
                             setLastBookingCreated(null);
                           }}
-                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                          className="w-full bg-amber-600 hover:bg-amber-700 text-white py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                         >
                           Dismiss
                         </button>
@@ -5790,13 +6154,15 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                             <div className="flex justify-between items-center">
                               <span className="font-bold text-xs text-[#161623]">{b.trainerName}</span>
                               <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                                b.status === 'upcoming' 
-                                  ? 'bg-[#6D3BFF]/10 text-[#6D3BFF]' 
-                                  : b.status === 'completed' 
-                                    ? 'bg-[#27AE60]/10 text-[#27AE60]' 
-                                    : 'bg-slate-100 text-slate-400'
+                                b.status === 'requested'
+                                  ? 'bg-amber-500/15 text-amber-700 border border-amber-500/20'
+                                  : b.status === 'upcoming' || b.status === 'confirmed'
+                                    ? 'bg-[#6D3BFF]/10 text-[#6D3BFF]' 
+                                    : b.status === 'completed' 
+                                      ? 'bg-[#27AE60]/10 text-[#27AE60]' 
+                                      : 'bg-slate-100 text-slate-400'
                               }`}>
-                                {b.status}
+                                {b.status === 'requested' ? 'Booking Requested / Waiting for Confirmation' : b.status === 'confirmed' || b.status === 'upcoming' ? 'Class Confirmed' : b.status}
                               </span>
                             </div>
 
@@ -5805,7 +6171,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                               <p className="font-semibold text-slate-700">{b.carName} ({b.carPlate})</p>
                             </div>
 
-                            {b.status === 'upcoming' && (
+                            {(b.status === 'upcoming' || b.status === 'confirmed' || b.status === 'requested') && (
                               <div className="flex gap-2 border-t border-slate-50 pt-2">
                                 <button 
                                   onClick={() => handleReschedule(b.id)}
@@ -5895,112 +6261,160 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
             {activeTab === 'track' && !activeSubPage && (
               <div className="pt-2 animate-fadeIn h-full flex flex-col justify-between">
                 <div>
-                  <h2 className="text-xl font-extrabold text-[#161623]">Live Pickup Tracking</h2>
-                  {localStorage.getItem('golden_hands_simulated_landmark') ? (
-                    <p className="text-[10px] text-[#6D3BFF] font-black flex items-center gap-1 mt-0.5 bg-[#6D3BFF]/5 px-2 py-0.5 rounded-lg border border-[#6D3BFF]/10 w-fit">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                      Landmark: {localStorage.getItem('golden_hands_simulated_landmark')}
-                    </p>
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xl font-extrabold text-[#161623]">Live Pickup Tracking</h2>
+                    {assignedTrainer && trackingSession && (
+                      <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
+                        trackingSession.status === 'PICKUP_STARTED'
+                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                          : trackingSession.status === 'ARRIVED'
+                          ? 'bg-amber-100 text-amber-800 border-amber-300'
+                          : trackingSession.status === 'CLASS_STARTED'
+                          ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                          : 'bg-slate-100 text-slate-600 border-slate-300'
+                      }`}>
+                        {trackingSession.status === 'PICKUP_STARTED' && '🟢 On The Way'}
+                        {trackingSession.status === 'ARRIVED' && '📍 Arrived'}
+                        {trackingSession.status === 'CLASS_STARTED' && '🚗 Class Active'}
+                        {trackingSession.status === 'CLASS_COMPLETED' && '✓ Session Ended'}
+                        {trackingSession.status === 'WAITING' && '⏳ Pickup Awaiting'}
+                      </span>
+                    )}
+                  </div>
+
+                  {assignedTrainer ? (
+                    trackingSession && trackingSession.status === 'PICKUP_STARTED' ? (
+                      <p className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 mt-1 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+                        Live GPS Active: {assignedTrainer.name} is heading to your location.
+                      </p>
+                    ) : trackingSession && trackingSession.status === 'ARRIVED' ? (
+                      <p className="text-[10px] text-amber-800 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200">
+                        📍 {assignedTrainer.name} has arrived at your pickup point!
+                      </p>
+                    ) : (
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Track {assignedTrainer.name} approaching your pickup location in Rasulgarh Square.
+                      </p>
+                    )
                   ) : (
-                    <p className="text-[10px] text-slate-400">Track Rajesh Kumar approaching your spot in Rasulgarh Square.</p>
+                    <p className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 mt-1 w-fit">
+                      No trainer assigned yet
+                    </p>
                   )}
                 </div>
 
-                {/* Simulated Map Container */}
-                <div className="w-full h-[320px] bg-[#161623] rounded-3xl relative overflow-hidden my-4 border border-[#6D3BFF]/20 shadow-inner">
-                  {/* Neon Grid representing roads */}
-                  <div className="absolute inset-0 opacity-20 pointer-events-none">
-                    <div className="w-full h-full" style={{
-                      backgroundImage: 'radial-gradient(circle, #6D3BFF 1px, transparent 1px)',
-                      backgroundSize: '24px 24px'
-                    }} />
-                  </div>
-
-                  {/* Simulated Roads lines */}
-                  <div className="absolute w-full h-1 bg-gradient-to-r from-transparent via-[#6D3BFF]/40 to-transparent top-1/2 -translate-y-1/2" />
-                  <div className="absolute w-1 h-full bg-gradient-to-b from-transparent via-[#6D3BFF]/40 to-transparent left-1/2 -translate-x-1/2" />
-                  <div className="absolute w-[200px] h-[200px] border-2 border-dashed border-[#8F52FF]/20 rounded-full left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
-
-                  {/* Student Location Point */}
-                  <div className="absolute left-[70%] top-[30%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
-                    <div className="w-4 h-4 bg-[#6D3BFF] border-2 border-white rounded-full flex items-center justify-center animate-ping" />
-                    <div className="w-3.5 h-3.5 bg-[#6D3BFF] border-2 border-white rounded-full absolute" />
-                    <span className="bg-[#161623] text-white text-[8px] font-bold px-1.5 py-0.5 rounded-md mt-1 border border-white/15">
-                      {student.name ? student.name.split(' ')[0] : "Student"} (You)
-                    </span>
-                  </div>
-
-                  {/* Driver Location (Moves along coordinate simulation) */}
-                  {(() => {
-                    const simLandmark = localStorage.getItem('golden_hands_simulated_landmark');
-                    let left = '30%';
-                    let top = '60%';
-                    if (simLandmark) {
-                      if (simLandmark.includes("Esplanade")) {
-                        left = '45%';
-                        top = '48%';
-                      } else if (simLandmark.includes("Vani Vihar")) {
-                        left = '60%';
-                        top = '68%';
-                      } else if (simLandmark.includes("GGP Colony")) {
-                        left = '25%';
-                        top = '32%';
-                      }
-                    }
-                    return (
-                      <div 
-                        className="absolute flex flex-col items-center transition-all duration-1000"
-                        style={{ left, top, transform: 'translate(-50%, -50%)' }}
-                      >
-                        <div className="w-6 h-6 bg-[#D4AF37] border-2 border-black rounded-xl flex items-center justify-center shadow-lg animate-bounce">
-                          <Car className="w-3.5 h-3.5 text-black" />
-                        </div>
-                        <span className="bg-[#161623] text-[#D4AF37] text-[8px] font-black px-1.5 py-0.5 rounded-md mt-1 border border-[#D4AF37]/30 whitespace-nowrap">
-                          OD 02 AB 1234
-                        </span>
-                      </div>
-                    );
-                  })()}
-
-                  {/* ETA Indicator */}
-                  <div className="absolute bottom-4 left-4 bg-black/80 backdrop-blur-md px-3 py-2 rounded-2xl border border-white/10 text-white text-[10px]">
-                    <p className="text-slate-400 uppercase tracking-widest text-[8px] font-bold">ESTIMATED ARRIVAL</p>
-                    <p className="font-extrabold text-[#D4AF37] mt-0.5">{trackerLocation.eta} mins ({trackerLocation.distanceKm} km away)</p>
-                  </div>
-                </div>
-
-                {/* Trainer info & Call/Chat */}
-                <div className="bg-[#161623] text-white p-4 rounded-3xl flex items-center justify-between border border-white/10 shadow-lg">
-                  <div className="flex items-center gap-3">
-                    <img 
-                      src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200" 
-                      alt="Trainer Rajesh" 
-                      className="w-10 h-10 rounded-full border border-white/20 object-cover"
-                    />
-                    <div>
-                      <p className="font-bold text-xs">Rajesh Kumar</p>
-                      <p className="text-[9px] text-[#27AE60] flex items-center gap-1">● Active Navigation</p>
+                {assignedTrainer ? (
+                  <>
+                    {/* Live Real-Time Interactive Map Container */}
+                    <div className="my-3">
+                      <LiveTrackingMap
+                        trainerLat={trackingSession?.latitude}
+                        trainerLng={trackingSession?.longitude}
+                        trainerHeading={trackingSession?.heading}
+                        trainerName={assignedTrainer.name}
+                        carPlate={assignedTrainer.carPlate || "OD 02 AB 1234"}
+                        studentLat={studentGps?.lat || DEFAULT_BHUBANESWAR_LOCATION.lat}
+                        studentLng={studentGps?.lng || DEFAULT_BHUBANESWAR_LOCATION.lng}
+                        studentName={student.name || "Student"}
+                        pickupLocationName={student.location || "Rasulgarh Square, Bhubaneswar"}
+                        status={trackingSession?.status || 'WAITING'}
+                        locationUnavailable={trackingSession?.locationUnavailable}
+                        lastUpdatedAt={trackingSession?.lastUpdatedAt}
+                      />
                     </div>
-                  </div>
 
-                  <div className="flex gap-2">
-                    <a 
-                      href="tel:9040040265"
-                      className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20"
-                    >
-                      <Phone className="w-4 h-4 text-[#D4AF37]" />
-                    </a>
+                    {/* Live Tracking Metrics Details Card */}
+                    {(() => {
+                      const trainerLat = trackingSession?.latitude;
+                      const trainerLng = trackingSession?.longitude;
+                      const studentLat = studentGps?.lat || DEFAULT_BHUBANESWAR_LOCATION.lat;
+                      const studentLng = studentGps?.lng || DEFAULT_BHUBANESWAR_LOCATION.lng;
+
+                      const hasCoords = typeof trainerLat === 'number' && typeof trainerLng === 'number';
+                      const distKm = hasCoords
+                        ? calculateDistanceKm(trainerLat, trainerLng, studentLat, studentLng)
+                        : 2.4;
+                      const etaMin = calculateEtaMinutes(distKm, trackingSession?.speed || 25);
+
+                      return (
+                        <div className="bg-[#161623] text-white p-3.5 rounded-2xl mb-3 border border-white/10 shadow-lg flex items-center justify-between text-xs">
+                          <div className="flex flex-col">
+                            <span className="text-[8.5px] uppercase font-bold text-slate-400 tracking-wider">Distance To Pickup</span>
+                            <span className="font-extrabold text-amber-400 text-sm">{distKm} km</span>
+                          </div>
+
+                          <div className="w-px h-8 bg-white/10" />
+
+                          <div className="flex flex-col">
+                            <span className="text-[8.5px] uppercase font-bold text-slate-400 tracking-wider">Estimated Time</span>
+                            <span className="font-extrabold text-emerald-400 text-sm">{etaMin} mins</span>
+                          </div>
+
+                          <div className="w-px h-8 bg-white/10" />
+
+                          <div className="flex flex-col">
+                            <span className="text-[8.5px] uppercase font-bold text-slate-400 tracking-wider">Last Updated</span>
+                            <span className="font-bold text-slate-300 text-[10px]">
+                              {formatTimeAgo(trackingSession?.lastUpdatedAt)}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Trainer info & Call/Chat */}
+                    <div className="bg-[#161623] text-white p-4 rounded-3xl flex items-center justify-between border border-white/10 shadow-lg">
+                      <div className="flex items-center gap-3">
+                        <img 
+                          src={assignedTrainer.photoUrl || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200"} 
+                          alt={assignedTrainer.name} 
+                          className="w-10 h-10 rounded-full border border-white/20 object-cover"
+                        />
+                        <div>
+                          <p className="font-bold text-xs">{assignedTrainer.name}</p>
+                          <p className="text-[9px] text-[#27AE60] flex items-center gap-1">
+                            ● Active Navigation ({assignedTrainer.carName || "Vehicle"} - {assignedTrainer.carPlate || "OD 02 AB 1234"})
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <a 
+                          href={`tel:${assignedTrainer.phone || "9040040288"}`}
+                          className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20"
+                        >
+                          <Phone className="w-4 h-4 text-[#D4AF37]" />
+                        </a>
+                        <button 
+                          onClick={() => {
+                            setActiveTab('profile'); // Goes to chats section on profile
+                            showNotification(`Opened Chat with ${assignedTrainer.name}`);
+                          }}
+                          className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20 cursor-pointer"
+                        >
+                          <MessageSquare className="w-4 h-4 text-[#6D3BFF]" />
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="bg-[#161623] text-white p-8 rounded-3xl border border-white/10 text-center my-6 flex flex-col items-center justify-center gap-3 shadow-lg">
+                    <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 mb-1">
+                      <UserX className="w-7 h-7 text-[#D4AF37]" />
+                    </div>
+                    <h3 className="font-extrabold text-base text-white">No trainer assigned yet</h3>
+                    <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
+                      You currently do not have an assigned instructor. Once a trainer is assigned or you complete your first class, live pickup tracking will be activated here automatically.
+                    </p>
                     <button 
-                      onClick={() => {
-                        setActiveTab('profile'); // Goes to chats section on profile
-                        showNotification("Opened Chat with Rajesh Kumar");
-                      }}
-                      className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20"
+                      onClick={() => setActiveTab('book')}
+                      className="mt-2 bg-[#6D3BFF] text-white font-extrabold text-xs px-5 py-2.5 rounded-2xl hover:bg-[#8F52FF] active:scale-95 transition-all shadow-md cursor-pointer"
                     >
-                      <MessageSquare className="w-4 h-4 text-[#6D3BFF]" />
+                      Book Your First Class
                     </button>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -6185,18 +6599,31 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   <h3 className="font-extrabold text-sm text-[#161623] mt-1">{student.name}</h3>
                   <p className="text-[10px] text-slate-400">{student.email}</p>
                   
-                  <div className="mt-3 flex gap-2 w-full">
-                    <button 
-                      onClick={() => setActiveSubPage('licence')}
-                      className="flex-1 bg-[#6D3BFF]/10 text-[#6D3BFF] font-bold text-[10px] py-1.5 rounded-xl hover:bg-[#6D3BFF]/20 cursor-pointer"
+                  {/* STUDENT PORTAL CARD */}
+                  <div className="mt-4 w-full bg-gradient-to-r from-[#161623] to-[#252538] text-white rounded-2xl p-4 border border-slate-800 text-left shadow-md">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[9px] font-black uppercase tracking-widest text-[#D4AF37] bg-[#D4AF37]/10 px-2 py-0.5 rounded-full border border-[#D4AF37]/30">
+                        STUDENT PORTAL
+                      </span>
+                      {dlApp && (
+                        <span className="text-[9px] font-extrabold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          {dlApp.status}
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="font-extrabold text-xs text-white mt-1">
+                      Do you want to apply for a Driving Licence?
+                    </h4>
+                    <p className="text-[10px] text-slate-300 mt-0.5">
+                      {dlApp ? "View uploaded documents and check application progress." : "Quick 4-step document upload system."}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveSubPage('licence-apply')}
+                      className="mt-3 w-full bg-[#6D3BFF] hover:bg-[#8F52FF] text-white font-extrabold text-xs py-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
                     >
-                      Licence Stage: {student.llStatus}
-                    </button>
-                    <button 
-                      onClick={() => setActiveSubPage('documents')}
-                      className="flex-1 bg-amber-500/10 text-amber-500 font-bold text-[10px] py-1.5 rounded-xl hover:bg-amber-500/20 cursor-pointer"
-                    >
-                      Documents: Verified
+                      <span>{dlApp ? "View Application" : "Click Here to Apply"}</span>
+                      <ArrowRight className="w-3.5 h-3.5 text-white" />
                     </button>
                   </div>
 
@@ -6393,46 +6820,68 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   </div>
                 </div>
 
-                {/* Real-Time Chat with Rajesh Kumar */}
+                {/* Real-Time Chat with Assigned Trainer */}
                 <div className="bg-white border border-slate-100 rounded-3xl p-3 shadow-sm flex flex-col">
-                  <h3 className="font-extrabold text-xs text-slate-500 uppercase tracking-wider mb-2.5 px-1">
-                    Chat with Rajesh Kumar
-                  </h3>
-
-                  <div className="h-[200px] overflow-y-auto scrollable-touch custom-scrollbar flex flex-col gap-2.5 p-1 border-b border-slate-50 mb-2">
-                    {chats.map((msg) => (
-                      <div 
-                        key={msg.id} 
-                        className={`p-2.5 rounded-xl text-[10px] max-w-[80%] ${
-                          msg.senderId === student.id 
-                            ? 'bg-[#6D3BFF] text-white self-end rounded-tr-none' 
-                            : 'bg-[#F8F9FF] text-slate-700 self-start border border-[#E9ECF4] rounded-tl-none'
-                        }`}
-                      >
-                        <p>{msg.text}</p>
-                        <span className="text-[8px] opacity-75 mt-0.5 block text-right">
-                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    ))}
+                  <div className="flex items-center justify-between mb-2 px-1 border-b border-slate-50 pb-2">
+                    <h3 className="font-extrabold text-xs text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5 text-[#6D3BFF]" />
+                      {assignedTrainer ? `Chat with ${assignedTrainer.name}` : "Chat with Trainer"}
+                    </h3>
+                    {assignedTrainer && (
+                      <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        ● Online
+                      </span>
+                    )}
                   </div>
 
-                  <form onSubmit={handleSendChatMessage} className="flex gap-1.5">
-                    <input 
-                      type="text" 
-                      value={chatMessageInput}
-                      onChange={(e) => setChatMessageInput(e.target.value)}
-                      placeholder="Type a message for Rajesh..."
-                      className="flex-1 bg-[#F8F9FF] border-none rounded-xl p-2.5 text-[11px] focus:outline-none font-medium"
-                      required
-                    />
-                    <button 
-                      type="submit" 
-                      className="bg-[#6D3BFF] text-white px-3 rounded-xl hover:bg-[#8F52FF] text-[10px] font-bold"
-                    >
-                      Send
-                    </button>
-                  </form>
+                  {assignedTrainer ? (
+                    <>
+                      <div className="h-[200px] overflow-y-auto scrollable-touch custom-scrollbar flex flex-col gap-2.5 p-1 border-b border-slate-50 mb-2">
+                        {chats.filter(msg => 
+                          (msg.senderId === student.id && msg.receiverId === assignedTrainer.id) ||
+                          (msg.senderId === assignedTrainer.id && msg.receiverId === student.id) ||
+                          (msg.senderId === 'system' && msg.receiverId === student.id)
+                        ).map((msg) => (
+                          <div 
+                            key={msg.id} 
+                            className={`p-2.5 rounded-xl text-[10px] max-w-[80%] ${
+                              msg.senderId === student.id 
+                                ? 'bg-[#6D3BFF] text-white self-end rounded-tr-none' 
+                                : 'bg-[#F8F9FF] text-slate-700 self-start border border-[#E9ECF4] rounded-tl-none'
+                            }`}
+                          >
+                            <p>{msg.text}</p>
+                            <span className="text-[8px] opacity-75 mt-0.5 block text-right">
+                              {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <form onSubmit={handleSendChatMessage} className="flex gap-1.5">
+                        <input 
+                          type="text" 
+                          value={chatMessageInput}
+                          onChange={(e) => setChatMessageInput(e.target.value)}
+                          placeholder={`Type a message for ${assignedTrainer.name.split(' ')[0]}...`}
+                          className="flex-1 bg-[#F8F9FF] border-none rounded-xl p-2.5 text-[11px] focus:outline-none font-medium"
+                          required
+                        />
+                        <button 
+                          type="submit" 
+                          className="bg-[#6D3BFF] text-white px-3 rounded-xl hover:bg-[#8F52FF] text-[10px] font-bold cursor-pointer"
+                        >
+                          Send
+                        </button>
+                      </form>
+                    </>
+                  ) : (
+                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-center my-1">
+                      <UserX className="w-5 h-5 text-slate-400 mx-auto mb-1" />
+                      <p className="font-extrabold text-xs text-slate-700">No trainer assigned yet</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Chatting will be enabled once an instructor is assigned to your profile.</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Support details & Referral info */}

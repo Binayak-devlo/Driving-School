@@ -6,7 +6,8 @@ import {
   LogOut, Lock, Unlock
 } from "lucide-react";
 import { MockDatabase } from "../utils/db";
-import { Booking, Student, SkillProgress, ChatMessage, Trainer, NavState } from "../types";
+import { Booking, Student, SkillProgress, ChatMessage, Trainer, NavState, TrackingSession, TrackingStatus } from "../types";
+import { calculateDistanceKm, DEFAULT_BHUBANESWAR_LOCATION } from "../utils/geo";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 
 interface TrainerAppProps {
@@ -17,7 +18,7 @@ interface TrainerAppProps {
 }
 
 export default function TrainerApp({ onStateChange, onLogout, navState }: TrainerAppProps) {
-  const [activeTab, setActiveTab] = useState<'schedule' | 'students' | 'performance'>(() => {
+  const [activeTab, setActiveTab] = useState<'schedule' | 'confirm' | 'students' | 'performance'>(() => {
     if (navState && navState.activeView === 'trainer' && navState.trainerTab) {
       return navState.trainerTab as any;
     }
@@ -78,9 +79,125 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   // Notification toast helper
   const [trainerToast, setTrainerToast] = useState<string | null>(null);
 
+  // Active GPS geolocation watch ID ref
+  const activeWatchIdRef = useRef<number | null>(null);
+
+  // Clean up GPS watch on unmount
+  useEffect(() => {
+    return () => {
+      if (activeWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(activeWatchIdRef.current);
+        activeWatchIdRef.current = null;
+      }
+    };
+  }, []);
+
   const triggerToast = (msg: string) => {
     setTrainerToast(msg);
     setTimeout(() => setTrainerToast(null), 4000);
+  };
+
+  // Start continuous GPS tracking for an active pickup class session
+  const startGpsTracking = (bookingId: string, targetStudentId: string) => {
+    if (!navigator.geolocation) {
+      triggerToast("GPS Geolocation is not supported on this device/browser.");
+      return;
+    }
+
+    // Request initial position
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+        const initialSession: TrackingSession = {
+          trackingSessionId: `track_${bookingId}`,
+          studentId: targetStudentId,
+          trainerId: currentTrainerId || currentTrainer.id || "trainer_1",
+          classId: bookingId,
+          status: 'PICKUP_STARTED',
+          latitude,
+          longitude,
+          accuracy: accuracy || undefined,
+          heading: heading || undefined,
+          speed: speed || undefined,
+          timestamp: pos.timestamp || Date.now(),
+          startedAt: new Date().toISOString(),
+          lastUpdatedAt: new Date().toISOString(),
+          locationUnavailable: false
+        };
+        MockDatabase.saveTrackingSession(initialSession);
+      },
+      (err) => {
+        console.warn("Initial GPS position error:", err);
+        triggerToast("Location permission requested. Please enable GPS location access.");
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 2000 }
+    );
+
+    if (activeWatchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(activeWatchIdRef.current);
+      activeWatchIdRef.current = null;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+        const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
+        if (existing && existing.status === 'CLASS_COMPLETED') return;
+
+        const updatedSession: TrackingSession = {
+          trackingSessionId: `track_${bookingId}`,
+          studentId: targetStudentId,
+          trainerId: currentTrainerId || currentTrainer.id || "trainer_1",
+          classId: bookingId,
+          status: existing ? existing.status : 'PICKUP_STARTED',
+          latitude,
+          longitude,
+          accuracy: accuracy || undefined,
+          heading: heading || undefined,
+          speed: speed || undefined,
+          timestamp: pos.timestamp || Date.now(),
+          startedAt: existing?.startedAt || new Date().toISOString(),
+          lastUpdatedAt: new Date().toISOString(),
+          locationUnavailable: false
+        };
+        MockDatabase.saveTrackingSession(updatedSession);
+      },
+      (err) => {
+        console.warn("Continuous GPS position error:", err);
+        const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
+        if (existing && existing.status !== 'CLASS_COMPLETED') {
+          MockDatabase.saveTrackingSession({
+            ...existing,
+            locationUnavailable: true,
+            lastUpdatedAt: new Date().toISOString()
+          });
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 2000
+      }
+    );
+    activeWatchIdRef.current = watchId;
+  };
+
+  // Stop GPS tracking when class is completed
+  const stopGpsTracking = (bookingId: string) => {
+    if (activeWatchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(activeWatchIdRef.current);
+      activeWatchIdRef.current = null;
+    }
+    const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
+    if (existing) {
+      const completedSession: TrackingSession = {
+        ...existing,
+        status: 'CLASS_COMPLETED',
+        endedAt: new Date().toISOString(),
+        lastUpdatedAt: new Date().toISOString()
+      };
+      MockDatabase.saveTrackingSession(completedSession);
+    }
   };
 
   // Sync state continuously from localstorage
@@ -175,15 +292,17 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
 
   // Back navigation support: Report local navigation state changes to global coordinator
   useEffect(() => {
-    if (navState && navState.activeView === 'trainer') {
-      const matchesParent = 
-        (!!currentTrainerId) === !!navState.trainerLoggedIn &&
-        activeTab === navState.trainerTab &&
-        (selectedBooking?.id || null) === (navState.trainerSelectedBookingId || null);
-      
-      if (matchesParent) {
-        return; // Already in sync with parent, do not report!
-      }
+    if (!navState || navState.activeView !== 'trainer') {
+      return;
+    }
+
+    const matchesParent = 
+      (!!currentTrainerId) === !!navState.trainerLoggedIn &&
+      activeTab === navState.trainerTab &&
+      (selectedBooking?.id || null) === (navState.trainerSelectedBookingId || null);
+    
+    if (matchesParent) {
+      return; // Already in sync with parent, do not report!
     }
 
     window.dispatchEvent(new CustomEvent('app-nav-reported', {
@@ -261,6 +380,9 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   const handleCompleteClass = (bookingId: string) => {
     setIsClassCompleting(true);
     
+    // Stop continuous GPS tracking for this class
+    stopGpsTracking(bookingId);
+
     const targetBooking = bookings.find(b => b.id === bookingId);
     const targetStudentId = targetBooking ? targetBooking.studentId : selectedStudentId;
 
@@ -309,7 +431,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     setTimeout(() => {
       setIsClassCompleting(false);
       setSelectedBooking(null);
-      triggerToast("Class marked as completed! Metrics updated.");
+      triggerToast("Class marked as completed! GPS tracking stopped.");
       onStateChange();
     }, 1500);
   };
@@ -318,6 +440,8 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
 
   // Trainer starts the pickup route
   const handleStartPickupRoute = (bookingId: string) => {
+    const targetStudentId = selectedBooking ? selectedBooking.studentId : selectedStudentId;
+
     const updated = bookings.map(b => {
       if (b.id === bookingId) {
         return {
@@ -335,24 +459,26 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     const fresh = updated.find(b => b.id === bookingId);
     if (fresh) setSelectedBooking(fresh);
 
+    // Start Real-Time GPS Tracking!
+    startGpsTracking(bookingId, targetStudentId);
+
     // Add message to chat
-    const targetStudentId = selectedBooking ? selectedBooking.studentId : selectedStudentId;
     const studentChats = MockDatabase.getChats(targetStudentId);
     const alertMsg: ChatMessage = {
       id: `msg_pickup_${Date.now()}`,
       senderId: currentTrainerId,
       senderName: currentTrainer.name,
       receiverId: targetStudentId,
-      text: `🚗 I have started my pickup route in ${currentTrainer.carName} (${currentTrainer.carPlate}) and I am heading to your location! Please keep your mobile phone ready.`,
+      text: `🚗 I have started my pickup route in ${currentTrainer.carName} (${currentTrainer.carPlate}) and I am heading to your location! Please check your Live Pickup Tracking screen in the Student App.`,
       timestamp: new Date().toISOString(),
       isRead: false
     };
     MockDatabase.saveChats([...studentChats, alertMsg], targetStudentId);
-    triggerToast("Pickup route started! Student notified via chat.");
+    triggerToast("Pickup route & real-time GPS tracking started!");
     onStateChange();
   };
 
-  // Trainer marks student as Picked Up
+  // Trainer marks student as Picked Up / Arrived
   const handleMarkPickedUp = (bookingId: string) => {
     const updated = bookings.map(b => {
       if (b.id === bookingId) {
@@ -370,6 +496,16 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     setBookings(updated);
     const fresh = updated.find(b => b.id === bookingId);
     if (fresh) setSelectedBooking(fresh);
+
+    // Update tracking session status to ARRIVED
+    const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
+    if (existing) {
+      MockDatabase.saveTrackingSession({
+        ...existing,
+        status: 'ARRIVED',
+        lastUpdatedAt: new Date().toISOString()
+      });
+    }
 
     // Add message to chat
     const targetStudentId = selectedBooking ? selectedBooking.studentId : selectedStudentId;
@@ -440,6 +576,16 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     const fresh = updated.find(b => b.id === bookingId);
     if (fresh) setSelectedBooking(fresh);
 
+    // Update tracking session status to CLASS_STARTED
+    const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
+    if (existing) {
+      MockDatabase.saveTrackingSession({
+        ...existing,
+        status: 'CLASS_STARTED',
+        lastUpdatedAt: new Date().toISOString()
+      });
+    }
+
     // Add message to chat
     const targetStudentId = selectedBooking ? selectedBooking.studentId : selectedStudentId;
     const studentChats = MockDatabase.getChats(targetStudentId);
@@ -478,7 +624,41 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     onStateChange();
   };
 
-  const activeUpcomingBookings = bookings.filter(b => b.status === 'upcoming' && b.trainerId === currentTrainerId);
+  const activeUpcomingBookings = bookings.filter(b => (b.status === 'upcoming' || b.status === 'confirmed') && b.trainerId === currentTrainerId);
+  const requestedBookings = bookings.filter(b => b.status === 'requested' && b.trainerId === currentTrainerId);
+
+  // Confirm requested booking handler (does not start GPS tracking)
+  const handleConfirmClass = (bookingId: string) => {
+    const updated = bookings.map(b => {
+      if (b.id === bookingId) {
+        return {
+          ...b,
+          status: 'confirmed' as const
+        };
+      }
+      return b;
+    });
+    MockDatabase.saveBookings(updated);
+    setBookings(updated);
+
+    const targetBooking = bookings.find(b => b.id === bookingId);
+    if (targetBooking) {
+      const studentChats = MockDatabase.getChats(targetBooking.studentId);
+      const confirmMsg: ChatMessage = {
+        id: `msg_confirmed_${Date.now()}`,
+        senderId: currentTrainerId,
+        senderName: currentTrainer.name,
+        receiverId: targetBooking.studentId,
+        text: `✅ Your class on ${targetBooking.date} (${targetBooking.timeSlot}) has been confirmed!`,
+        timestamp: new Date().toISOString(),
+        isRead: false
+      };
+      MockDatabase.saveChats([...studentChats, confirmMsg], targetBooking.studentId);
+    }
+
+    triggerToast("Class booking confirmed! Student notified in real time.");
+    onStateChange();
+  };
 
   // Login handler
   const handleTrainerLogin = (e: React.FormEvent) => {
@@ -667,16 +847,51 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                       </div>
                     )}
                     {selectedBooking.pickupStatus === 'en_route' && (
-                      <div className="mt-2">
-                        <p className="text-[10px] text-amber-400 font-semibold mb-2 animate-pulse flex items-center gap-1">
-                          🚗 En Route to student's pickup point...
+                      <div className="mt-2 bg-white/5 p-3 rounded-2xl border border-amber-500/20 flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] text-emerald-400 font-extrabold flex items-center gap-1.5 uppercase tracking-wider">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+                            🟢 Live GPS Sharing Active
+                          </p>
+                          {(() => {
+                            const trackSess = MockDatabase.getTrackingSessionByClassId(selectedBooking.id);
+                            if (trackSess && trackSess.latitude && trackSess.longitude) {
+                              const distKm = calculateDistanceKm(
+                                trackSess.latitude,
+                                trackSess.longitude,
+                                DEFAULT_BHUBANESWAR_LOCATION.lat,
+                                DEFAULT_BHUBANESWAR_LOCATION.lng
+                              );
+                              return (
+                                <span className="text-[9.5px] font-extrabold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                                  {distKm} km away
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
+
+                        <p className="text-[10px] text-slate-300">
+                          Your GPS location is being streamed live to <span className="font-bold text-white">{student.name}</span>.
                         </p>
-                        <button
-                          onClick={() => handleMarkPickedUp(selectedBooking.id)}
-                          className="bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-[10px] py-1.5 px-3 rounded-lg flex items-center gap-1 transition-all cursor-pointer"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Confirm Picked Up
-                        </button>
+
+                        <div className="flex items-center gap-2 mt-1">
+                          <a
+                            href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(student.location || "Rasulgarh, Bhubaneswar")}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-white/10 hover:bg-white/20 text-white font-extrabold text-[10px] py-1.5 px-3 rounded-lg flex items-center gap-1 transition-all border border-white/10 cursor-pointer"
+                          >
+                            <Navigation className="w-3.5 h-3.5 text-[#D4AF37]" /> NAVIGATE
+                          </a>
+                          <button
+                            onClick={() => handleMarkPickedUp(selectedBooking.id)}
+                            className="bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-[10px] py-1.5 px-3 rounded-lg flex items-center gap-1 transition-all cursor-pointer"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" /> ARRIVED
+                          </button>
+                        </div>
                       </div>
                     )}
                     {selectedBooking.pickupStatus === 'picked_up' && (
@@ -976,16 +1191,17 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
             <div className="flex bg-white/5 p-1 rounded-2xl mb-4 border border-white/5">
               {[
                 { id: 'schedule', label: 'Schedule' },
+                { id: 'confirm', label: `Confirm Class${requestedBookings.length > 0 ? ` (${requestedBookings.length})` : ''}` },
                 { id: 'students', label: 'My Students' },
                 { id: 'performance', label: 'Metrics' }
               ].map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex-1 py-2 text-[10px] font-black rounded-xl uppercase transition-all cursor-pointer ${
+                  className={`flex-1 py-2 text-[9px] sm:text-[10px] font-black rounded-xl uppercase transition-all cursor-pointer ${
                     activeTab === tab.id 
-                      ? 'bg-gradient-to-r from-amber-500 to-[#D4AF37] text-black' 
-                      : 'text-slate-400'
+                      ? 'bg-gradient-to-r from-amber-500 to-[#D4AF37] text-black shadow-md' 
+                      : 'text-slate-400 hover:text-white'
                   }`}
                 >
                   {tab.label}
@@ -1037,6 +1253,73 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                 ) : (
                   <div className="bg-white/5 border border-white/5 rounded-3xl p-8 text-center">
                     <p className="text-xs text-slate-400">No scheduled classes remaining today.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB CONTENT: CONFIRM CLASS */}
+            {activeTab === 'confirm' && (
+              <div className="flex flex-col gap-3 animate-fadeIn">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                    Confirm Class Requests ({requestedBookings.length})
+                  </h3>
+                  {requestedBookings.length > 0 && (
+                    <span className="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-2 py-0.5 rounded-full border border-amber-500/20">
+                      Pending Action
+                    </span>
+                  )}
+                </div>
+
+                {requestedBookings.length > 0 ? (
+                  requestedBookings.map((b) => (
+                    <div key={b.id} className="bg-white/5 border border-white/10 rounded-3xl p-4 flex flex-col gap-3 shadow-md">
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <img 
+                            src={student.id === b.studentId ? student.photoUrl : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"} 
+                            alt={b.studentName} 
+                            className="w-8 h-8 rounded-full border border-white/10 object-cover"
+                          />
+                          <div>
+                            <p className="font-bold text-xs text-white">{b.studentName}</p>
+                            <p className="text-[9px] text-amber-400 font-semibold">Booking Requested</p>
+                          </div>
+                        </div>
+                        <span className="bg-amber-500/20 text-amber-400 font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider border border-amber-500/30">
+                          Waiting Confirmation
+                        </span>
+                      </div>
+
+                      <div className="text-[10px] text-slate-300 flex flex-col gap-1.5 border-t border-white/5 pt-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-amber-500" /> Booking Date:</span>
+                          <span className="font-extrabold text-white">{b.date}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-amber-500" /> Selected Session:</span>
+                          <span className="font-black text-[#D4AF37] bg-amber-500/10 px-2 py-0.5 rounded-full">{b.timeSlot}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-amber-500" /> Pickup Location:</span>
+                          <span className="font-bold text-white text-right max-w-[180px] truncate">{b.location}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleConfirmClass(b.id)}
+                        className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-110 text-white py-2.5 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer mt-1 active:scale-95 transition-all"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-white" /> Confirm Class
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="bg-white/5 border border-white/5 rounded-3xl p-8 text-center flex flex-col items-center justify-center gap-2">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-400/60" />
+                    <p className="text-xs font-bold text-slate-300">No Pending Class Requests</p>
+                    <p className="text-[10px] text-slate-500 max-w-[220px]">All student bookings assigned to Coach {currentTrainer.name} are confirmed.</p>
                   </div>
                 )}
               </div>
@@ -1183,26 +1466,38 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
 
       {/* Bottom Floating Navigation (Visible in main app screen) */}
       {!selectedBooking && (
-        <div className="absolute bottom-4 left-4 right-4 bg-[#161623]/95 backdrop-blur-md py-2.5 px-3 border border-white/10 flex justify-around items-center z-40 rounded-2xl shadow-xl shadow-black/30">
+        <div className="absolute bottom-4 left-4 right-4 bg-[#161623]/95 backdrop-blur-md py-2.5 px-2 border border-white/10 flex justify-around items-center z-40 rounded-2xl shadow-xl shadow-black/30">
           <button 
             onClick={() => setActiveTab('schedule')}
-            className={`flex flex-col items-center gap-1 py-1 px-4 rounded-xl transition-all ${activeTab === 'schedule' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all ${activeTab === 'schedule' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
           >
-            <Calendar className="w-5 h-5" />
+            <Calendar className="w-4.5 h-4.5" />
             <span className="text-[8px] font-bold">Schedule</span>
           </button>
           <button 
-            onClick={() => setActiveTab('students')}
-            className={`flex flex-col items-center gap-1 py-1 px-4 rounded-xl transition-all ${activeTab === 'students' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
+            onClick={() => setActiveTab('confirm')}
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all relative ${activeTab === 'confirm' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
           >
-            <Car className="w-5 h-5" />
+            <CheckCircle2 className="w-4.5 h-4.5" />
+            <span className="text-[8px] font-bold">Confirm</span>
+            {requestedBookings.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-black font-black text-[9px] rounded-full flex items-center justify-center border border-[#161623]">
+                {requestedBookings.length}
+              </span>
+            )}
+          </button>
+          <button 
+            onClick={() => setActiveTab('students')}
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all ${activeTab === 'students' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
+          >
+            <Car className="w-4.5 h-4.5" />
             <span className="text-[8px] font-bold">My Roll</span>
           </button>
           <button 
             onClick={() => setActiveTab('performance')}
-            className={`flex flex-col items-center gap-1 py-1 px-4 rounded-xl transition-all ${activeTab === 'performance' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all ${activeTab === 'performance' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
           >
-            <Sliders className="w-5 h-5" />
+            <Sliders className="w-4.5 h-4.5" />
             <span className="text-[8px] font-bold">Metrics</span>
           </button>
         </div>
