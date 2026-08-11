@@ -759,7 +759,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       if (autoCaptureTriggeredRef.current || !videoRef.current) return;
 
       const video = videoRef.current;
-      if (video.readyState < 2 || video.paused || video.ended) return;
+      if (video.readyState < 2 || video.paused || video.ended || !video.videoWidth || !video.videoHeight) return;
 
       try {
         if (ctx) {
@@ -940,7 +940,12 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     // Simulate real-time processing and registering photo record (Uploading step)
     await new Promise(resolve => setTimeout(resolve, 2000));
     
-    const activeBooking = bookings.find(b => b.status === 'upcoming');
+    // Find active booking for face check-in: prioritize unverified confirmed/upcoming bookings
+    const activeBooking = bookings.find(b => 
+      (b.status === 'confirmed' || b.status === 'upcoming' || b.pickupStatus === 'picked_up') && 
+      b.faceVerificationStatus !== 'verified'
+    ) || bookings.find(b => b.status === 'confirmed' || b.status === 'upcoming' || b.status === 'requested')
+      || bookings[0];
     
     // Fetch dynamic GPS Coordinates
     let geoLoc = "20.2961° N, 85.8245° E (Rasulgarh Center)";
@@ -962,7 +967,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
           faceVerificationStatus: 'verified' as const,
           faceVerificationAttempts: (b.faceVerificationAttempts || 0) + 1,
           attendancePresent: true,
-          attendanceLoggedAt: new Date().toLocaleTimeString(),
+          attendanceLoggedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           attendanceLocation: geoLoc,
           capturedPhoto: photoDataUri
         };
@@ -972,6 +977,24 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     
     MockDatabase.saveBookings(updatedBookings);
     setBookings(updatedBookings);
+
+    if (activeBooking) {
+      try {
+        const trainerChats = MockDatabase.getChats(activeBooking.trainerId);
+        const faceVerifiedMsg = {
+          id: `msg_face_${Date.now()}`,
+          senderId: student.id,
+          senderName: student.name,
+          receiverId: activeBooking.trainerId,
+          text: `📸 Face Check-in Verified! ${student.name} completed biometric facial recognition check-in.`,
+          timestamp: new Date().toISOString(),
+          isRead: false
+        };
+        MockDatabase.saveChats([...trainerChats, faceVerifiedMsg], activeBooking.trainerId);
+      } catch (chatErr) {
+        console.warn("Failed to send face checkin chat notification:", chatErr);
+      }
+    }
     
     setFaceScanState('success');
     setFaceCaptureStep('success');
@@ -5424,14 +5447,16 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         >
                           <Clock className="w-3.5 h-3.5 text-amber-400 animate-spin" /> Booking Requested / Waiting for Confirmation
                         </button>
-                      ) : b.pickupStatus === 'picked_up' && (!b.faceVerificationStatus || b.faceVerificationStatus === 'pending') ? (
+                      ) : (!b.faceVerificationStatus || b.faceVerificationStatus === 'pending') ? (
                         <button 
                           onClick={() => openFaceCheckinDirectly()}
-                          className="w-full bg-gradient-to-r from-amber-500 to-[#D4AF37] text-black font-extrabold py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-[#D4AF37]/15 hover:brightness-110 active:scale-95 transition-all animate-bounce cursor-pointer"
+                          className={`w-full bg-gradient-to-r from-amber-500 to-[#D4AF37] text-black font-extrabold py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-[#D4AF37]/15 hover:brightness-110 active:scale-95 transition-all cursor-pointer ${
+                            b.pickupStatus === 'picked_up' ? 'animate-bounce ring-2 ring-amber-400' : ''
+                          }`}
                         >
                           <Sparkles className="w-4 h-4 text-black fill-black" /> Complete Face Check-in
                         </button>
-                      ) : b.pickupStatus === 'picked_up' && b.faceVerificationStatus === 'failed' ? (
+                      ) : b.faceVerificationStatus === 'failed' ? (
                         <button 
                           onClick={() => openFaceCheckinDirectly()}
                           className="w-full bg-rose-500 text-white font-extrabold py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-rose-500/15 hover:bg-rose-600 active:scale-95 transition-all cursor-pointer"
@@ -7321,22 +7346,31 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                     </div>
                   ) : (
                     <div className="flex flex-col items-center w-full">
-                      <h3 className="font-bold text-rose-500 text-base mt-2">Access Denied</h3>
+                      <h3 className="font-bold text-rose-500 text-sm mt-2">Camera Unavailable</h3>
                       <p className="text-[11px] text-slate-400 mt-1 max-w-[220px] leading-relaxed">
-                        To check in, you must enable camera permission.
+                        Camera access is required for live photo capture, or complete check-in directly below.
                       </p>
                       
-                      {/* Retry Button to grant permission */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFaceError(null);
-                          startCamera(true);
-                        }}
-                        className="mt-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2.5 px-6 rounded-xl shadow-md active:scale-95 transition-all cursor-pointer flex items-center gap-2"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" /> Retry Camera Access
-                      </button>
+                      {/* Action buttons */}
+                      <div className="flex items-center justify-center gap-2 mt-4 w-full max-w-[240px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFaceError(null);
+                            startCamera(true);
+                          }}
+                          className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" /> Retry Camera
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handlePerformFaceScan()}
+                          className="flex-1 bg-[#0055FF] hover:bg-[#0044DD] text-white font-bold text-xs py-2.5 px-3 rounded-xl shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" /> Check-in Now
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
