@@ -942,8 +942,9 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     
     // Find active booking for face check-in: prioritize unverified confirmed/upcoming bookings
     const activeBooking = bookings.find(b => 
-      (b.status === 'confirmed' || b.status === 'upcoming' || b.pickupStatus === 'picked_up') && 
-      b.faceVerificationStatus !== 'verified'
+      b.pickupStatus === 'picked_up' && b.faceVerificationStatus !== 'verified'
+    ) || bookings.find(b => 
+      (b.status === 'confirmed' || b.status === 'upcoming') && b.faceVerificationStatus !== 'verified'
     ) || bookings.find(b => b.status === 'confirmed' || b.status === 'upcoming' || b.status === 'requested')
       || bookings[0];
     
@@ -961,7 +962,10 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     }
     
     const updatedBookings = bookings.map(b => {
-      if (activeBooking && b.id === activeBooking.id) {
+      const isTarget = (activeBooking && b.id === activeBooking.id) || 
+                       (b.pickupStatus === 'picked_up' && b.faceVerificationStatus !== 'verified') ||
+                       ((b.status === 'confirmed' || b.status === 'upcoming') && b.faceVerificationStatus !== 'verified');
+      if (isTarget) {
         return {
           ...b,
           faceVerificationStatus: 'verified' as const,
@@ -5338,7 +5342,19 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
                 {/* Today's Driving Class Card */}
                 {bookings.some(b => b.status === 'upcoming' || b.status === 'confirmed' || b.status === 'requested') ? (
-                  bookings.filter(b => b.status === 'upcoming' || b.status === 'confirmed' || b.status === 'requested').slice(0, 1).map((b) => (
+                  (() => {
+                    const activeList = bookings.filter(b => b.status === 'upcoming' || b.status === 'confirmed' || b.status === 'requested');
+                    const sortedActive = [...activeList].sort((a, b) => {
+                      const score = (item: Booking) => {
+                        if (item.pickupStatus === 'picked_up' && item.faceVerificationStatus !== 'verified') return 10;
+                        if (item.pickupStatus === 'picked_up') return 8;
+                        if (item.pickupStatus === 'en_route') return 6;
+                        if (item.faceVerificationStatus !== 'verified') return 4;
+                        return 0;
+                      };
+                      return score(b) - score(a);
+                    });
+                    return sortedActive.slice(0, 1).map((b) => (
                     <div key={b.id} className="bg-[#161623] text-white rounded-3xl p-4 shadow-xl relative overflow-hidden border border-white/5">
                       {/* Decorative gradient corner */}
                       <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-[#D4AF37]/5 to-transparent rounded-full pointer-events-none" />
@@ -5472,7 +5488,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         </button>
                       )}
                     </div>
-                  ))
+                  ));
+                })()
                 ) : (
                   <div className="bg-white border border-slate-100 rounded-3xl p-4 text-center">
                     <p className="text-xs text-slate-400">No scheduled classes for today.</p>
@@ -7417,6 +7434,10 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       setFaceCheckinOpen(false);
                       setFaceScanState('idle');
                       setFaceCaptureStep('tutorial');
+                      const freshBookings = MockDatabase.getBookings();
+                      if (freshBookings && freshBookings.length > 0) {
+                        setBookings(freshBookings);
+                      }
                     }}
                     className="w-full bg-[#0055FF] hover:bg-[#0044DD] text-white font-bold text-sm py-3.5 px-6 rounded-2xl shadow-lg shadow-blue-500/15 transition-all active:scale-[0.98] cursor-pointer"
                   >

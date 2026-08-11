@@ -683,6 +683,18 @@ export class MockDatabase {
     }
   }
 
+  static sanitizeBookings(bookings: Booking[]): Booking[] {
+    return bookings.map(b => {
+      // If capturedPhoto is a large base64 string (> 15KB), sanitize it to a lightweight SVG badge
+      // to ensure fast, reliable local and cloud persistence without network timeout issues
+      if (b.capturedPhoto && b.capturedPhoto.length > 15000) {
+        const mockSvg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="%2310B981"/><path d="M30 50 L45 65 L70 35" stroke="white" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        return { ...b, capturedPhoto: mockSvg };
+      }
+      return b;
+    });
+  }
+
   static getBookings(studentId?: string): Booking[] {
     const id = studentId || this.getCurrentStudentId();
     if (!id) return [];
@@ -691,11 +703,22 @@ export class MockDatabase {
 
   static saveBookings(bookings: Booking[]) {
     const currentId = this.getCurrentStudentId();
+    const sanitizedBookings = this.sanitizeBookings(bookings);
+
+    // Merge with existing bookings for other students
+    const allExisting = this.getAllBookings();
+    const currentStudentBookingIds = new Set(sanitizedBookings.map(b => b.id));
+
+    const mergedAllBookings = [
+      ...allExisting.filter(b => b.studentId && b.studentId !== currentId && !currentStudentBookingIds.has(b.id)),
+      ...sanitizedBookings
+    ];
+
     const bookingsByStudent: { [studentId: string]: Booking[] } = {};
     if (currentId) {
       bookingsByStudent[currentId] = [];
     }
-    bookings.forEach(b => {
+    mergedAllBookings.forEach(b => {
       const sId = b.studentId || currentId || "student_guest";
       if (!bookingsByStudent[sId]) {
         bookingsByStudent[sId] = [];
@@ -704,10 +727,10 @@ export class MockDatabase {
     });
 
     try {
-      const oldBookings = this.getAllBookings();
-      const oldIds = oldBookings.map(b => b.id);
-      const newIds = new Set(bookings.map(b => b.id));
-      const deletedIds = oldIds.filter(id => !newIds.has(id));
+      const oldStudentBookings = currentId ? this.getBookings(currentId) : [];
+      const oldStudentIds = oldStudentBookings.map(b => b.id);
+      const newIds = new Set(sanitizedBookings.map(b => b.id));
+      const deletedIds = oldStudentIds.filter(id => !newIds.has(id));
 
       deletedIds.forEach(id => {
         deleteFromCloud("bookings", id);
@@ -721,7 +744,7 @@ export class MockDatabase {
     });
 
     try {
-      bookings.forEach(b => {
+      sanitizedBookings.forEach(b => {
         saveToCloud("bookings", b.id, b);
       });
     } catch (e) {
