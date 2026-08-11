@@ -79,8 +79,10 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   // Notification toast helper
   const [trainerToast, setTrainerToast] = useState<string | null>(null);
 
-  // Active GPS geolocation watch ID ref
+  // Active GPS geolocation watch ID ref & throttle refs
   const activeWatchIdRef = useRef<number | null>(null);
+  const lastGpsSaveTimeRef = useRef<number>(0);
+  const lastGpsCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
 
   // Clean up GPS watch on unmount
   useEffect(() => {
@@ -108,6 +110,9 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+        lastGpsSaveTimeRef.current = Date.now();
+        lastGpsCoordsRef.current = { lat: latitude, lng: longitude };
+
         const initialSession: TrackingSession = {
           trackingSessionId: `track_${bookingId}`,
           studentId: targetStudentId,
@@ -144,23 +149,34 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
         const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
         if (existing && existing.status === 'CLASS_COMPLETED') return;
 
-        const updatedSession: TrackingSession = {
-          trackingSessionId: `track_${bookingId}`,
-          studentId: targetStudentId,
-          trainerId: currentTrainerId || currentTrainer.id || "trainer_1",
-          classId: bookingId,
-          status: existing ? existing.status : 'PICKUP_STARTED',
-          latitude,
-          longitude,
-          accuracy: accuracy || undefined,
-          heading: heading || undefined,
-          speed: speed || undefined,
-          timestamp: pos.timestamp || Date.now(),
-          startedAt: existing?.startedAt || new Date().toISOString(),
-          lastUpdatedAt: new Date().toISOString(),
-          locationUnavailable: false
-        };
-        MockDatabase.saveTrackingSession(updatedSession);
+        const now = Date.now();
+        const movedDist = lastGpsCoordsRef.current
+          ? calculateDistanceKm(latitude, longitude, lastGpsCoordsRef.current.lat, lastGpsCoordsRef.current.lng)
+          : 999;
+
+        // Throttle updates: save to database every 3s or if moved >= 5 meters
+        if (now - lastGpsSaveTimeRef.current >= 3000 || movedDist >= 0.005) {
+          lastGpsSaveTimeRef.current = now;
+          lastGpsCoordsRef.current = { lat: latitude, lng: longitude };
+
+          const updatedSession: TrackingSession = {
+            trackingSessionId: `track_${bookingId}`,
+            studentId: targetStudentId,
+            trainerId: currentTrainerId || currentTrainer.id || "trainer_1",
+            classId: bookingId,
+            status: existing ? existing.status : 'PICKUP_STARTED',
+            latitude,
+            longitude,
+            accuracy: accuracy || undefined,
+            heading: heading || undefined,
+            speed: speed || undefined,
+            timestamp: pos.timestamp || Date.now(),
+            startedAt: existing?.startedAt || new Date().toISOString(),
+            lastUpdatedAt: new Date().toISOString(),
+            locationUnavailable: false
+          };
+          MockDatabase.saveTrackingSession(updatedSession);
+        }
       },
       (err) => {
         console.warn("Continuous GPS position error:", err);
@@ -181,6 +197,14 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     );
     activeWatchIdRef.current = watchId;
   };
+
+  // Auto-resume GPS tracking on mount/reload if pickup route is active
+  useEffect(() => {
+    const activeEnRouteBooking = bookings.find(b => b.pickupStatus === 'en_route');
+    if (activeEnRouteBooking && activeWatchIdRef.current === null) {
+      startGpsTracking(activeEnRouteBooking.id, activeEnRouteBooking.studentId);
+    }
+  }, [bookings]);
 
   // Stop GPS tracking when class is completed
   const stopGpsTracking = (bookingId: string) => {

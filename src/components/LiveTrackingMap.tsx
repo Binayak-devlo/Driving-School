@@ -1,7 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { TrackingStatus } from '../types';
-import { DEFAULT_BHUBANESWAR_LOCATION } from '../utils/geo';
+import { DEFAULT_BHUBANESWAR_LOCATION, calculateDistanceKm, calculateEtaMinutes } from '../utils/geo';
 
 interface LiveTrackingMapProps {
   trainerLat?: number;
@@ -16,6 +16,7 @@ interface LiveTrackingMapProps {
   status: TrackingStatus;
   locationUnavailable?: boolean;
   lastUpdatedAt?: string | number;
+  onMetricsUpdate?: (distKm: number, etaMin: number) => void;
 }
 
 export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
@@ -28,12 +29,29 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
   studentName,
   status,
   locationUnavailable = false,
+  lastUpdatedAt,
+  onMetricsUpdate,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const trainerMarkerRef = useRef<L.Marker | null>(null);
   const studentMarkerRef = useRef<L.Marker | null>(null);
   const routePolylineRef = useRef<L.Polyline | null>(null);
+  const lastRoutedCoordsRef = useRef<{ tLat: number; tLng: number; sLat: number; sLng: number } | null>(null);
+
+  // Live tick timer to detect stale location in real time
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const isStale = (() => {
+    if (locationUnavailable) return true;
+    if (!lastUpdatedAt) return false;
+    const lastMs = typeof lastUpdatedAt === 'string' ? new Date(lastUpdatedAt).getTime() : lastUpdatedAt;
+    return (nowMs - lastMs) > 45000; // 45 seconds stale threshold
+  })();
 
   // Initialize map once
   useEffect(() => {
@@ -112,7 +130,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
 
     // 2. Trainer Marker
     if (hasTrainerCoords) {
-      const isUnavailable = locationUnavailable || status === 'WAITING' || status === 'CLASS_COMPLETED';
+      const isUnavailable = isStale || status === 'WAITING' || status === 'CLASS_COMPLETED';
       
       const carIcon = L.divIcon({
         className: 'custom-trainer-marker',
@@ -141,35 +159,96 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
       trainerMarkerRef.current = null;
     }
 
-    // 3. Route Line connecting Trainer and Student
+    // 3. Draw Actual Driving Road Route
     if (hasTrainerCoords && hasStudentCoords && (status === 'PICKUP_STARTED' || status === 'ARRIVED')) {
-      const points: [number, number][] = [
-        [trainerLat, trainerLng],
-        [studentLat, studentLng],
-      ];
+      const lastR = lastRoutedCoordsRef.current;
+      const movedDist = lastR ? calculateDistanceKm(trainerLat, trainerLng, lastR.tLat, lastR.tLng) : 999;
 
-      if (!routePolylineRef.current) {
-        routePolylineRef.current = L.polyline(points, {
-          color: '#6D3BFF',
-          weight: 4,
-          opacity: 0.8,
-          dashArray: '8, 8',
-        }).addTo(map);
-      } else {
-        routePolylineRef.current.setLatLngs(points);
+      // Only re-fetch driving route from OSRM if moved > 10 meters (0.01 km) or initial route
+      if (!lastR || movedDist >= 0.01) {
+        lastRoutedCoordsRef.current = { tLat: trainerLat, tLng: trainerLng, sLat: studentLat, sLng: studentLng };
+
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${trainerLng},${trainerLat};${studentLng},${studentLat}?overview=full&geometries=geojson`;
+
+        let isCancelled = false;
+
+        fetch(osrmUrl)
+          .then((res) => {
+            if (!res.ok) throw new Error('OSRM route failed');
+            return res.json();
+          })
+          .then((data) => {
+            if (isCancelled) return;
+            if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+              const route = data.routes[0];
+              const distMeters = route.distance;
+              const durationSec = route.duration;
+              const distKm = Math.max(0.1, Math.round((distMeters / 1000) * 10) / 10);
+              const etaMin = Math.max(1, Math.round(durationSec / 60));
+
+              if (onMetricsUpdate) onMetricsUpdate(distKm, etaMin);
+
+              const rawCoords: [number, number][] = route.geometry.coordinates;
+              const leafletPoints: [number, number][] = rawCoords.map(([lng, lat]) => [lat, lng]);
+
+              if (!routePolylineRef.current) {
+                routePolylineRef.current = L.polyline(leafletPoints, {
+                  color: '#6D3BFF',
+                  weight: 5,
+                  opacity: 0.9,
+                  lineJoin: 'round',
+                  lineCap: 'round',
+                }).addTo(map);
+              } else {
+                routePolylineRef.current.setLatLngs(leafletPoints);
+              }
+
+              const bounds = L.latLngBounds(leafletPoints);
+              map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+            } else {
+              throw new Error('No OSRM routes');
+            }
+          })
+          .catch((err) => {
+            console.warn('[LiveTrackingMap] OSRM fallback to Haversine route line:', err);
+            if (isCancelled) return;
+
+            const haversineKm = calculateDistanceKm(trainerLat, trainerLng, studentLat, studentLng);
+            const roadKm = Math.max(0.1, Math.round(haversineKm * 1.2 * 10) / 10);
+            const etaMin = calculateEtaMinutes(roadKm, 25);
+
+            if (onMetricsUpdate) onMetricsUpdate(roadKm, etaMin);
+
+            const fallbackPoints: [number, number][] = [
+              [trainerLat, trainerLng],
+              [studentLat, studentLng],
+            ];
+
+            if (!routePolylineRef.current) {
+              routePolylineRef.current = L.polyline(fallbackPoints, {
+                color: '#6D3BFF',
+                weight: 5,
+                opacity: 0.9,
+                dashArray: '8, 8',
+              }).addTo(map);
+            } else {
+              routePolylineRef.current.setLatLngs(fallbackPoints);
+            }
+
+            const bounds = L.latLngBounds(fallbackPoints);
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+          });
+
+        return () => {
+          isCancelled = true;
+        };
       }
-
-      // Auto-fit bounds to show both markers smoothly
-      const bounds = L.latLngBounds([
-        [trainerLat, trainerLng],
-        [studentLat, studentLng],
-      ]);
-      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
     } else {
       if (routePolylineRef.current) {
         map.removeLayer(routePolylineRef.current);
         routePolylineRef.current = null;
       }
+      lastRoutedCoordsRef.current = null;
 
       if (hasStudentCoords && !hasTrainerCoords) {
         map.setView([studentLat, studentLng], 15);
@@ -177,7 +256,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
         map.setView([trainerLat, trainerLng], 15);
       }
     }
-  }, [trainerLat, trainerLng, studentLat, studentLng, trainerName, carPlate, studentName, status, locationUnavailable]);
+  }, [trainerLat, trainerLng, studentLat, studentLng, trainerName, carPlate, studentName, status, locationUnavailable, isStale, onMetricsUpdate]);
 
   return (
     <div className="relative w-full h-[340px] rounded-3xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-inner">
@@ -186,7 +265,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
       {/* Top Banner overlay for status */}
       <div className="absolute top-3 left-3 right-3 z-10 flex items-center justify-between pointer-events-none">
         <div className="bg-slate-900/90 backdrop-blur-md text-white px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-white/10 shadow-lg flex items-center gap-1.5">
-          {status === 'PICKUP_STARTED' && (
+          {status === 'PICKUP_STARTED' && !isStale && (
             <>
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
               <span className="text-emerald-400">Live GPS Tracking</span>
@@ -212,12 +291,13 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
           )}
         </div>
 
-        {locationUnavailable && status === 'PICKUP_STARTED' && (
+        {isStale && status === 'PICKUP_STARTED' && (
           <div className="bg-rose-500/95 backdrop-blur-md text-white px-3 py-1.5 rounded-full text-[10px] font-extrabold border border-rose-400/30 shadow-lg animate-pulse">
-            ⚠️ Location temporarily unavailable
+            ⚠️ Trainer location temporarily unavailable
           </div>
         )}
       </div>
     </div>
   );
 };
+

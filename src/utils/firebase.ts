@@ -28,16 +28,11 @@ enableIndexedDbPersistence(db).catch((err) => {
 // Validate Connection to Firestore (MANDATORY per system integration guidelines)
 async function testConnection() {
   try {
-    // Check connection by loading a non-existent document in an allowed collection (or check general state)
-    // Using 'students/test_connection' as students collection has read/write allowed.
-    await getDocFromServer(doc(db, "students", "test_connection"));
+    // Check connection by loading a non-existent document with a 5s timeout
+    await withTimeout(getDocFromServer(doc(db, "students", "test_connection")), 5000, "Connection test timed out");
     console.log("[Firebase] Connection test completed successfully.");
   } catch (error) {
-    if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.error("[Firebase] Connection test failed: Client is offline. Please check your Firebase configuration.");
-    } else {
-      console.warn("[Firebase] Connection test status (usually normal if empty collection):", error);
-    }
+    console.warn("[Firebase] Connection test status (normal during offline/cold start):", error);
   }
 }
 testConnection();
@@ -97,8 +92,10 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     operationType,
     path
   };
-  console.error("Firestore Error Detailed: ", JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.warn("Firestore Operation Notice: ", JSON.stringify(errInfo));
+  if (operationType === OperationType.WRITE || operationType === OperationType.DELETE || operationType === OperationType.CREATE) {
+    throw new Error(JSON.stringify(errInfo));
+  }
 }
 
 // Helper to run a promise with a timeout
@@ -122,7 +119,7 @@ export async function saveToCloud(collectionName: string, docId: string, data: a
     const cleanData = JSON.parse(JSON.stringify(data)); // remove undefined values
     await withTimeout(
       setDoc(doc(db, collectionName, docId), cleanData),
-      8000,
+      10000,
       `Saving to ${fullPath} timed out`
     );
     console.log(`[Firebase] Saved: ${fullPath}`);
@@ -146,7 +143,7 @@ export async function deleteFromCloud(collectionName: string, docId: string) {
   try {
     await withTimeout(
       deleteDoc(doc(db, collectionName, docId)),
-      8000,
+      10000,
       `Deleting ${fullPath} timed out`
     );
     console.log(`[Firebase] Deleted: ${fullPath}`);
@@ -160,14 +157,21 @@ export async function deleteFromCloud(collectionName: string, docId: string) {
   }
 }
 
-// Helper to load an entire collection
+// Helper to load an entire collection with fast server check and graceful getDocs fallback
 export async function loadCollectionFromCloud(collectionName: string): Promise<any[]> {
   try {
-    const querySnapshot = await withTimeout(
-      getDocsFromServer(collection(db, collectionName)),
-      8000,
-      `Loading collection ${collectionName} timed out`
-    );
+    let querySnapshot;
+    try {
+      querySnapshot = await withTimeout(
+        getDocsFromServer(collection(db, collectionName)),
+        5000,
+        `Loading collection ${collectionName} timed out`
+      );
+    } catch (serverErr) {
+      console.warn(`[Firebase] Server fetch for ${collectionName} timed out or offline, falling back to cached getDocs...`);
+      querySnapshot = await getDocs(collection(db, collectionName));
+    }
+
     const items: any[] = [];
     querySnapshot.forEach((doc) => {
       items.push({ id: doc.id, ...doc.data() });
@@ -175,7 +179,7 @@ export async function loadCollectionFromCloud(collectionName: string): Promise<a
     console.log(`[Firebase] Loaded ${items.length} items from ${collectionName}`);
     return items;
   } catch (error) {
-    console.error(`[Firebase] Load collection error for ${collectionName}:`, error);
+    console.warn(`[Firebase] Load collection fallback notice for ${collectionName}:`, error);
     handleFirestoreError(error, OperationType.LIST, collectionName);
     return [];
   }

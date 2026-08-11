@@ -1139,7 +1139,67 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const [trackingSession, setTrackingSession] = useState<TrackingSession | null>(() => {
     return MockDatabase.getTrackingSessionByStudent(student?.id || "student_1");
   });
+  const [roadMetrics, setRoadMetrics] = useState<{ distKm: number; etaMin: number } | null>(null);
   const [studentGps, setStudentGps] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Real-Time Firestore & Local Synchronization for Live Pickup Tracking
+  useEffect(() => {
+    if (!student?.id) return;
+
+    // 1. Initial Local Database Sync
+    const initialLocal = MockDatabase.getTrackingSessionByStudent(student.id);
+    if (initialLocal) {
+      setTrackingSession(initialLocal);
+    }
+
+    // 2. Real-Time Firestore Listener for Live Location & Pickup Route Status
+    let unsubFirestore: (() => void) | null = null;
+    try {
+      unsubFirestore = onSnapshot(collection(db, "trackingSessions"), (snapshot) => {
+        let activeSession: TrackingSession | null = null;
+        const studentSessions: TrackingSession[] = [];
+
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as TrackingSession;
+          if (data && data.studentId === student.id) {
+            studentSessions.push(data);
+          }
+        });
+
+        if (studentSessions.length > 0) {
+          const active = studentSessions.find(
+            s => s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED'
+          );
+          activeSession = active || studentSessions[studentSessions.length - 1];
+        }
+
+        if (activeSession) {
+          setTrackingSession(activeSession);
+        }
+      }, (err) => {
+        console.warn("[StudentApp] Firestore trackingSessions onSnapshot error:", err);
+      });
+    } catch (err) {
+      console.warn("[StudentApp] Firestore subscription setup exception:", err);
+    }
+
+    // 3. Local Storage / Custom DB Event Synchronization Fallback
+    const handleLocalSync = () => {
+      const updated = MockDatabase.getTrackingSessionByStudent(student.id);
+      if (updated) {
+        setTrackingSession(updated);
+      }
+    };
+
+    window.addEventListener('storage', handleLocalSync);
+    window.addEventListener('golden_hands_db_update', handleLocalSync);
+
+    return () => {
+      if (unsubFirestore) unsubFirestore();
+      window.removeEventListener('storage', handleLocalSync);
+      window.removeEventListener('golden_hands_db_update', handleLocalSync);
+    };
+  }, [student?.id]);
 
   useEffect(() => {
     if (navigator.geolocation) {
@@ -6363,6 +6423,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         status={trackingSession?.status || 'WAITING'}
                         locationUnavailable={trackingSession?.locationUnavailable}
                         lastUpdatedAt={trackingSession?.lastUpdatedAt}
+                        onMetricsUpdate={(d, e) => setRoadMetrics({ distKm: d, etaMin: e })}
                       />
                     </div>
 
@@ -6374,10 +6435,11 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       const studentLng = studentGps?.lng || DEFAULT_BHUBANESWAR_LOCATION.lng;
 
                       const hasCoords = typeof trainerLat === 'number' && typeof trainerLng === 'number';
-                      const distKm = hasCoords
+                      const fallbackDist = hasCoords
                         ? calculateDistanceKm(trainerLat, trainerLng, studentLat, studentLng)
                         : 2.4;
-                      const etaMin = calculateEtaMinutes(distKm, trackingSession?.speed || 25);
+                      const distKm = roadMetrics?.distKm ?? fallbackDist;
+                      const etaMin = roadMetrics?.etaMin ?? calculateEtaMinutes(distKm, trackingSession?.speed || 25);
 
                       return (
                         <div className="bg-[#161623] text-white p-3.5 rounded-2xl mb-3 border border-white/10 shadow-lg flex items-center justify-between text-xs">

@@ -935,6 +935,9 @@ export class MockDatabase {
       sessions.push(session);
     }
     this.setStored("tracking_sessions", sessions);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('golden_hands_db_update'));
+    }
     try {
       saveToCloud("trackingSessions", session.trackingSessionId, session);
     } catch (e) {
@@ -1078,9 +1081,15 @@ export class MockDatabase {
       // 1. Fetch Students
       const cloudStudents = await loadCollectionFromCloud("students");
       if (cloudStudents.length === 0) {
+        const localRegistered = this.getRegisteredStudents();
+        if (localRegistered && localRegistered.length > 0) {
+          console.log("[Firebase] Cloud students empty or offline, retaining local registered students cache.");
+          return true;
+        }
+
         if (hasSeeded) {
-          console.warn("[Firebase] Seeding completed but cloud students list is still empty. Stopping recursion.");
-          return false;
+          console.warn("[Firebase] Seeding completed or offline. Proceeding with local state.");
+          return true;
         }
         console.log("[Firebase] Cloud database is empty. Seeding default data...");
         await this.seedDefaultsToCloud();
