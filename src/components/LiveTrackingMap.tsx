@@ -38,6 +38,8 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
   const studentMarkerRef = useRef<L.Marker | null>(null);
   const routePolylineRef = useRef<L.Polyline | null>(null);
   const lastRoutedCoordsRef = useRef<{ tLat: number; tLng: number; sLat: number; sLng: number } | null>(null);
+  const lastStudentIconKeyRef = useRef<string>('');
+  const lastTrainerIconKeyRef = useRef<string>('');
 
   // Live tick timer to detect stale location in real time
   const [nowMs, setNowMs] = useState(Date.now());
@@ -78,8 +80,10 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
 
     // Handle container resize
     const resizeObserver = new ResizeObserver(() => {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.invalidateSize();
+      if (mapInstanceRef.current && mapContainerRef.current) {
+        try {
+          mapInstanceRef.current.invalidateSize({ animate: false });
+        } catch (e) {}
       }
     });
 
@@ -88,75 +92,136 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
     return () => {
       resizeObserver.disconnect();
       if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
+        try {
+          mapInstanceRef.current.stop();
+          if (trainerMarkerRef.current) {
+            mapInstanceRef.current.removeLayer(trainerMarkerRef.current);
+            trainerMarkerRef.current = null;
+          }
+          if (studentMarkerRef.current) {
+            mapInstanceRef.current.removeLayer(studentMarkerRef.current);
+            studentMarkerRef.current = null;
+          }
+          if (routePolylineRef.current) {
+            mapInstanceRef.current.removeLayer(routePolylineRef.current);
+            routePolylineRef.current = null;
+          }
+          mapInstanceRef.current.remove();
+        } catch (e) {
+          console.warn('[LiveTrackingMap] Leaflet cleanup notice:', e);
+        }
         mapInstanceRef.current = null;
       }
+      lastStudentIconKeyRef.current = '';
+      lastTrainerIconKeyRef.current = '';
     };
   }, []);
 
   // Update markers and route polyline when coordinates change
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map) return;
+    if (!map || !mapContainerRef.current) return;
 
     const hasTrainerCoords = typeof trainerLat === 'number' && typeof trainerLng === 'number' && !isNaN(trainerLat) && !isNaN(trainerLng);
     const hasStudentCoords = typeof studentLat === 'number' && typeof studentLng === 'number' && !isNaN(studentLat) && !isNaN(studentLng);
 
     // 1. Student Marker
     if (hasStudentCoords) {
-      const studentIcon = L.divIcon({
-        className: 'custom-student-marker',
-        html: `
-          <div class="relative flex flex-col items-center group">
-            <div class="w-8 h-8 bg-[#6D3BFF] border-2 border-white rounded-full flex items-center justify-center shadow-lg text-white font-bold text-xs animate-pulse">
-              📍
-            </div>
-            <div class="bg-[#161623] text-white text-[9px] font-black px-2 py-0.5 rounded-md shadow-md mt-1 border border-white/20 whitespace-nowrap">
-              ${studentName ? studentName.split(' ')[0] : 'Pickup Spot'}
-            </div>
-          </div>
-        `,
-        iconSize: [40, 50],
-        iconAnchor: [20, 25],
-      });
+      const studentNameShort = studentName ? studentName.split(' ')[0] : 'Pickup Spot';
+      const studentIconKey = `student_${studentNameShort}`;
 
       if (!studentMarkerRef.current) {
+        const studentIcon = L.divIcon({
+          className: 'custom-student-marker',
+          html: `
+            <div class="relative flex flex-col items-center group">
+              <div class="w-8 h-8 bg-[#6D3BFF] border-2 border-white rounded-full flex items-center justify-center shadow-lg text-white font-bold text-xs animate-pulse">
+                📍
+              </div>
+              <div class="bg-[#161623] text-white text-[9px] font-black px-2 py-0.5 rounded-md shadow-md mt-1 border border-white/20 whitespace-nowrap">
+                ${studentNameShort}
+              </div>
+            </div>
+          `,
+          iconSize: [40, 50],
+          iconAnchor: [20, 25],
+        });
         studentMarkerRef.current = L.marker([studentLat, studentLng], { icon: studentIcon }).addTo(map);
+        lastStudentIconKeyRef.current = studentIconKey;
       } else {
         studentMarkerRef.current.setLatLng([studentLat, studentLng]);
-        studentMarkerRef.current.setIcon(studentIcon);
+        if (lastStudentIconKeyRef.current !== studentIconKey) {
+          const studentIcon = L.divIcon({
+            className: 'custom-student-marker',
+            html: `
+              <div class="relative flex flex-col items-center group">
+                <div class="w-8 h-8 bg-[#6D3BFF] border-2 border-white rounded-full flex items-center justify-center shadow-lg text-white font-bold text-xs animate-pulse">
+                  📍
+                </div>
+                <div class="bg-[#161623] text-white text-[9px] font-black px-2 py-0.5 rounded-md shadow-md mt-1 border border-white/20 whitespace-nowrap">
+                  ${studentNameShort}
+                </div>
+              </div>
+            `,
+            iconSize: [40, 50],
+            iconAnchor: [20, 25],
+          });
+          studentMarkerRef.current.setIcon(studentIcon);
+          lastStudentIconKeyRef.current = studentIconKey;
+        }
       }
     }
 
     // 2. Trainer Marker
     if (hasTrainerCoords) {
       const isUnavailable = isStale || status === 'WAITING' || status === 'CLASS_COMPLETED';
-      
-      const carIcon = L.divIcon({
-        className: 'custom-trainer-marker',
-        html: `
-          <div class="relative flex flex-col items-center">
-            <div class="w-10 h-10 ${isUnavailable ? 'bg-slate-700 border-slate-400' : 'bg-amber-500 border-slate-900'} border-2 rounded-2xl flex items-center justify-center shadow-xl text-lg animate-bounce">
-              🚗
-            </div>
-            <div class="bg-slate-900 text-amber-400 text-[9px] font-extrabold px-2 py-0.5 rounded-md shadow-md mt-1 border border-amber-500/30 whitespace-nowrap">
-              ${carPlate || trainerName || 'Vehicle'}
-            </div>
-          </div>
-        `,
-        iconSize: [44, 55],
-        iconAnchor: [22, 28],
-      });
+      const vehicleLabel = carPlate || trainerName || 'Vehicle';
+      const trainerIconKey = `trainer_${vehicleLabel}_${isUnavailable}`;
 
       if (!trainerMarkerRef.current) {
+        const carIcon = L.divIcon({
+          className: 'custom-trainer-marker',
+          html: `
+            <div class="relative flex flex-col items-center">
+              <div class="w-10 h-10 ${isUnavailable ? 'bg-slate-700 border-slate-400' : 'bg-amber-500 border-slate-900'} border-2 rounded-2xl flex items-center justify-center shadow-xl text-lg animate-bounce">
+                🚗
+              </div>
+              <div class="bg-slate-900 text-amber-400 text-[9px] font-extrabold px-2 py-0.5 rounded-md shadow-md mt-1 border border-amber-500/30 whitespace-nowrap">
+                ${vehicleLabel}
+              </div>
+            </div>
+          `,
+          iconSize: [44, 55],
+          iconAnchor: [22, 28],
+        });
         trainerMarkerRef.current = L.marker([trainerLat, trainerLng], { icon: carIcon }).addTo(map);
+        lastTrainerIconKeyRef.current = trainerIconKey;
       } else {
         trainerMarkerRef.current.setLatLng([trainerLat, trainerLng]);
-        trainerMarkerRef.current.setIcon(carIcon);
+        if (lastTrainerIconKeyRef.current !== trainerIconKey) {
+          const carIcon = L.divIcon({
+            className: 'custom-trainer-marker',
+            html: `
+              <div class="relative flex flex-col items-center">
+                <div class="w-10 h-10 ${isUnavailable ? 'bg-slate-700 border-slate-400' : 'bg-amber-500 border-slate-900'} border-2 rounded-2xl flex items-center justify-center shadow-xl text-lg animate-bounce">
+                  🚗
+                </div>
+                <div class="bg-slate-900 text-amber-400 text-[9px] font-extrabold px-2 py-0.5 rounded-md shadow-md mt-1 border border-amber-500/30 whitespace-nowrap">
+                  ${vehicleLabel}
+                </div>
+              </div>
+            `,
+            iconSize: [44, 55],
+            iconAnchor: [22, 28],
+          });
+          trainerMarkerRef.current.setIcon(carIcon);
+          lastTrainerIconKeyRef.current = trainerIconKey;
+        }
       }
     } else if (trainerMarkerRef.current) {
       map.removeLayer(trainerMarkerRef.current);
       trainerMarkerRef.current = null;
+      lastTrainerIconKeyRef.current = '';
     }
 
     // 3. Draw Actual Driving Road Route
@@ -178,7 +243,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
             return res.json();
           })
           .then((data) => {
-            if (isCancelled) return;
+            if (isCancelled || !mapInstanceRef.current || !mapContainerRef.current) return;
             if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
               const route = data.routes[0];
               const distMeters = route.distance;
@@ -198,20 +263,20 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
                   opacity: 0.9,
                   lineJoin: 'round',
                   lineCap: 'round',
-                }).addTo(map);
+                }).addTo(mapInstanceRef.current);
               } else {
                 routePolylineRef.current.setLatLngs(leafletPoints);
               }
 
               const bounds = L.latLngBounds(leafletPoints);
-              map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+              mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 16, animate: false });
             } else {
               throw new Error('No OSRM routes');
             }
           })
           .catch((err) => {
             console.warn('[LiveTrackingMap] OSRM fallback to Haversine route line:', err);
-            if (isCancelled) return;
+            if (isCancelled || !mapInstanceRef.current || !mapContainerRef.current) return;
 
             const haversineKm = calculateDistanceKm(trainerLat, trainerLng, studentLat, studentLng);
             const roadKm = Math.max(0.1, Math.round(haversineKm * 1.2 * 10) / 10);
@@ -230,13 +295,13 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
                 weight: 5,
                 opacity: 0.9,
                 dashArray: '8, 8',
-              }).addTo(map);
+              }).addTo(mapInstanceRef.current);
             } else {
               routePolylineRef.current.setLatLngs(fallbackPoints);
             }
 
             const bounds = L.latLngBounds(fallbackPoints);
-            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+            mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 16, animate: false });
           });
 
         return () => {
@@ -250,11 +315,19 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
       }
       lastRoutedCoordsRef.current = null;
 
-      if (hasStudentCoords && !hasTrainerCoords) {
-        map.setView([studentLat, studentLng], 15);
-      } else if (hasTrainerCoords && !hasStudentCoords) {
-        map.setView([trainerLat, trainerLng], 15);
-      }
+      try {
+        if (hasStudentCoords && hasTrainerCoords) {
+          const bounds = L.latLngBounds([
+            [trainerLat, trainerLng],
+            [studentLat, studentLng]
+          ]);
+          map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16, animate: false });
+        } else if (hasStudentCoords && !hasTrainerCoords) {
+          map.setView([studentLat, studentLng], 15, { animate: false });
+        } else if (hasTrainerCoords && !hasStudentCoords) {
+          map.setView([trainerLat, trainerLng], 15, { animate: false });
+        }
+      } catch (e) {}
     }
   }, [trainerLat, trainerLng, studentLat, studentLng, trainerName, carPlate, studentName, status, locationUnavailable, isStale, onMetricsUpdate]);
 
@@ -265,7 +338,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
       {/* Top Banner overlay for status */}
       <div className="absolute top-3 left-3 right-3 z-10 flex items-center justify-between pointer-events-none">
         <div className="bg-slate-900/90 backdrop-blur-md text-white px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-white/10 shadow-lg flex items-center gap-1.5">
-          {status === 'PICKUP_STARTED' && !isStale && (
+          {(status === 'PICKUP_STARTED' || status === 'pickup_started' || status === 'en_route') && !isStale && (
             <>
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
               <span className="text-emerald-400">Live GPS Tracking</span>
@@ -283,7 +356,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
               <span className="text-indigo-400">Class In Session</span>
             </>
           )}
-          {(status === 'WAITING' || status === 'CLASS_COMPLETED') && (
+          {status !== 'PICKUP_STARTED' && status !== 'pickup_started' && status !== 'en_route' && status !== 'ARRIVED' && status !== 'CLASS_STARTED' && (
             <>
               <span className="w-2 h-2 rounded-full bg-slate-400 inline-block" />
               <span className="text-slate-300">Tracking Inactive</span>

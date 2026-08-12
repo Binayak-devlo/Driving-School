@@ -1140,14 +1140,32 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     return MockDatabase.getTrackingSessionByStudent(student?.id || "student_1");
   });
   const [roadMetrics, setRoadMetrics] = useState<{ distKm: number; etaMin: number } | null>(null);
-  const [studentGps, setStudentGps] = useState<{ lat: number; lng: number } | null>(null);
+  const [studentGps, setStudentGps] = useState<{ lat: number; lng: number }>(() => ({
+    lat: DEFAULT_BHUBANESWAR_LOCATION.lat,
+    lng: DEFAULT_BHUBANESWAR_LOCATION.lng
+  }));
 
   // Real-Time Firestore & Local Synchronization for Live Pickup Tracking
   useEffect(() => {
     if (!student?.id) return;
 
+    const findActiveSession = () => {
+      const allSessions = MockDatabase.getTrackingSessions();
+      const studentBookings = MockDatabase.getBookings().filter(b => b.studentId === student.id);
+      const studentClassIds = studentBookings.map(b => b.id);
+
+      const matched = allSessions.filter(s =>
+        s.studentId === student.id ||
+        (effectiveAssignedTrainerId && s.trainerId === effectiveAssignedTrainerId) ||
+        studentClassIds.includes(s.classId)
+      );
+
+      const active = matched.find(s => s.isTracking === true || s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route');
+      return active || (matched.length > 0 ? matched[matched.length - 1] : null);
+    };
+
     // 1. Initial Local Database Sync
-    const initialLocal = MockDatabase.getTrackingSessionByStudent(student.id);
+    const initialLocal = findActiveSession();
     if (initialLocal) {
       setTrackingSession(initialLocal);
     }
@@ -1156,26 +1174,26 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     let unsubFirestore: (() => void) | null = null;
     try {
       unsubFirestore = onSnapshot(collection(db, "trackingSessions"), (snapshot) => {
-        let activeSession: TrackingSession | null = null;
+        const studentBookings = MockDatabase.getBookings().filter(b => b.studentId === student.id);
+        const studentClassIds = studentBookings.map(b => b.id);
         const studentSessions: TrackingSession[] = [];
 
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as TrackingSession;
-          if (data && data.studentId === student.id) {
+          if (data && (
+            data.studentId === student.id ||
+            (effectiveAssignedTrainerId && data.trainerId === effectiveAssignedTrainerId) ||
+            studentClassIds.includes(data.classId)
+          )) {
             studentSessions.push(data);
           }
         });
 
-        if (studentSessions.length > 0) {
-          const active = studentSessions.find(
-            s => s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED'
-          );
-          activeSession = active || studentSessions[studentSessions.length - 1];
-        }
-
-        if (activeSession) {
-          setTrackingSession(activeSession);
-        }
+        const active = studentSessions.find(
+          s => s.isTracking === true || s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route'
+        );
+        const chosen = active || (studentSessions.length > 0 ? studentSessions[studentSessions.length - 1] : null);
+        setTrackingSession(chosen);
       }, (err) => {
         console.warn("[StudentApp] Firestore trackingSessions onSnapshot error:", err);
       });
@@ -1185,10 +1203,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
     // 3. Local Storage / Custom DB Event Synchronization Fallback
     const handleLocalSync = () => {
-      const updated = MockDatabase.getTrackingSessionByStudent(student.id);
-      if (updated) {
-        setTrackingSession(updated);
-      }
+      const chosen = findActiveSession();
+      setTrackingSession(chosen);
     };
 
     window.addEventListener('storage', handleLocalSync);
@@ -1199,7 +1215,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       window.removeEventListener('storage', handleLocalSync);
       window.removeEventListener('golden_hands_db_update', handleLocalSync);
     };
-  }, [student?.id]);
+  }, [student?.id, effectiveAssignedTrainerId]);
 
   useEffect(() => {
     if (navigator.geolocation) {
@@ -6365,41 +6381,61 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                 <div>
                   <div className="flex items-center justify-between">
                     <h2 className="text-xl font-extrabold text-[#161623]">Live Pickup Tracking</h2>
-                    {assignedTrainer && trackingSession && (
-                      <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
-                        trackingSession.status === 'PICKUP_STARTED'
-                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                          : trackingSession.status === 'ARRIVED'
-                          ? 'bg-amber-100 text-amber-800 border-amber-300'
-                          : trackingSession.status === 'CLASS_STARTED'
-                          ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
-                          : 'bg-slate-100 text-slate-600 border-slate-300'
-                      }`}>
-                        {trackingSession.status === 'PICKUP_STARTED' && '🟢 On The Way'}
-                        {trackingSession.status === 'ARRIVED' && '📍 Arrived'}
-                        {trackingSession.status === 'CLASS_STARTED' && '🚗 Class Active'}
-                        {trackingSession.status === 'CLASS_COMPLETED' && '✓ Session Ended'}
-                        {trackingSession.status === 'WAITING' && '⏳ Pickup Awaiting'}
-                      </span>
-                    )}
+                    {assignedTrainer && (() => {
+                      const isPickupEnRoute = trackingSession && (
+                        trackingSession.isTracking === true ||
+                        trackingSession.status === 'PICKUP_STARTED' ||
+                        trackingSession.routeStatus === 'pickup_started' ||
+                        trackingSession.routeStatus === 'en_route'
+                      );
+                      return (
+                        <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
+                          isPickupEnRoute
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                            : trackingSession && trackingSession.status === 'ARRIVED'
+                            ? 'bg-amber-100 text-amber-800 border-amber-300'
+                            : trackingSession && trackingSession.status === 'CLASS_STARTED'
+                            ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                            : 'bg-slate-100 text-slate-600 border-slate-300'
+                        }`}>
+                          {isPickupEnRoute && '🟢 On The Way'}
+                          {trackingSession?.status === 'ARRIVED' && '📍 Arrived'}
+                          {trackingSession?.status === 'CLASS_STARTED' && '🚗 Class Active'}
+                          {trackingSession?.status === 'CLASS_COMPLETED' && '✓ Session Ended'}
+                          {!isPickupEnRoute && trackingSession?.status !== 'ARRIVED' && trackingSession?.status !== 'CLASS_STARTED' && trackingSession?.status !== 'CLASS_COMPLETED' && '⏳ Pickup Awaiting'}
+                        </span>
+                      );
+                    })()}
                   </div>
 
-                  {assignedTrainer ? (
-                    trackingSession && trackingSession.status === 'PICKUP_STARTED' ? (
-                      <p className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 mt-1 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
-                        Live GPS Active: {assignedTrainer.name} is heading to your location.
-                      </p>
-                    ) : trackingSession && trackingSession.status === 'ARRIVED' ? (
-                      <p className="text-[10px] text-amber-800 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200">
-                        📍 {assignedTrainer.name} has arrived at your pickup point!
-                      </p>
-                    ) : (
-                      <p className="text-[10px] text-slate-500 mt-1">
-                        Track {assignedTrainer.name} approaching your pickup location in Rasulgarh Square.
-                      </p>
-                    )
-                  ) : (
+                  {assignedTrainer ? (() => {
+                    const isPickupEnRoute = trackingSession && (
+                      trackingSession.isTracking === true ||
+                      trackingSession.status === 'PICKUP_STARTED' ||
+                      trackingSession.routeStatus === 'pickup_started' ||
+                      trackingSession.routeStatus === 'en_route'
+                    );
+                    if (isPickupEnRoute) {
+                      return (
+                        <p className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 mt-1 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+                          Live GPS Active: {assignedTrainer.name} is on the way to your location.
+                        </p>
+                      );
+                    } else if (trackingSession && trackingSession.status === 'ARRIVED') {
+                      return (
+                        <p className="text-[10px] text-amber-800 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200">
+                          📍 {assignedTrainer.name} has arrived at your pickup point!
+                        </p>
+                      );
+                    } else {
+                      return (
+                        <p className="text-[10px] text-amber-800 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200">
+                          ⏳ Waiting for trainer to start pickup. Live GPS location sharing will activate when {assignedTrainer.name} starts the route.
+                        </p>
+                      );
+                    }
+                  })() : (
                     <p className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 mt-1 w-fit">
                       No trainer assigned yet
                     </p>

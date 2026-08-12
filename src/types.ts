@@ -224,6 +224,9 @@ export interface TrackingSession {
   trainerId: string;
   classId: string;
   status: TrackingStatus;
+  isTracking?: boolean;
+  routeStatus?: string;
+  estimatedArrival?: string;
   latitude?: number;
   longitude?: number;
   accuracy?: number;

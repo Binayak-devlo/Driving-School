@@ -9,6 +9,7 @@ import { MockDatabase } from "../utils/db";
 import { Booking, Student, SkillProgress, ChatMessage, Trainer, NavState, TrackingSession, TrackingStatus } from "../types";
 import { calculateDistanceKm, DEFAULT_BHUBANESWAR_LOCATION } from "../utils/geo";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
+import { LiveTrackingMap } from "./LiveTrackingMap";
 
 interface TrainerAppProps {
   onStateChange: () => void; // Sync changes with other views
@@ -18,12 +19,13 @@ interface TrainerAppProps {
 }
 
 export default function TrainerApp({ onStateChange, onLogout, navState }: TrainerAppProps) {
-  const [activeTab, setActiveTab] = useState<'schedule' | 'confirm' | 'students' | 'performance'>(() => {
+  const [activeTab, setActiveTab] = useState<'schedule' | 'confirm' | 'map' | 'students' | 'performance'>(() => {
     if (navState && navState.activeView === 'trainer' && navState.trainerTab) {
       return navState.trainerTab as any;
     }
     return 'schedule';
   });
+  const [trainerMapMetrics, setTrainerMapMetrics] = useState<{ distKm: number; etaMin: number } | null>(null);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(() => {
     if (navState && navState.activeView === 'trainer' && navState.trainerSelectedBookingId) {
       const allBookings = MockDatabase.getAllBookings();
@@ -99,100 +101,84 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     setTimeout(() => setTrainerToast(null), 4000);
   };
 
-  // Start continuous GPS tracking for an active pickup class session
+  // Start continuous real GPS tracking for an active pickup class session
   const startGpsTracking = (bookingId: string, targetStudentId: string) => {
     if (!navigator.geolocation) {
-      triggerToast("GPS Geolocation is not supported on this device/browser.");
+      triggerToast("Unable to get your current location. Please enable Location/GPS and try again.");
       return;
     }
-
-    // Request initial position
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude, accuracy, heading, speed } = pos.coords;
-        lastGpsSaveTimeRef.current = Date.now();
-        lastGpsCoordsRef.current = { lat: latitude, lng: longitude };
-
-        const initialSession: TrackingSession = {
-          trackingSessionId: `track_${bookingId}`,
-          studentId: targetStudentId,
-          trainerId: currentTrainerId || currentTrainer.id || "trainer_1",
-          classId: bookingId,
-          status: 'PICKUP_STARTED',
-          latitude,
-          longitude,
-          accuracy: accuracy || undefined,
-          heading: heading || undefined,
-          speed: speed || undefined,
-          timestamp: pos.timestamp || Date.now(),
-          startedAt: new Date().toISOString(),
-          lastUpdatedAt: new Date().toISOString(),
-          locationUnavailable: false
-        };
-        MockDatabase.saveTrackingSession(initialSession);
-      },
-      (err) => {
-        console.warn("Initial GPS position error:", err);
-        triggerToast("Location permission requested. Please enable GPS location access.");
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 2000 }
-    );
 
     if (activeWatchIdRef.current !== null) {
       navigator.geolocation.clearWatch(activeWatchIdRef.current);
       activeWatchIdRef.current = null;
     }
 
+    const saveGpsLocation = (pos: GeolocationPosition) => {
+      const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+      const now = Date.now();
+      lastGpsSaveTimeRef.current = now;
+      lastGpsCoordsRef.current = { lat: latitude, lng: longitude };
+
+      const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
+      if (existing && existing.status === 'CLASS_COMPLETED') return;
+
+      const activeTrainerId = currentTrainerId || currentTrainer?.id || "trainer_1";
+
+      const session: TrackingSession = {
+        trackingSessionId: `track_${bookingId}`,
+        studentId: targetStudentId,
+        trainerId: activeTrainerId,
+        classId: bookingId,
+        status: existing?.status === 'ARRIVED' ? 'ARRIVED' : 'PICKUP_STARTED',
+        isTracking: true,
+        routeStatus: existing?.status === 'ARRIVED' ? 'arrived' : 'pickup_started',
+        latitude,
+        longitude,
+        accuracy: accuracy || undefined,
+        heading: heading || undefined,
+        speed: speed || undefined,
+        timestamp: pos.timestamp || now,
+        startedAt: existing?.startedAt || new Date().toISOString(),
+        lastUpdatedAt: new Date().toISOString(),
+        locationUnavailable: false
+      };
+      console.log("[TrainerApp] Saving REAL GPS tracking position:", { latitude, longitude, targetStudentId, activeTrainerId });
+      MockDatabase.saveTrackingSession(session);
+    };
+
+    const handleGpsError = (err: GeolocationPositionError) => {
+      console.warn("[TrainerApp] GPS location error:", err);
+      if (err.code === 1) { // PERMISSION_DENIED
+        triggerToast("Location permission is required to start live pickup tracking.");
+      } else {
+        triggerToast("Unable to get your current location. Please enable Location/GPS and try again.");
+      }
+
+      const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
+      if (existing && existing.status !== 'CLASS_COMPLETED') {
+        MockDatabase.saveTrackingSession({
+          ...existing,
+          locationUnavailable: true,
+          lastUpdatedAt: new Date().toISOString()
+        });
+      }
+    };
+
+    // 1. Request immediate position
+    navigator.geolocation.getCurrentPosition(
+      saveGpsLocation,
+      handleGpsError,
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+    );
+
+    // 2. Start watchPosition for continuous real-time updates
     const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude, longitude, accuracy, heading, speed } = pos.coords;
-        const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
-        if (existing && existing.status === 'CLASS_COMPLETED') return;
-
-        const now = Date.now();
-        const movedDist = lastGpsCoordsRef.current
-          ? calculateDistanceKm(latitude, longitude, lastGpsCoordsRef.current.lat, lastGpsCoordsRef.current.lng)
-          : 999;
-
-        // Throttle updates: save to database every 3s or if moved >= 5 meters
-        if (now - lastGpsSaveTimeRef.current >= 3000 || movedDist >= 0.005) {
-          lastGpsSaveTimeRef.current = now;
-          lastGpsCoordsRef.current = { lat: latitude, lng: longitude };
-
-          const updatedSession: TrackingSession = {
-            trackingSessionId: `track_${bookingId}`,
-            studentId: targetStudentId,
-            trainerId: currentTrainerId || currentTrainer.id || "trainer_1",
-            classId: bookingId,
-            status: existing ? existing.status : 'PICKUP_STARTED',
-            latitude,
-            longitude,
-            accuracy: accuracy || undefined,
-            heading: heading || undefined,
-            speed: speed || undefined,
-            timestamp: pos.timestamp || Date.now(),
-            startedAt: existing?.startedAt || new Date().toISOString(),
-            lastUpdatedAt: new Date().toISOString(),
-            locationUnavailable: false
-          };
-          MockDatabase.saveTrackingSession(updatedSession);
-        }
-      },
-      (err) => {
-        console.warn("Continuous GPS position error:", err);
-        const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
-        if (existing && existing.status !== 'CLASS_COMPLETED') {
-          MockDatabase.saveTrackingSession({
-            ...existing,
-            locationUnavailable: true,
-            lastUpdatedAt: new Date().toISOString()
-          });
-        }
-      },
+      saveGpsLocation,
+      handleGpsError,
       {
         enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 2000
+        timeout: 15000,
+        maximumAge: 5000
       }
     );
     activeWatchIdRef.current = watchId;
@@ -217,6 +203,8 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       const completedSession: TrackingSession = {
         ...existing,
         status: 'CLASS_COMPLETED',
+        isTracking: false,
+        routeStatus: 'completed',
         endedAt: new Date().toISOString(),
         lastUpdatedAt: new Date().toISOString()
       };
@@ -464,7 +452,8 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
 
   // Trainer starts the pickup route
   const handleStartPickupRoute = (bookingId: string) => {
-    const targetStudentId = selectedBooking ? selectedBooking.studentId : selectedStudentId;
+    const targetBooking = bookings.find(b => b.id === bookingId);
+    const targetStudentId = targetBooking ? targetBooking.studentId : (selectedBooking ? selectedBooking.studentId : selectedStudentId);
 
     const updated = bookings.map(b => {
       if (b.id === bookingId) {
@@ -485,6 +474,9 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
 
     // Start Real-Time GPS Tracking!
     startGpsTracking(bookingId, targetStudentId);
+
+    // Switch view to Map tab automatically to display live GPS route
+    setActiveTab('map');
 
     // Add message to chat
     const studentChats = MockDatabase.getChats(targetStudentId);
@@ -650,6 +642,20 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
 
   const activeUpcomingBookings = bookings.filter(b => (b.status === 'upcoming' || b.status === 'confirmed') && b.trainerId === currentTrainerId);
   const requestedBookings = bookings.filter(b => b.status === 'requested' && b.trainerId === currentTrainerId);
+
+  // Active pickup route resolution for Map tab
+  const activePickupBooking = bookings.find(b => 
+    (b.trainerId === currentTrainerId || b.trainerId === currentTrainer.id) &&
+    b.pickupStatus === 'en_route'
+  ) || (selectedBooking && selectedBooking.pickupStatus === 'en_route' ? selectedBooking : null);
+
+  const activePickupStudent = activePickupBooking 
+    ? MockDatabase.getStudent(activePickupBooking.studentId)
+    : null;
+
+  const activeTrackingSession = activePickupBooking
+    ? (MockDatabase.getTrackingSessionByClassId(activePickupBooking.id) || MockDatabase.getTrackingSessionByStudent(activePickupBooking.studentId))
+    : null;
 
   // Confirm requested booking handler (does not start GPS tracking)
   const handleConfirmClass = (bookingId: string) => {
@@ -1215,7 +1221,8 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
             <div className="flex bg-white/5 p-1 rounded-2xl mb-4 border border-white/5">
               {[
                 { id: 'schedule', label: 'Schedule' },
-                { id: 'confirm', label: `Confirm Class${requestedBookings.length > 0 ? ` (${requestedBookings.length})` : ''}` },
+                { id: 'confirm', label: `Confirm${requestedBookings.length > 0 ? ` (${requestedBookings.length})` : ''}` },
+                { id: 'map', label: `Map${activePickupBooking ? ' 🟢' : ''}` },
                 { id: 'students', label: 'My Students' },
                 { id: 'performance', label: 'Metrics' }
               ].map((tab) => (
@@ -1344,6 +1351,203 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                     <CheckCircle2 className="w-8 h-8 text-emerald-400/60" />
                     <p className="text-xs font-bold text-slate-300">No Pending Class Requests</p>
                     <p className="text-[10px] text-slate-500 max-w-[220px]">All student bookings assigned to Coach {currentTrainer.name} are confirmed.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB CONTENT: MAP / LIVE PICKUP ROUTE NAVIGATION */}
+            {activeTab === 'map' && (
+              <div className="flex flex-col gap-3 animate-fadeIn">
+                {/* Live Location Sharing Status Header */}
+                <div className="bg-[#1B1B2B] border border-white/10 rounded-2xl p-3 flex items-center justify-between shadow-md">
+                  <div className="flex items-center gap-2">
+                    <Navigation className="w-4 h-4 text-amber-400" />
+                    <span className="text-xs font-extrabold text-white">Live GPS Navigation</span>
+                  </div>
+                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[9px] font-black uppercase tracking-wider ${
+                    activePickupBooking && activeTrackingSession?.isTracking !== false
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                      : 'bg-slate-800 border-slate-700 text-slate-400'
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${activePickupBooking && activeTrackingSession?.isTracking !== false ? 'bg-emerald-500 animate-ping' : 'bg-slate-500'}`} />
+                    Live Location Sharing: {activePickupBooking && activeTrackingSession?.isTracking !== false ? 'ON' : 'OFF'}
+                  </div>
+                </div>
+
+                {activePickupBooking && activePickupStudent ? (
+                  <div className="flex flex-col gap-3">
+                    {/* Active Pickup Student Info Card */}
+                    <div className="bg-[#1B1B2B] border border-amber-500/30 rounded-2xl p-3.5 shadow-lg flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <img 
+                          src={activePickupStudent.photoUrl || student.photoUrl} 
+                          alt={activePickupStudent.name} 
+                          className="w-11 h-11 rounded-full border border-amber-500/40 object-cover shrink-0" 
+                        />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] font-black uppercase text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                              Active Pickup Route
+                            </span>
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                          </div>
+                          <h3 className="font-extrabold text-sm text-white mt-0.5 truncate">{activePickupStudent.name}</h3>
+                          <p className="text-[10px] text-slate-300 flex items-center gap-1 truncate">
+                            <MapPin className="w-3 h-3 text-rose-400 shrink-0" />
+                            {activePickupStudent.location || "Patia, Bhubaneswar"}
+                          </p>
+                        </div>
+                      </div>
+                      <a 
+                        href={`tel:${activePickupStudent.phone}`}
+                        className="w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center hover:bg-emerald-500/30 transition-all cursor-pointer shrink-0"
+                        title="Call Student"
+                      >
+                        <Phone className="w-4 h-4" />
+                      </a>
+                    </div>
+
+                    {/* Interactive Live Map Component */}
+                    <div className="bg-black/40 border border-white/10 rounded-2xl overflow-hidden shadow-xl h-72 relative">
+                      <LiveTrackingMap 
+                        trainerLat={activeTrackingSession?.latitude ?? lastGpsCoordsRef.current?.lat ?? DEFAULT_BHUBANESWAR_LOCATION.lat}
+                        trainerLng={activeTrackingSession?.longitude ?? lastGpsCoordsRef.current?.lng ?? DEFAULT_BHUBANESWAR_LOCATION.lng}
+                        trainerName={currentTrainer.name}
+                        carPlate={currentTrainer.carPlate}
+                        studentLat={DEFAULT_BHUBANESWAR_LOCATION.lat}
+                        studentLng={DEFAULT_BHUBANESWAR_LOCATION.lng}
+                        studentName={activePickupStudent.name}
+                        status={activeTrackingSession?.status || 'PICKUP_STARTED'}
+                        locationUnavailable={activeTrackingSession?.locationUnavailable}
+                        lastUpdatedAt={activeTrackingSession?.lastUpdatedAt}
+                        onMetricsUpdate={(dist, eta) => setTrainerMapMetrics({ distKm: dist, etaMin: eta })}
+                      />
+                    </div>
+
+                    {/* Live Route Navigation Metrics */}
+                    <div className="bg-[#161623] border border-white/10 rounded-2xl p-4 shadow-lg flex flex-col gap-3">
+                      <div className="flex items-center justify-between text-xs font-bold border-b border-white/10 pb-2.5">
+                        <div className="flex items-center gap-1.5 text-[11px]">
+                          <span className="text-amber-400 font-extrabold">🚗 Trainer</span>
+                          <span className="text-slate-500">→</span>
+                          <span className="text-slate-400 text-[10px] italic">Road Route</span>
+                          <span className="text-slate-500">→</span>
+                          <span className="text-rose-400 font-extrabold">📍 Pickup</span>
+                        </div>
+                        <span className="text-[10px] text-emerald-400 font-extrabold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                          {activeTrackingSession?.status === 'ARRIVED' ? 'Arrived at Pickup' : 'On the way'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 text-center">
+                        <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
+                          <p className="text-[9px] text-slate-400 uppercase font-black">Live Distance</p>
+                          <p className="text-base font-extrabold text-amber-400">
+                            {trainerMapMetrics?.distKm ? `${trainerMapMetrics.distKm} km` : '2.4 km'}
+                          </p>
+                        </div>
+                        <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
+                          <p className="text-[9px] text-slate-400 uppercase font-black">Estimated Arrival (ETA)</p>
+                          <p className="text-base font-extrabold text-emerald-400">
+                            {trainerMapMetrics?.etaMin ? `${trainerMapMetrics.etaMin} min` : '8 min'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 mt-1">
+                        <a
+                          href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(activePickupStudent.location || "Patia, Bhubaneswar")}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 bg-amber-500 hover:bg-amber-400 text-black py-2.5 rounded-xl font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                        >
+                          <Navigation className="w-4 h-4 fill-black" />
+                          Navigate
+                        </a>
+                        <button
+                          onClick={() => handleMarkPickedUp(activePickupBooking.id)}
+                          className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 px-3 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer active:scale-95 flex items-center gap-1"
+                          title="Mark Picked Up"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Arrived
+                        </button>
+                        <button
+                          onClick={() => {
+                            stopGpsTracking(activePickupBooking.id);
+                            const updated = bookings.map(b => b.id === activePickupBooking.id ? { ...b, pickupStatus: 'idle' as const } : b);
+                            MockDatabase.saveBookings(updated);
+                            setBookings(updated);
+                            triggerToast("Active pickup route stopped.");
+                            onStateChange();
+                          }}
+                          className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 px-3 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer active:scale-95"
+                          title="Stop Live Route"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* Empty state when trainer has no active pickup route */
+                  <div className="flex flex-col gap-4">
+                    <div className="bg-white/5 border border-white/10 rounded-3xl p-6 text-center flex flex-col items-center gap-3">
+                      <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shadow-md">
+                        <Navigation className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="font-extrabold text-sm text-white">No Active Student Pickup Route</h3>
+                        <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
+                          Select an upcoming scheduled class below and tap <span className="text-amber-400 font-bold">"Start Pickup Route"</span> to launch turn-by-turn GPS route navigation to the assigned student.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* List of today's scheduled classes to start pickup route */}
+                    <div className="flex flex-col gap-2.5">
+                      <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                        Today's Scheduled Classes ({activeUpcomingBookings.length})
+                      </h4>
+
+                      {activeUpcomingBookings.length > 0 ? (
+                        activeUpcomingBookings.map((b) => {
+                          const bStudent = MockDatabase.getStudent(b.studentId);
+                          return (
+                            <div key={b.id} className="bg-white/5 border border-white/10 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-md">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <img 
+                                  src={bStudent?.photoUrl || student.photoUrl} 
+                                  alt={bStudent?.name || "Student"} 
+                                  className="w-10 h-10 rounded-full border border-white/10 object-cover shrink-0" 
+                                />
+                                <div className="min-w-0">
+                                  <p className="font-extrabold text-xs text-white truncate">{bStudent?.name || "Student"}</p>
+                                  <p className="text-[10px] text-slate-400 flex items-center gap-1 truncate">
+                                    <Clock className="w-2.5 h-2.5 text-amber-400 shrink-0" /> {b.timeSlot}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5 truncate">
+                                    <MapPin className="w-2.5 h-2.5 text-rose-400 shrink-0" /> {bStudent?.location || "Patia, Bhubaneswar"}
+                                  </p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => handleStartPickupRoute(b.id)}
+                                className="bg-amber-500 hover:bg-amber-400 text-black px-3 py-2 rounded-xl font-black text-[10px] uppercase shadow-md flex items-center gap-1 shrink-0 transition-all cursor-pointer active:scale-95"
+                              >
+                                <Navigation className="w-3 h-3 fill-black" />
+                                Start Pickup
+                              </button>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="text-xs text-slate-400 text-center py-4 bg-white/5 rounded-2xl border border-white/5">
+                          No upcoming classes scheduled for today.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1508,6 +1712,16 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
               <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-black font-black text-[9px] rounded-full flex items-center justify-center border border-[#161623]">
                 {requestedBookings.length}
               </span>
+            )}
+          </button>
+          <button 
+            onClick={() => setActiveTab('map')}
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all relative ${activeTab === 'map' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
+          >
+            <Navigation className="w-4.5 h-4.5" />
+            <span className="text-[8px] font-bold">Map</span>
+            {activePickupBooking && (
+              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping" />
             )}
           </button>
           <button 

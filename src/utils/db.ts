@@ -921,7 +921,7 @@ export class MockDatabase {
     const sessions = this.getTrackingSessions();
     const studentSessions = sessions.filter(s => s.studentId === studentId);
     if (studentSessions.length === 0) return null;
-    const active = studentSessions.find(s => s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED');
+    const active = studentSessions.find(s => s.isTracking === true || s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route');
     if (active) return active;
     return studentSessions[studentSessions.length - 1];
   }
