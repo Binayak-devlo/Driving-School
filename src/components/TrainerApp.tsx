@@ -5,6 +5,8 @@ import {
   MessageSquare, Star, Sparkles, RefreshCw, Clock, Compass, Phone, CheckCircle2, AlertCircle,
   LogOut, Lock, Unlock
 } from "lucide-react";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "../utils/firebase";
 import { MockDatabase } from "../utils/db";
 import { Booking, Student, SkillProgress, ChatMessage, Trainer, NavState, TrackingSession, TrackingStatus } from "../types";
 import { calculateDistanceKm, DEFAULT_BHUBANESWAR_LOCATION } from "../utils/geo";
@@ -78,6 +80,73 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   const [brakeIncrement, setBrakeIncrement] = useState(5);
   const [hillStartIncrement, setHillStartIncrement] = useState(15);
 
+  // Active Session Management & Multi-Device Control
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    let sess = localStorage.getItem("golden_hands_trainer_session_id");
+    const trId = localStorage.getItem("golden_hands_current_trainer_id") || "trainer_1";
+    if (!sess) {
+      sess = `sess_tr_${trId}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      localStorage.setItem("golden_hands_trainer_session_id", sess);
+      MockDatabase.saveTrainerSession(trId, sess);
+    }
+    return sess;
+  });
+  const currentSessionIdRef = useRef<string>(currentSessionId);
+  useEffect(() => {
+    currentSessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
+
+  // Real-time listener for trainerSessions in Firestore: Invalidate old device B if device C logs in!
+  useEffect(() => {
+    const trId = currentTrainerId || currentTrainer?.id;
+    if (!trId) return;
+
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(doc(db, "trainerSessions", trId), (docSnap) => {
+        if (docSnap.exists()) {
+          const cloudSess = docSnap.data();
+          if (cloudSess && cloudSess.activeSessionId) {
+            const localSess = currentSessionIdRef.current || localStorage.getItem("golden_hands_trainer_session_id");
+            if (localSess && cloudSess.activeSessionId !== localSess) {
+              console.warn("[TrainerApp] Device session invalidated! A newer device logged in with this trainer account.", {
+                cloudSession: cloudSess.activeSessionId,
+                mySession: localSess
+              });
+              
+              // 1. Stop location watchers immediately
+              if (activeWatchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(activeWatchIdRef.current);
+                activeWatchIdRef.current = null;
+              }
+
+              // 2. Clear credentials from local storage
+              localStorage.removeItem("golden_hands_current_trainer_id");
+              localStorage.removeItem("golden_hands_trainer_session_id");
+              localStorage.removeItem("golden_hands_current_role");
+
+              // 3. Inform user and trigger logout
+              triggerToast("Logged out: Your account was logged in on another device.");
+              if (onLogout) {
+                onLogout();
+              } else if (onStateChange) {
+                onStateChange();
+              }
+            }
+          }
+        }
+      }, (err) => {
+        console.warn("[TrainerApp] trainerSessions listener error:", err);
+      });
+    } catch (e) {
+      console.warn("[TrainerApp] Could not attach trainerSessions listener:", e);
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [currentTrainerId, onLogout, onStateChange]);
+
   // Notification toast helper
   const [trainerToast, setTrainerToast] = useState<string | null>(null);
 
@@ -114,6 +183,20 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     }
 
     const saveGpsLocation = (pos: GeolocationPosition) => {
+      const activeSess = currentSessionIdRef.current || localStorage.getItem("golden_hands_trainer_session_id");
+      const activeTrainerId = currentTrainerId || currentTrainer?.id || "trainer_1";
+
+      // Verify that this device is still the latest active session before writing
+      const latestSessionInDb = MockDatabase.getTrainerSession(activeTrainerId);
+      if (latestSessionInDb && latestSessionInDb.activeSessionId && latestSessionInDb.activeSessionId !== activeSess) {
+        console.warn("[TrainerApp] GPS update rejected: Session is no longer active on this device.");
+        if (activeWatchIdRef.current !== null) {
+          navigator.geolocation.clearWatch(activeWatchIdRef.current);
+          activeWatchIdRef.current = null;
+        }
+        return;
+      }
+
       const { latitude, longitude, accuracy, heading, speed } = pos.coords;
       const now = Date.now();
       lastGpsSaveTimeRef.current = now;
@@ -121,8 +204,6 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
 
       const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
       if (existing && existing.status === 'CLASS_COMPLETED') return;
-
-      const activeTrainerId = currentTrainerId || currentTrainer?.id || "trainer_1";
 
       const session: TrackingSession = {
         trackingSessionId: `track_${bookingId}`,
@@ -140,9 +221,10 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
         timestamp: pos.timestamp || now,
         startedAt: existing?.startedAt || new Date().toISOString(),
         lastUpdatedAt: new Date().toISOString(),
-        locationUnavailable: false
+        locationUnavailable: false,
+        sessionId: activeSess || undefined
       };
-      console.log("[TrainerApp] Saving REAL GPS tracking position:", { latitude, longitude, targetStudentId, activeTrainerId });
+      console.log("[TrainerApp] Saving REAL GPS tracking position:", { latitude, longitude, targetStudentId, activeTrainerId, sessionId: activeSess });
       MockDatabase.saveTrackingSession(session);
     };
 
@@ -184,13 +266,23 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     activeWatchIdRef.current = watchId;
   };
 
-  // Auto-resume GPS tracking on mount/reload if pickup route is active
+  // Auto-resume GPS tracking on mount/reload or active device change if pickup route is active
   useEffect(() => {
     const activeEnRouteBooking = bookings.find(b => b.pickupStatus === 'en_route');
-    if (activeEnRouteBooking && activeWatchIdRef.current === null) {
-      startGpsTracking(activeEnRouteBooking.id, activeEnRouteBooking.studentId);
+    const trackingSessions = MockDatabase.getTrackingSessions();
+    const activeTrackingSession = trackingSessions.find(s => 
+      s.trainerId === (currentTrainerId || currentTrainer?.id) &&
+      (s.status === 'PICKUP_STARTED' || s.isTracking === true || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route')
+    );
+
+    const bookingIdToTrack = activeEnRouteBooking?.id || activeTrackingSession?.classId;
+    const studentIdToTrack = activeEnRouteBooking?.studentId || activeTrackingSession?.studentId;
+
+    if (bookingIdToTrack && studentIdToTrack && activeWatchIdRef.current === null) {
+      console.log("[TrainerApp] Active pickup session detected on this device. Starting live real GPS tracking...", { bookingIdToTrack, studentIdToTrack });
+      startGpsTracking(bookingIdToTrack, studentIdToTrack);
     }
-  }, [bookings]);
+  }, [bookings, currentTrainerId]);
 
   // Stop GPS tracking when class is completed
   const stopGpsTracking = (bookingId: string) => {

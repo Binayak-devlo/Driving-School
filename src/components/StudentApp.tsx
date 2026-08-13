@@ -1189,11 +1189,20 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
           }
         });
 
+        // Sort by timestamp descending so the latest active location is picked
+        studentSessions.sort((a, b) => {
+          const timeA = a.timestamp || (a.lastUpdatedAt ? new Date(a.lastUpdatedAt).getTime() : 0);
+          const timeB = b.timestamp || (b.lastUpdatedAt ? new Date(b.lastUpdatedAt).getTime() : 0);
+          return timeB - timeA;
+        });
+
         const active = studentSessions.find(
           s => s.isTracking === true || s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route'
         );
-        const chosen = active || (studentSessions.length > 0 ? studentSessions[studentSessions.length - 1] : null);
-        setTrackingSession(chosen);
+        const chosen = active || (studentSessions.length > 0 ? studentSessions[0] : null);
+        if (chosen) {
+          setTrackingSession(chosen);
+        }
       }, (err) => {
         console.warn("[StudentApp] Firestore trackingSessions onSnapshot error:", err);
       });
@@ -6460,6 +6469,12 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         locationUnavailable={trackingSession?.locationUnavailable}
                         lastUpdatedAt={trackingSession?.lastUpdatedAt}
                         onMetricsUpdate={(d, e) => setRoadMetrics({ distKm: d, etaMin: e })}
+                        onRefresh={() => {
+                          MockDatabase.syncFromCloud();
+                          const sessions = MockDatabase.getTrackingSessions();
+                          const active = sessions.find(s => s.studentId === student.id || (effectiveAssignedTrainerId && s.trainerId === effectiveAssignedTrainerId));
+                          if (active) setTrackingSession({ ...active });
+                        }}
                       />
                     </div>
 

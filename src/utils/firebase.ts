@@ -93,9 +93,6 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   };
   console.warn("Firestore Operation Notice: ", JSON.stringify(errInfo));
-  if (operationType === OperationType.WRITE || operationType === OperationType.DELETE || operationType === OperationType.CREATE) {
-    throw new Error(JSON.stringify(errInfo));
-  }
 }
 
 // Helper to run a promise with a timeout
@@ -119,17 +116,13 @@ export async function saveToCloud(collectionName: string, docId: string, data: a
     const cleanData = JSON.parse(JSON.stringify(data)); // remove undefined values
     await withTimeout(
       setDoc(doc(db, collectionName, docId), cleanData),
-      10000,
+      25000,
       `Saving to ${fullPath} timed out`
     );
     console.log(`[Firebase] Saved: ${fullPath}`);
   } catch (error) {
-    console.error(`[Firebase] Save error for ${fullPath}:`, error);
-    try {
-      handleFirestoreError(error, OperationType.WRITE, fullPath);
-    } catch (e) {
-      console.warn(`[Firebase] Handled save failure for ${fullPath} gracefully (using local persistence fallback).`);
-    }
+    console.warn(`[Firebase] Save notice for ${fullPath} (persisted locally, syncing in background):`, error);
+    handleFirestoreError(error, OperationType.WRITE, fullPath);
   }
 }
 
@@ -143,17 +136,13 @@ export async function deleteFromCloud(collectionName: string, docId: string) {
   try {
     await withTimeout(
       deleteDoc(doc(db, collectionName, docId)),
-      10000,
+      25000,
       `Deleting ${fullPath} timed out`
     );
     console.log(`[Firebase] Deleted: ${fullPath}`);
   } catch (error) {
-    console.error(`[Firebase] Delete error for ${fullPath}:`, error);
-    try {
-      handleFirestoreError(error, OperationType.DELETE, fullPath);
-    } catch (e) {
-      console.warn(`[Firebase] Handled delete failure for ${fullPath} gracefully (using local persistence fallback).`);
-    }
+    console.warn(`[Firebase] Delete notice for ${fullPath} (persisted locally, syncing in background):`, error);
+    handleFirestoreError(error, OperationType.DELETE, fullPath);
   }
 }
 

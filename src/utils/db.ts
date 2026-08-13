@@ -1,4 +1,4 @@
-import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay, TrackingSession, DrivingLicenceApplication, DrivingLicenceDocumentItem } from "../types";
+import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay, TrackingSession, TrainerSession, DrivingLicenceApplication, DrivingLicenceDocumentItem } from "../types";
 import { saveToCloud, deleteFromCloud, loadCollectionFromCloud } from "./firebase";
 
 
@@ -956,6 +956,42 @@ export class MockDatabase {
     }
   }
 
+  // --- Trainer Active Device Sessions Methods ---
+  static getTrainerSessions(): TrainerSession[] {
+    return this.getStored("trainer_sessions", []);
+  }
+
+  static getTrainerSession(trainerId: string): TrainerSession | null {
+    const sessions = this.getTrainerSessions();
+    return sessions.find(s => s.trainerId === trainerId) || null;
+  }
+
+  static saveTrainerSession(trainerId: string, sessionId: string): TrainerSession {
+    const sessions = this.getTrainerSessions();
+    const sessionObj: TrainerSession = {
+      trainerId,
+      activeSessionId: sessionId,
+      updatedAt: new Date().toISOString(),
+      timestamp: Date.now()
+    };
+    const idx = sessions.findIndex(s => s.trainerId === trainerId);
+    if (idx >= 0) {
+      sessions[idx] = sessionObj;
+    } else {
+      sessions.push(sessionObj);
+    }
+    this.setStored("trainer_sessions", sessions);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('golden_hands_db_update'));
+    }
+    try {
+      saveToCloud("trainerSessions", trainerId, sessionObj);
+    } catch (e) {
+      console.error("Firebase trainerSession write error:", e);
+    }
+    return sessionObj;
+  }
+
   // --- Driving Licence Applications Methods ---
   static getLicenceApplications(): DrivingLicenceApplication[] {
     return this.getStored("dl_applications", []);
@@ -1246,6 +1282,18 @@ export class MockDatabase {
       const cloudDlApps = await loadCollectionFromCloud("dl_applications");
       if (cloudDlApps.length > 0) {
         this.setStored("dl_applications", cloudDlApps);
+      }
+
+      // 12. Fetch trackingSessions
+      const cloudTracking = await loadCollectionFromCloud("trackingSessions");
+      if (cloudTracking.length > 0) {
+        this.setStored("tracking_sessions", cloudTracking);
+      }
+
+      // 13. Fetch trainerSessions
+      const cloudTrainerSessions = await loadCollectionFromCloud("trainerSessions");
+      if (cloudTrainerSessions.length > 0) {
+        this.setStored("trainer_sessions", cloudTrainerSessions);
       }
 
       console.log("[Firebase] Synchronization complete.");

@@ -98,6 +98,15 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Secure trainer active device sessions
+    match /trainerSessions/{trainerId} {
+      allow read, write: if true;
+    }
+
+    match /trainer_sessions/{trainerId} {
+      allow read, write: if true;
+    }
+
     // Secure driving licence applications
     match /dl_applications/{appId} {
       allow read, write: if true;

@@ -239,6 +239,14 @@ export interface TrackingSession {
   studentLat?: number;
   studentLng?: number;
   locationUnavailable?: boolean;
+  sessionId?: string;
+}
+
+export interface TrainerSession {
+  trainerId: string;
+  activeSessionId: string;
+  updatedAt: string;
+  timestamp: number;
 }
 
 export interface NavState {

@@ -412,8 +412,11 @@ export default function UnifiedAuthPortal({
         }
 
         // Successful trainer login
+        const newSessionId = `sess_tr_${foundTrainer.id}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
         localStorage.setItem("golden_hands_current_trainer_id", foundTrainer.id);
+        localStorage.setItem("golden_hands_trainer_session_id", newSessionId);
         localStorage.setItem("golden_hands_current_role", "trainer");
+        MockDatabase.saveTrainerSession(foundTrainer.id, newSessionId);
         if (rememberMe) {
           localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "trainer", id: foundTrainer.id }));
         }
