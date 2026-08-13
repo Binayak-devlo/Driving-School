@@ -914,16 +914,19 @@ export class MockDatabase {
 
   static getTrackingSessionByClassId(classId: string): TrackingSession | null {
     const sessions = this.getTrackingSessions();
-    return sessions.find(s => s.classId === classId) || null;
+    const session = sessions.find(s => s.classId === classId) || null;
+    if (session && (session.isTracking === false || session.status === 'CLASS_COMPLETED' || session.routeStatus === 'completed')) {
+      return null;
+    }
+    return session;
   }
 
   static getTrackingSessionByStudent(studentId: string): TrackingSession | null {
     const sessions = this.getTrackingSessions();
     const studentSessions = sessions.filter(s => s.studentId === studentId);
     if (studentSessions.length === 0) return null;
-    const active = studentSessions.find(s => s.isTracking === true || s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route');
-    if (active) return active;
-    return studentSessions[studentSessions.length - 1];
+    const active = studentSessions.find(s => s.isTracking === true && (s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route'));
+    return active || null;
   }
 
   static saveTrackingSession(session: TrackingSession) {

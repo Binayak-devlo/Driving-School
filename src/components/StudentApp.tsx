@@ -49,7 +49,7 @@ import { Booking, ChatMessage, Document, MockTestAttempt, Payment, SlotDay, NavS
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import { MOCK_TEST_QUESTIONS, MockDatabase } from "../utils/db";
 import { LiveTrackingMap } from "./LiveTrackingMap";
-import { calculateDistanceKm, calculateEtaMinutes, formatTimeAgo, DEFAULT_BHUBANESWAR_LOCATION } from "../utils/geo";
+import { calculateDistanceKm, calculateEtaMinutes, formatTimeAgo, DEFAULT_BHUBANESWAR_LOCATION, getCoordinatesFromLocation } from "../utils/geo";
 import { auth, db } from "../utils/firebase";
 import {
   collection,
@@ -1155,20 +1155,19 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       const studentClassIds = studentBookings.map(b => b.id);
 
       const matched = allSessions.filter(s =>
-        s.studentId === student.id ||
-        (effectiveAssignedTrainerId && s.trainerId === effectiveAssignedTrainerId) ||
-        studentClassIds.includes(s.classId)
+        s.studentId === student.id || studentClassIds.includes(s.classId)
       );
 
-      const active = matched.find(s => s.isTracking === true || s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route');
-      return active || (matched.length > 0 ? matched[matched.length - 1] : null);
+      const active = matched.find(s => 
+        s.isTracking === true && 
+        (s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route')
+      );
+      return active || null;
     };
 
     // 1. Initial Local Database Sync
     const initialLocal = findActiveSession();
-    if (initialLocal) {
-      setTrackingSession(initialLocal);
-    }
+    setTrackingSession(initialLocal);
 
     // 2. Real-Time Firestore Listener for Live Location & Pickup Route Status
     let unsubFirestore: (() => void) | null = null;
@@ -1182,7 +1181,6 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
           const data = docSnap.data() as TrackingSession;
           if (data && (
             data.studentId === student.id ||
-            (effectiveAssignedTrainerId && data.trainerId === effectiveAssignedTrainerId) ||
             studentClassIds.includes(data.classId)
           )) {
             studentSessions.push(data);
@@ -1197,12 +1195,9 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         });
 
         const active = studentSessions.find(
-          s => s.isTracking === true || s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route'
+          s => s.isTracking === true && (s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route')
         );
-        const chosen = active || (studentSessions.length > 0 ? studentSessions[0] : null);
-        if (chosen) {
-          setTrackingSession(chosen);
-        }
+        setTrackingSession(active || null);
       }, (err) => {
         console.warn("[StudentApp] Firestore trackingSessions onSnapshot error:", err);
       });
@@ -1230,13 +1225,32 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          setStudentGps({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          setStudentGps({ lat, lng });
+
+          if (student?.id) {
+            const currentStudent = MockDatabase.getStudent(student.id);
+            if (currentStudent) {
+              MockDatabase.saveStudent({ ...currentStudent, studentLat: lat, studentLng: lng });
+            }
+
+            const tracking = MockDatabase.getTrackingSessionByStudent(student.id);
+            if (tracking && tracking.isTracking) {
+              MockDatabase.saveTrackingSession({
+                ...tracking,
+                studentLat: lat,
+                studentLng: lng,
+                lastUpdatedAt: new Date().toISOString()
+              });
+            }
+          }
         },
         (err) => console.log("Student device location notice:", err),
         { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 }
       );
     }
-  }, []);
+  }, [student?.id]);
 
   // AI Driving Coach States
   const [coachInput, setCoachInput] = useState("");
@@ -6390,9 +6404,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                 <div>
                   <div className="flex items-center justify-between">
                     <h2 className="text-xl font-extrabold text-[#161623]">Live Pickup Tracking</h2>
-                    {assignedTrainer && (() => {
-                      const isPickupEnRoute = trackingSession && (
-                        trackingSession.isTracking === true ||
+                    {(() => {
+                      const isPickupEnRoute = trackingSession && trackingSession.isTracking === true && (
                         trackingSession.status === 'PICKUP_STARTED' ||
                         trackingSession.routeStatus === 'pickup_started' ||
                         trackingSession.routeStatus === 'en_route'
@@ -6410,21 +6423,25 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                           {isPickupEnRoute && '🟢 On The Way'}
                           {trackingSession?.status === 'ARRIVED' && '📍 Arrived'}
                           {trackingSession?.status === 'CLASS_STARTED' && '🚗 Class Active'}
-                          {trackingSession?.status === 'CLASS_COMPLETED' && '✓ Session Ended'}
-                          {!isPickupEnRoute && trackingSession?.status !== 'ARRIVED' && trackingSession?.status !== 'CLASS_STARTED' && trackingSession?.status !== 'CLASS_COMPLETED' && '⏳ Pickup Awaiting'}
+                          {(!isPickupEnRoute && trackingSession?.status !== 'ARRIVED' && trackingSession?.status !== 'CLASS_STARTED') && 'Map Inactive'}
                         </span>
                       );
                     })()}
                   </div>
 
-                  {assignedTrainer ? (() => {
-                    const isPickupEnRoute = trackingSession && (
-                      trackingSession.isTracking === true ||
+                  {(() => {
+                    const isPickupEnRoute = trackingSession && trackingSession.isTracking === true && (
                       trackingSession.status === 'PICKUP_STARTED' ||
                       trackingSession.routeStatus === 'pickup_started' ||
                       trackingSession.routeStatus === 'en_route'
                     );
-                    if (isPickupEnRoute) {
+                    if (!assignedTrainer) {
+                      return (
+                        <p className="text-[10px] text-slate-600 font-bold flex items-center gap-1 mt-1 bg-slate-100 px-2.5 py-1 rounded-xl border border-slate-200">
+                          🔴 Map Inactive: No class booked or assigned.
+                        </p>
+                      );
+                    } else if (isPickupEnRoute) {
                       return (
                         <p className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 mt-1 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200">
                           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
@@ -6439,134 +6456,142 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       );
                     } else {
                       return (
-                        <p className="text-[10px] text-amber-800 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200">
-                          ⏳ Waiting for trainer to start pickup. Live GPS location sharing will activate when {assignedTrainer.name} starts the route.
+                        <p className="text-[10px] text-slate-600 font-bold flex items-center gap-1 mt-1 bg-slate-100 px-2.5 py-1 rounded-xl border border-slate-200">
+                          🔴 Map Inactive: Waiting for trainer to start pickup route.
                         </p>
                       );
                     }
-                  })() : (
-                    <p className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 mt-1 w-fit">
-                      No trainer assigned yet
-                    </p>
-                  )}
+                  })()}
                 </div>
 
-                {assignedTrainer ? (
-                  <>
-                    {/* Live Real-Time Interactive Map Container */}
-                    <div className="my-3">
-                      <LiveTrackingMap
-                        trainerLat={trackingSession?.latitude}
-                        trainerLng={trackingSession?.longitude}
-                        trainerHeading={trackingSession?.heading}
-                        trainerName={assignedTrainer.name}
-                        carPlate={assignedTrainer.carPlate || "OD 02 AB 1234"}
-                        studentLat={studentGps?.lat || DEFAULT_BHUBANESWAR_LOCATION.lat}
-                        studentLng={studentGps?.lng || DEFAULT_BHUBANESWAR_LOCATION.lng}
-                        studentName={student.name || "Student"}
-                        pickupLocationName={student.location || "Rasulgarh Square, Bhubaneswar"}
-                        status={trackingSession?.status || 'WAITING'}
-                        locationUnavailable={trackingSession?.locationUnavailable}
-                        lastUpdatedAt={trackingSession?.lastUpdatedAt}
-                        onMetricsUpdate={(d, e) => setRoadMetrics({ distKm: d, etaMin: e })}
-                        onRefresh={() => {
-                          MockDatabase.syncFromCloud();
-                          const sessions = MockDatabase.getTrackingSessions();
-                          const active = sessions.find(s => s.studentId === student.id || (effectiveAssignedTrainerId && s.trainerId === effectiveAssignedTrainerId));
-                          if (active) setTrackingSession({ ...active });
-                        }}
-                      />
-                    </div>
+                {(() => {
+                  const isPickupEnRoute = trackingSession && trackingSession.isTracking === true && (
+                    trackingSession.status === 'PICKUP_STARTED' ||
+                    trackingSession.routeStatus === 'pickup_started' ||
+                    trackingSession.routeStatus === 'en_route'
+                  );
+                  const isMapActive = isPickupEnRoute || trackingSession?.status === 'ARRIVED' || trackingSession?.status === 'CLASS_STARTED';
 
-                    {/* Live Tracking Metrics Details Card */}
-                    {(() => {
-                      const trainerLat = trackingSession?.latitude;
-                      const trainerLng = trackingSession?.longitude;
-                      const studentLat = studentGps?.lat || DEFAULT_BHUBANESWAR_LOCATION.lat;
-                      const studentLng = studentGps?.lng || DEFAULT_BHUBANESWAR_LOCATION.lng;
-
-                      const hasCoords = typeof trainerLat === 'number' && typeof trainerLng === 'number';
-                      const fallbackDist = hasCoords
-                        ? calculateDistanceKm(trainerLat, trainerLng, studentLat, studentLng)
-                        : 2.4;
-                      const distKm = roadMetrics?.distKm ?? fallbackDist;
-                      const etaMin = roadMetrics?.etaMin ?? calculateEtaMinutes(distKm, trackingSession?.speed || 25);
-
-                      return (
-                        <div className="bg-[#161623] text-white p-3.5 rounded-2xl mb-3 border border-white/10 shadow-lg flex items-center justify-between text-xs">
-                          <div className="flex flex-col">
-                            <span className="text-[8.5px] uppercase font-bold text-slate-400 tracking-wider">Distance To Pickup</span>
-                            <span className="font-extrabold text-amber-400 text-sm">{distKm} km</span>
-                          </div>
-
-                          <div className="w-px h-8 bg-white/10" />
-
-                          <div className="flex flex-col">
-                            <span className="text-[8.5px] uppercase font-bold text-slate-400 tracking-wider">Estimated Time</span>
-                            <span className="font-extrabold text-emerald-400 text-sm">{etaMin} mins</span>
-                          </div>
-
-                          <div className="w-px h-8 bg-white/10" />
-
-                          <div className="flex flex-col">
-                            <span className="text-[8.5px] uppercase font-bold text-slate-400 tracking-wider">Last Updated</span>
-                            <span className="font-bold text-slate-300 text-[10px]">
-                              {formatTimeAgo(trackingSession?.lastUpdatedAt)}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    {/* Trainer info & Call/Chat */}
-                    <div className="bg-[#161623] text-white p-4 rounded-3xl flex items-center justify-between border border-white/10 shadow-lg">
-                      <div className="flex items-center gap-3">
-                        <img 
-                          src={assignedTrainer.photoUrl || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200"} 
-                          alt={assignedTrainer.name} 
-                          className="w-10 h-10 rounded-full border border-white/20 object-cover"
+                  return (
+                    <>
+                      {/* Live Real-Time Interactive Map Container */}
+                      <div className="my-3">
+                        <LiveTrackingMap
+                          trainerLat={isMapActive ? trackingSession?.latitude : undefined}
+                          trainerLng={isMapActive ? trackingSession?.longitude : undefined}
+                          trainerHeading={trackingSession?.heading}
+                          trainerName={assignedTrainer?.name || "Trainer"}
+                          carPlate={assignedTrainer?.carPlate || "OD 02 AB 1234"}
+                          studentLat={trackingSession?.studentLat || studentGps?.lat || (student ? getCoordinatesFromLocation(student.location).lat : DEFAULT_BHUBANESWAR_LOCATION.lat)}
+                          studentLng={trackingSession?.studentLng || studentGps?.lng || (student ? getCoordinatesFromLocation(student.location).lng : DEFAULT_BHUBANESWAR_LOCATION.lng)}
+                          studentName={student?.name || "Student"}
+                          pickupLocationName={student?.location || "Rasulgarh Square, Bhubaneswar"}
+                          status={isPickupEnRoute ? (trackingSession?.status || 'PICKUP_STARTED') : (trackingSession?.status === 'ARRIVED' ? 'ARRIVED' : (trackingSession?.status === 'CLASS_STARTED' ? 'CLASS_STARTED' : 'WAITING'))}
+                          locationUnavailable={trackingSession?.locationUnavailable}
+                          lastUpdatedAt={trackingSession?.lastUpdatedAt || new Date().toISOString()}
+                          onMetricsUpdate={(d, e) => setRoadMetrics({ distKm: d, etaMin: e })}
                         />
-                        <div>
-                          <p className="font-bold text-xs">{assignedTrainer.name}</p>
-                          <p className="text-[9px] text-[#27AE60] flex items-center gap-1">
-                            ● Active Navigation ({assignedTrainer.carName || "Vehicle"} - {assignedTrainer.carPlate || "OD 02 AB 1234"})
-                          </p>
-                        </div>
                       </div>
 
-                      <div className="flex gap-2">
-                        <a 
-                          href={`tel:${assignedTrainer.phone || "9040040288"}`}
-                          className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20"
-                        >
-                          <Phone className="w-4 h-4 text-[#D4AF37]" />
-                        </a>
-                        <button 
-                          onClick={() => {
-                            setActiveTab('profile'); // Goes to chats section on profile
-                            showNotification(`Opened Chat with ${assignedTrainer.name}`);
-                          }}
-                          className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20 cursor-pointer"
-                        >
-                          <MessageSquare className="w-4 h-4 text-[#6D3BFF]" />
-                        </button>
+                      {/* Live Tracking Metrics Details Card or Inactive Status Banner */}
+                      {isMapActive ? (
+                        (() => {
+                          const trainerLat = trackingSession?.latitude;
+                          const trainerLng = trackingSession?.longitude;
+                          const studentLat = studentGps?.lat || DEFAULT_BHUBANESWAR_LOCATION.lat;
+                          const studentLng = studentGps?.lng || DEFAULT_BHUBANESWAR_LOCATION.lng;
+
+                          const hasCoords = typeof trainerLat === 'number' && typeof trainerLng === 'number';
+                          const fallbackDist = hasCoords
+                            ? calculateDistanceKm(trainerLat, trainerLng, studentLat, studentLng)
+                            : 2.4;
+                          const distKm = roadMetrics?.distKm ?? fallbackDist;
+                          const etaMin = roadMetrics?.etaMin ?? calculateEtaMinutes(distKm, trackingSession?.speed || 25);
+
+                          return (
+                            <div className="bg-[#161623] text-white p-3.5 rounded-2xl mb-3 border border-white/10 shadow-lg flex items-center justify-between text-xs">
+                              <div className="flex flex-col">
+                                <span className="text-[8.5px] uppercase font-bold text-slate-400 tracking-wider">Distance To Pickup</span>
+                                <span className="font-extrabold text-amber-400 text-sm">{distKm} km</span>
+                              </div>
+
+                              <div className="w-px h-8 bg-white/10" />
+
+                              <div className="flex flex-col">
+                                <span className="text-[8.5px] uppercase font-bold text-slate-400 tracking-wider">Estimated Time</span>
+                                <span className="font-extrabold text-emerald-400 text-sm">{etaMin} mins</span>
+                              </div>
+
+                              <div className="w-px h-8 bg-white/10" />
+
+                              <div className="flex flex-col">
+                                <span className="text-[8.5px] uppercase font-bold text-slate-400 tracking-wider">Last Updated</span>
+                                <span className="font-bold text-slate-300 text-[10px]">
+                                  {formatTimeAgo(trackingSession?.lastUpdatedAt)}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div className="bg-[#161623] text-slate-300 p-3.5 rounded-2xl mb-3 border border-white/10 shadow-lg text-center text-xs">
+                          <p className="font-bold text-amber-400 text-xs">Map Status: Inactive</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Live GPS tracking will activate automatically when your instructor starts the pickup route.</p>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
+                {/* Trainer info & Call/Chat */}
+                {assignedTrainer ? (
+                  <div className="bg-[#161623] text-white p-4 rounded-3xl flex items-center justify-between border border-white/10 shadow-lg">
+                    <div className="flex items-center gap-3">
+                      <img 
+                        src={assignedTrainer.photoUrl || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200"} 
+                        alt={assignedTrainer.name} 
+                        className="w-10 h-10 rounded-full border border-white/20 object-cover"
+                      />
+                      <div>
+                        <p className="font-bold text-xs">{assignedTrainer.name}</p>
+                        <p className="text-[9px] text-[#27AE60] flex items-center gap-1">
+                          ● Assigned Instructor ({assignedTrainer.carName || "Vehicle"} - {assignedTrainer.carPlate || "OD 02 AB 1234"})
+                        </p>
                       </div>
                     </div>
-                  </>
-                ) : (
-                  <div className="bg-[#161623] text-white p-8 rounded-3xl border border-white/10 text-center my-6 flex flex-col items-center justify-center gap-3 shadow-lg">
-                    <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 mb-1">
-                      <UserX className="w-7 h-7 text-[#D4AF37]" />
+
+                    <div className="flex gap-2">
+                      <a 
+                        href={`tel:${assignedTrainer.phone || "9040040288"}`}
+                        className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20"
+                      >
+                        <Phone className="w-4 h-4 text-[#D4AF37]" />
+                      </a>
+                      <button 
+                        onClick={() => {
+                          setActiveTab('profile'); // Goes to chats section on profile
+                          showNotification(`Opened Chat with ${assignedTrainer.name}`);
+                        }}
+                        className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center hover:bg-white/20 cursor-pointer"
+                      >
+                        <MessageSquare className="w-4 h-4 text-[#6D3BFF]" />
+                      </button>
                     </div>
-                    <h3 className="font-extrabold text-base text-white">No trainer assigned yet</h3>
+                  </div>
+                ) : (
+                  <div className="bg-[#161623] text-white p-6 rounded-3xl border border-white/10 text-center my-3 flex flex-col items-center justify-center gap-2 shadow-lg">
+                    <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 mb-1">
+                      <UserX className="w-6 h-6 text-[#D4AF37]" />
+                    </div>
+                    <h3 className="font-extrabold text-sm text-white">No Trainer Assigned Yet</h3>
                     <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
-                      You currently do not have an assigned instructor. Once a trainer is assigned or you complete your first class, live pickup tracking will be activated here automatically.
+                      You currently do not have an assigned instructor. Once a trainer is assigned or you book a class, live pickup tracking will activate here automatically.
                     </p>
                     <button 
                       onClick={() => setActiveTab('book')}
-                      className="mt-2 bg-[#6D3BFF] text-white font-extrabold text-xs px-5 py-2.5 rounded-2xl hover:bg-[#8F52FF] active:scale-95 transition-all shadow-md cursor-pointer"
+                      className="mt-1 bg-[#6D3BFF] text-white font-extrabold text-xs px-5 py-2 rounded-2xl hover:bg-[#8F52FF] active:scale-95 transition-all shadow-md cursor-pointer"
                     >
-                      Book Your First Class
+                      Book Your Class
                     </button>
                   </div>
                 )}

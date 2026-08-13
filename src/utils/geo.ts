@@ -64,3 +64,40 @@ export const DEFAULT_BHUBANESWAR_LOCATION = {
   lng: 85.8245,
   name: "Rasulgarh Square, Bhubaneswar"
 };
+
+// Map Bhubaneswar location landmark string to coordinates
+export function getCoordinatesFromLocation(locationStr?: string): { lat: number; lng: number } {
+  if (!locationStr) return DEFAULT_BHUBANESWAR_LOCATION;
+  
+  const locLower = locationStr.toLowerCase();
+  
+  if (locLower.includes("patia") || locLower.includes("kiit")) {
+    return { lat: 20.3533, lng: 85.8188 };
+  }
+  if (locLower.includes("jaydev") || locLower.includes("jaidev")) {
+    return { lat: 20.3010, lng: 85.8190 };
+  }
+  if (locLower.includes("saheed")) {
+    return { lat: 20.2885, lng: 85.8390 };
+  }
+  if (locLower.includes("rasulgarh")) {
+    return { lat: 20.2961, lng: 85.8245 };
+  }
+  if (locLower.includes("khandagiri")) {
+    return { lat: 20.2520, lng: 85.7870 };
+  }
+  if (locLower.includes("nayapalli")) {
+    return { lat: 20.2980, lng: 85.8080 };
+  }
+  if (locLower.includes("chandrasekharpur") || locLower.includes("cs pur")) {
+    return { lat: 20.3250, lng: 85.8150 };
+  }
+  if (locLower.includes("master canteen") || locLower.includes("station")) {
+    return { lat: 20.2650, lng: 85.8400 };
+  }
+  if (locLower.includes("old town")) {
+    return { lat: 20.2400, lng: 85.8330 };
+  }
+  
+  return DEFAULT_BHUBANESWAR_LOCATION;
+}

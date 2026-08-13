@@ -9,7 +9,7 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../utils/firebase";
 import { MockDatabase } from "../utils/db";
 import { Booking, Student, SkillProgress, ChatMessage, Trainer, NavState, TrackingSession, TrackingStatus } from "../types";
-import { calculateDistanceKm, DEFAULT_BHUBANESWAR_LOCATION } from "../utils/geo";
+import { calculateDistanceKm, DEFAULT_BHUBANESWAR_LOCATION, getCoordinatesFromLocation } from "../utils/geo";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import { LiveTrackingMap } from "./LiveTrackingMap";
 
@@ -151,6 +151,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   const [trainerToast, setTrainerToast] = useState<string | null>(null);
 
   // Active GPS geolocation watch ID ref & throttle refs
+  const [liveTrackingSession, setLiveTrackingSession] = useState<TrackingSession | null>(null);
   const activeWatchIdRef = useRef<number | null>(null);
   const lastGpsSaveTimeRef = useRef<number>(0);
   const lastGpsCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -205,6 +206,13 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
       if (existing && existing.status === 'CLASS_COMPLETED') return;
 
+      const targetStudent = MockDatabase.getStudent(targetStudentId);
+      const studentCoords = (existing?.studentLat && existing?.studentLng)
+        ? { lat: existing.studentLat, lng: existing.studentLng }
+        : ((targetStudent?.studentLat && targetStudent?.studentLng)
+            ? { lat: targetStudent.studentLat, lng: targetStudent.studentLng }
+            : getCoordinatesFromLocation(targetStudent?.location));
+
       const session: TrackingSession = {
         trackingSessionId: `track_${bookingId}`,
         studentId: targetStudentId,
@@ -215,6 +223,8 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
         routeStatus: existing?.status === 'ARRIVED' ? 'arrived' : 'pickup_started',
         latitude,
         longitude,
+        studentLat: studentCoords.lat,
+        studentLng: studentCoords.lng,
         accuracy: accuracy || undefined,
         heading: heading || undefined,
         speed: speed || undefined,
@@ -226,6 +236,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       };
       console.log("[TrainerApp] Saving REAL GPS tracking position:", { latitude, longitude, targetStudentId, activeTrainerId, sessionId: activeSess });
       MockDatabase.saveTrackingSession(session);
+      setLiveTrackingSession(session);
     };
 
     const handleGpsError = (err: GeolocationPositionError) => {
@@ -268,11 +279,15 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
 
   // Auto-resume GPS tracking on mount/reload or active device change if pickup route is active
   useEffect(() => {
-    const activeEnRouteBooking = bookings.find(b => b.pickupStatus === 'en_route');
+    const trainerId = currentTrainerId || currentTrainer?.id;
+    const activeEnRouteBooking = bookings.find(b => 
+      b.trainerId === trainerId && b.pickupStatus === 'en_route'
+    );
     const trackingSessions = MockDatabase.getTrackingSessions();
     const activeTrackingSession = trackingSessions.find(s => 
-      s.trainerId === (currentTrainerId || currentTrainer?.id) &&
-      (s.status === 'PICKUP_STARTED' || s.isTracking === true || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route')
+      s.trainerId === trainerId &&
+      s.isTracking === true &&
+      (s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route')
     );
 
     const bookingIdToTrack = activeEnRouteBooking?.id || activeTrackingSession?.classId;
@@ -546,6 +561,37 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   const handleStartPickupRoute = (bookingId: string) => {
     const targetBooking = bookings.find(b => b.id === bookingId);
     const targetStudentId = targetBooking ? targetBooking.studentId : (selectedBooking ? selectedBooking.studentId : selectedStudentId);
+    const targetStudent = MockDatabase.getStudent(targetStudentId);
+
+    // Resolve student pickup location coordinates
+    const studentCoords = (targetStudent && targetStudent.studentLat && targetStudent.studentLng)
+      ? { lat: targetStudent.studentLat, lng: targetStudent.studentLng }
+      : getCoordinatesFromLocation(targetStudent?.location);
+
+    const activeTrainerId = currentTrainerId || currentTrainer?.id || "trainer_1";
+    const activeSess = currentSessionIdRef.current || localStorage.getItem("golden_hands_trainer_session_id");
+
+    // 1. Immediately create and save initial active TrackingSession in database
+    const initialSession: TrackingSession = {
+      trackingSessionId: `track_${bookingId}`,
+      studentId: targetStudentId,
+      trainerId: activeTrainerId,
+      classId: bookingId,
+      status: 'PICKUP_STARTED',
+      isTracking: true,
+      routeStatus: 'pickup_started',
+      latitude: lastGpsCoordsRef.current?.lat || DEFAULT_BHUBANESWAR_LOCATION.lat,
+      longitude: lastGpsCoordsRef.current?.lng || DEFAULT_BHUBANESWAR_LOCATION.lng,
+      studentLat: studentCoords.lat,
+      studentLng: studentCoords.lng,
+      timestamp: Date.now(),
+      startedAt: new Date().toISOString(),
+      lastUpdatedAt: new Date().toISOString(),
+      locationUnavailable: false,
+      sessionId: activeSess || undefined
+    };
+    MockDatabase.saveTrackingSession(initialSession);
+    setLiveTrackingSession(initialSession);
 
     const updated = bookings.map(b => {
       if (b.id === bookingId) {
@@ -736,13 +782,21 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   const requestedBookings = bookings.filter(b => b.status === 'requested' && b.trainerId === currentTrainerId);
 
   // Active pickup route resolution for Map tab
+  const activeTrainerId = currentTrainerId || currentTrainer?.id;
   const activePickupBooking = bookings.find(b => 
-    (b.trainerId === currentTrainerId || b.trainerId === currentTrainer.id) &&
-    b.pickupStatus === 'en_route'
-  ) || (selectedBooking && selectedBooking.pickupStatus === 'en_route' ? selectedBooking : null);
+    b.trainerId === activeTrainerId && b.pickupStatus === 'en_route'
+  ) || (selectedBooking && selectedBooking.pickupStatus === 'en_route' && selectedBooking.trainerId === activeTrainerId ? selectedBooking : null);
 
   const activePickupStudent = activePickupBooking 
-    ? MockDatabase.getStudent(activePickupBooking.studentId)
+    ? (MockDatabase.getStudent(activePickupBooking.studentId) || {
+        id: activePickupBooking.studentId,
+        name: activePickupBooking.studentName || "Student",
+        phone: "9040040265",
+        location: activePickupBooking.location || "Patia, Bhubaneswar",
+        studentLat: DEFAULT_BHUBANESWAR_LOCATION.lat,
+        studentLng: DEFAULT_BHUBANESWAR_LOCATION.lng,
+        photoUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"
+      })
     : null;
 
   const activeTrackingSession = activePickupBooking
@@ -910,14 +964,14 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
               <h3 className="font-bold text-xs text-slate-400 uppercase tracking-wider mb-2">Student Information</h3>
               <div className="flex items-center gap-3">
                 <img 
-                  src={student.photoUrl} 
+                  src={student?.photoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"} 
                   alt="Student Profile" 
                   className="w-12 h-12 rounded-full border border-white/10 object-cover"
                 />
                 <div>
-                  <p className="font-extrabold text-sm">{student.name}</p>
-                  <p className="text-[10px] text-slate-400">Licence Status: <span className="text-[#D4AF37] font-semibold">{student.llStatus}</span></p>
-                  <p className="text-[10px] text-slate-400">Location: {student.location}</p>
+                  <p className="font-extrabold text-sm">{student?.name || "Student"}</p>
+                  <p className="text-[10px] text-slate-400">Licence Status: <span className="text-[#D4AF37] font-semibold">{student?.llStatus || "Verified"}</span></p>
+                  <p className="text-[10px] text-slate-400">Location: {student?.location || "Bhubaneswar"}</p>
                 </div>
               </div>
               <div className="flex gap-2 mt-3 text-[10px]">
@@ -1345,7 +1399,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                       <div className="flex justify-between items-center">
                         <div className="flex items-center gap-2">
                           <img 
-                            src={student.photoUrl} 
+                            src={MockDatabase.getStudent(b.studentId)?.photoUrl || student?.photoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"} 
                             alt="Student profile" 
                             className="w-8 h-8 rounded-full border border-white/10 object-cover"
                           />
@@ -1401,7 +1455,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                       <div className="flex justify-between items-center">
                         <div className="flex items-center gap-2">
                           <img 
-                            src={student.id === b.studentId ? student.photoUrl : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"} 
+                            src={student?.id === b.studentId ? (student?.photoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200") : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"} 
                             alt={b.studentName} 
                             className="w-8 h-8 rounded-full border border-white/10 object-cover"
                           />
@@ -1463,7 +1517,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                       : 'bg-slate-800 border-slate-700 text-slate-400'
                   }`}>
                     <span className={`w-2 h-2 rounded-full ${activePickupBooking && activeTrackingSession?.isTracking !== false ? 'bg-emerald-500 animate-ping' : 'bg-slate-500'}`} />
-                    Live Location Sharing: {activePickupBooking && activeTrackingSession?.isTracking !== false ? 'ON' : 'OFF'}
+                    Map Status: {activePickupBooking && activeTrackingSession?.isTracking !== false ? 'Active' : 'Inactive'}
                   </div>
                 </div>
 
@@ -1473,7 +1527,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                     <div className="bg-[#1B1B2B] border border-amber-500/30 rounded-2xl p-3.5 shadow-lg flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <img 
-                          src={activePickupStudent.photoUrl || student.photoUrl} 
+                          src={activePickupStudent.photoUrl || student?.photoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"} 
                           alt={activePickupStudent.name} 
                           className="w-11 h-11 rounded-full border border-amber-500/40 object-cover shrink-0" 
                         />
@@ -1503,16 +1557,27 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                     {/* Interactive Live Map Component */}
                     <div className="bg-black/40 border border-white/10 rounded-2xl overflow-hidden shadow-xl h-72 relative">
                       <LiveTrackingMap 
-                        trainerLat={activeTrackingSession?.latitude ?? lastGpsCoordsRef.current?.lat ?? DEFAULT_BHUBANESWAR_LOCATION.lat}
-                        trainerLng={activeTrackingSession?.longitude ?? lastGpsCoordsRef.current?.lng ?? DEFAULT_BHUBANESWAR_LOCATION.lng}
+                        trainerLat={activeTrackingSession?.latitude ?? liveTrackingSession?.latitude ?? lastGpsCoordsRef.current?.lat ?? DEFAULT_BHUBANESWAR_LOCATION.lat}
+                        trainerLng={activeTrackingSession?.longitude ?? liveTrackingSession?.longitude ?? lastGpsCoordsRef.current?.lng ?? DEFAULT_BHUBANESWAR_LOCATION.lng}
                         trainerName={currentTrainer.name}
                         carPlate={currentTrainer.carPlate}
-                        studentLat={DEFAULT_BHUBANESWAR_LOCATION.lat}
-                        studentLng={DEFAULT_BHUBANESWAR_LOCATION.lng}
+                        studentLat={
+                          activeTrackingSession?.studentLat ?? 
+                          liveTrackingSession?.studentLat ?? 
+                          (activePickupStudent?.studentLat) ?? 
+                          (activePickupStudent ? getCoordinatesFromLocation(activePickupStudent.location).lat : DEFAULT_BHUBANESWAR_LOCATION.lat)
+                        }
+                        studentLng={
+                          activeTrackingSession?.studentLng ?? 
+                          liveTrackingSession?.studentLng ?? 
+                          (activePickupStudent?.studentLng) ?? 
+                          (activePickupStudent ? getCoordinatesFromLocation(activePickupStudent.location).lng : DEFAULT_BHUBANESWAR_LOCATION.lng)
+                        }
                         studentName={activePickupStudent.name}
-                        status={activeTrackingSession?.status || 'PICKUP_STARTED'}
-                        locationUnavailable={activeTrackingSession?.locationUnavailable}
-                        lastUpdatedAt={activeTrackingSession?.lastUpdatedAt}
+                        pickupLocationName={activePickupStudent.location || "Pickup Location"}
+                        status={activeTrackingSession?.status || liveTrackingSession?.status || 'PICKUP_STARTED'}
+                        locationUnavailable={activeTrackingSession?.locationUnavailable ?? liveTrackingSession?.locationUnavailable}
+                        lastUpdatedAt={activeTrackingSession?.lastUpdatedAt || liveTrackingSession?.lastUpdatedAt || new Date().toISOString()}
                         onMetricsUpdate={(dist, eta) => setTrainerMapMetrics({ distKm: dist, etaMin: eta })}
                       />
                     </div>
@@ -1585,9 +1650,20 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                 ) : (
                   /* Empty state when trainer has no active pickup route */
                   <div className="flex flex-col gap-4">
-                    <div className="bg-white/5 border border-white/10 rounded-3xl p-6 text-center flex flex-col items-center gap-3">
-                      <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shadow-md">
-                        <Navigation className="w-6 h-6" />
+                    {/* Inactive Map Preview Container */}
+                    <div className="bg-black/40 border border-white/10 rounded-2xl overflow-hidden shadow-xl h-56 relative">
+                      <LiveTrackingMap 
+                        trainerName={currentTrainer.name}
+                        carPlate={currentTrainer.carPlate}
+                        studentName="Student"
+                        pickupLocationName="Rasulgarh Center, Bhubaneswar"
+                        status="WAITING"
+                      />
+                    </div>
+
+                    <div className="bg-white/5 border border-white/10 rounded-3xl p-5 text-center flex flex-col items-center gap-2">
+                      <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shadow-md">
+                        <Navigation className="w-5 h-5" />
                       </div>
                       <div>
                         <h3 className="font-extrabold text-sm text-white">No Active Student Pickup Route</h3>
@@ -1610,7 +1686,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                             <div key={b.id} className="bg-white/5 border border-white/10 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-md">
                               <div className="flex items-center gap-3 min-w-0">
                                 <img 
-                                  src={bStudent?.photoUrl || student.photoUrl} 
+                                  src={bStudent?.photoUrl || student?.photoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"} 
                                   alt={bStudent?.name || "Student"} 
                                   className="w-10 h-10 rounded-full border border-white/10 object-cover shrink-0" 
                                 />
