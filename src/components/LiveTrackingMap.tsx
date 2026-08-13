@@ -72,22 +72,26 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
       attributionControl: false,
     });
 
-    // Dark sleek map tiles
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    // Dark sleek map tiles with reliable OSM fallback
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      subdomains: 'abcd',
+      attribution: '&copy; OpenStreetMap contributors',
     }).addTo(map);
 
     mapInstanceRef.current = map;
 
-    // Delayed size invalidation to ensure map renders fully after container layout mounts
-    const mountTimeout = setTimeout(() => {
-      if (mapInstanceRef.current) {
-        try {
-          mapInstanceRef.current.invalidateSize({ animate: false });
-        } catch (e) {}
-      }
-    }, 150);
+    // Multiple delayed size invalidation calls to ensure map renders fully after container layout mounts
+    const t1 = setTimeout(() => {
+      try { mapInstanceRef.current?.invalidateSize({ animate: false }); } catch (e) {}
+    }, 50);
+
+    const t2 = setTimeout(() => {
+      try { mapInstanceRef.current?.invalidateSize({ animate: false }); } catch (e) {}
+    }, 200);
+
+    const t3 = setTimeout(() => {
+      try { mapInstanceRef.current?.invalidateSize({ animate: false }); } catch (e) {}
+    }, 500);
 
     // Handle container resize
     const resizeObserver = new ResizeObserver(() => {
@@ -101,7 +105,9 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
     resizeObserver.observe(mapContainerRef.current);
 
     return () => {
-      clearTimeout(mountTimeout);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
       resizeObserver.disconnect();
       if (mapInstanceRef.current) {
         try {
@@ -344,8 +350,8 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
   }, [trainerLat, trainerLng, studentLat, studentLng, trainerName, carPlate, studentName, status, locationUnavailable, isStale, onMetricsUpdate]);
 
   return (
-    <div className="relative w-full h-full min-h-[280px] rounded-2xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-inner">
-      <div ref={mapContainerRef} className="w-full h-full z-0" />
+    <div className="relative w-full h-[320px] sm:h-[380px] rounded-2xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-inner bg-slate-900">
+      <div ref={mapContainerRef} className="absolute inset-0 w-full h-full z-0" />
 
       {/* Top Banner overlay for status */}
       <div className="absolute top-3 left-3 right-3 z-10 flex items-center justify-between pointer-events-none">
