@@ -15,7 +15,10 @@ const INITIAL_STUDENT: Student = {
   courseName: "Basic Package (15 Sessions)",
   courseNotes: "",
   courseSyllabus: ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"],
-  password: ""
+  password: "",
+  aadharStatus: "Verified",
+  isAadharVerified: true,
+  aadharVerified: true
 };
 
 const INITIAL_TRAINERS: Trainer[] = [
@@ -582,7 +585,49 @@ export class MockDatabase {
   static getDocuments(studentId?: string): Document[] {
     const id = studentId || this.getCurrentStudentId();
     if (!id) return [];
-    return this.getStored(`documents_${id}`, []);
+    
+    // Check initial fallback for student_1 / guest
+    let docs = this.getStored<Document[]>(`documents_${id}`, []);
+    if (docs.length === 0) {
+      if (id === "student_1" || id === "student_guest") {
+        docs = INITIAL_DOCUMENTS.map(d => ({ ...d, studentId: id }));
+        this.setStored(`documents_${id}`, docs);
+      }
+    }
+
+    // Check if student is marked as Aadhar verified on their profile
+    const stud = this.getStudent(id);
+    if (stud && (stud.isAadharVerified || stud.aadharVerified || stud.aadharStatus === "Verified")) {
+      const hasAadharDoc = docs.some(d => d.name.toLowerCase().includes("aadhar") || d.name.toLowerCase().includes("aadhaar"));
+      if (!hasAadharDoc) {
+        const fallbackAadhar: Document = {
+          id: `doc_aadhar_${id}`,
+          studentId: id,
+          name: "Aadhar Card",
+          type: "Image",
+          fileUrl: "https://images.unsplash.com/photo-1554415707-6e8cfc93fe23?auto=format&fit=crop&q=80&w=600",
+          status: "Verified",
+          uploadedAt: stud.joinedDate || new Date().toISOString().split("T")[0]
+        };
+        docs = [fallbackAadhar, ...docs];
+        this.setStored(`documents_${id}`, docs);
+      } else {
+        // Ensure any existing aadhar doc is in Verified status if student is verified
+        let modified = false;
+        docs = docs.map(d => {
+          if ((d.name.toLowerCase().includes("aadhar") || d.name.toLowerCase().includes("aadhaar")) && d.status !== "Verified") {
+            modified = true;
+            return { ...d, status: "Verified" as const };
+          }
+          return d;
+        });
+        if (modified) {
+          this.setStored(`documents_${id}`, docs);
+        }
+      }
+    }
+
+    return docs;
   }
 
   static sanitizeDocuments(docs: Document[]): Document[] {
@@ -626,6 +671,30 @@ export class MockDatabase {
 
     Object.keys(docsByStudent).forEach(sId => {
       this.setStored(`documents_${sId}`, docsByStudent[sId]);
+
+      // Sync student's aadharStatus and isAadharVerified properties
+      const aadharDoc = docsByStudent[sId].find(d => 
+        d.name.toLowerCase().includes("aadhar") || d.name.toLowerCase().includes("aadhaar")
+      );
+      if (aadharDoc) {
+        const studentObj = this.getStudent(sId);
+        if (studentObj && studentObj.id) {
+          if (aadharDoc.status === "Verified") {
+            studentObj.aadharStatus = "Verified";
+            studentObj.isAadharVerified = true;
+            studentObj.aadharVerified = true;
+          } else if (aadharDoc.status === "Rejected") {
+            studentObj.aadharStatus = "Rejected";
+            studentObj.isAadharVerified = false;
+            studentObj.aadharVerified = false;
+          } else if (aadharDoc.status === "Pending") {
+            if (!studentObj.isAadharVerified && !studentObj.aadharVerified) {
+              studentObj.aadharStatus = "Pending";
+            }
+          }
+          this.saveStudent(studentObj, sId);
+        }
+      }
     });
 
     try {
@@ -1191,14 +1260,14 @@ export class MockDatabase {
         }
         docsByStudent[sId].push(d);
       });
-      // Clear old local documents keys
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith("golden_hands_documents_")) {
-          localStorage.removeItem(key);
-        }
-      });
+
+      // Safely merge with existing local documents so verified documents are never lost
       Object.keys(docsByStudent).forEach(sId => {
-        this.setStored(`documents_${sId}`, docsByStudent[sId]);
+        const localDocs = this.getStored<Document[]>(`documents_${sId}`, []);
+        const docMap = new Map<string, Document>();
+        localDocs.forEach(d => docMap.set(d.id, d));
+        docsByStudent[sId].forEach(d => docMap.set(d.id, d));
+        this.setStored(`documents_${sId}`, Array.from(docMap.values()));
       });
 
       // 6. Fetch Payments and partition them by studentId

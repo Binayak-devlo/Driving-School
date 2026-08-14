@@ -6,6 +6,7 @@ import {
     Bell,
     BookOpen,
     Calendar,
+    CalendarX,
     Car,
     Camera, CameraOff,
     Check, CheckCircle, CheckCircle2, ChevronLeft, ChevronRight,
@@ -1085,9 +1086,15 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         status: "Pending",
         uploadedAt: new Date().toISOString().split("T")[0]
       };
-      const updatedDocs = [newDoc, ...documents.filter(d => d.name !== "Aadhar Card")];
+      const updatedDocs = [newDoc, ...documents.filter(d => !d.name.toLowerCase().includes("aadhar") && !d.name.toLowerCase().includes("aadhaar"))];
       MockDatabase.saveDocuments(updatedDocs);
       setDocuments(updatedDocs);
+      const updatedStudent = {
+        ...student,
+        aadharStatus: "Pending" as const
+      };
+      MockDatabase.saveStudent(updatedStudent);
+      setStudent(updatedStudent);
       setAadharUploading(false);
       setAadharFile(null);
       onStateChange();
@@ -1129,6 +1136,10 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const [bookingTrainer, setBookingTrainer] = useState("");
   const [bookingSuccessMsg, setBookingSuccessMsg] = useState(false);
   const [lastBookingCreated, setLastBookingCreated] = useState<Booking | null>(null);
+
+  // Class Cancellation Confirmation State
+  const [bookingToCancel, setBookingToCancel] = useState<Booking | null>(null);
+  const [isCancellingBooking, setIsCancellingBooking] = useState(false);
 
   // Trainer review & rating form states
   const [reviewTrainerId, setReviewTrainerId] = useState("");
@@ -2511,8 +2522,17 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     e.preventDefault();
     
     // Check for payment and Aadhaar verification requirements
-    const aadharDoc = documents.find(d => d.name === "Aadhar Card");
-    const isAadharVerified = aadharDoc && aadharDoc.status === "Verified";
+    const aadharDoc = documents.find(d => 
+      (d.studentId === student.id || !d.studentId) && 
+      (d.name.toLowerCase().includes("aadhar") || d.name.toLowerCase().includes("aadhaar"))
+    );
+    const isAadharVerified = Boolean(
+      student.isAadharVerified === true ||
+      student.aadharVerified === true ||
+      student.aadharStatus === "Verified" ||
+      student.adminManualUnlock === true ||
+      (aadharDoc && aadharDoc.status === "Verified")
+    );
     const compClassesCount = bookings.filter(b => b.status === 'Completed' || b.status === 'completed').length;
     const isEnded = (student.courseEnded || compClassesCount >= 15) && !student.planExtended;
 
@@ -2682,18 +2702,54 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     showNotification("Class rescheduled successfully to July 10, 11:30 AM.");
   };
 
-  // Cancel class handler
+  // Cancel class handler - prompts confirmation modal
   const handleCancelClass = (bookingId: string) => {
-    const updated = bookings.map(b => {
-      if (b.id === bookingId) {
-        return { ...b, status: "cancelled" as const };
+    const target = bookings.find(b => b.id === bookingId);
+    if (target) {
+      setBookingToCancel(target);
+    }
+  };
+
+  // Confirmed cancel class handler
+  const handleConfirmCancelClass = async (bookingId: string) => {
+    setIsCancellingBooking(true);
+    try {
+      const updated = bookings.map(b => {
+        if (b.id === bookingId) {
+          return { ...b, status: "cancelled" as const };
+        }
+        return b;
+      });
+      MockDatabase.saveBookings(updated);
+      setBookings(updated);
+
+      // Stop and clean up any tracking session linked to this booking
+      try {
+        const sessions = MockDatabase.getTrackingSessions();
+        sessions.forEach(s => {
+          if (s.classId === bookingId || s.bookingId === bookingId) {
+            MockDatabase.saveTrackingSession({
+              ...s,
+              isTracking: false,
+              status: 'CANCELLED' as const,
+              routeStatus: 'cancelled' as const,
+              lastUpdatedAt: new Date().toISOString()
+            });
+          }
+        });
+        if (trackingSession && (trackingSession.classId === bookingId || trackingSession.bookingId === bookingId)) {
+          setTrackingSession(null);
+        }
+      } catch (trackErr) {
+        console.warn("Tracking update error on cancel:", trackErr);
       }
-      return b;
-    });
-    MockDatabase.saveBookings(updated);
-    setBookings(updated);
-    onStateChange();
-    showNotification("Class cancelled successfully.");
+
+      setBookingToCancel(null);
+      onStateChange();
+      showNotification("Class cancelled successfully.");
+    } finally {
+      setIsCancellingBooking(false);
+    }
   };
 
   // Trainer Rating handler
@@ -3101,9 +3157,24 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         status: "Pending",
         uploadedAt: new Date().toISOString().split("T")[0]
       };
-      const updatedDocs = [newDoc, ...documents.filter(d => d.name !== uploadDocName)];
+      const isAadharDoc = uploadDocName.toLowerCase().includes("aadhar") || uploadDocName.toLowerCase().includes("aadhaar");
+      const updatedDocs = [
+        newDoc, 
+        ...documents.filter(d => isAadharDoc 
+          ? (!d.name.toLowerCase().includes("aadhar") && !d.name.toLowerCase().includes("aadhaar")) 
+          : d.name !== uploadDocName
+        )
+      ];
       MockDatabase.saveDocuments(updatedDocs);
       setDocuments(updatedDocs);
+      if (isAadharDoc) {
+        const updatedStudent = {
+          ...student,
+          aadharStatus: "Pending" as const
+        };
+        MockDatabase.saveStudent(updatedStudent);
+        setStudent(updatedStudent);
+      }
       setDocUploading(false);
       setNormalDocFile(null);
       setUploadDocSuccess(true);
@@ -3459,8 +3530,17 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     }
   };
 
-  const aadharDoc = documents.find(d => d.name === "Aadhar Card");
-  const isAadharVerified = aadharDoc && aadharDoc.status === "Verified";
+  const aadharDoc = documents.find(d => 
+    (d.studentId === student.id || !d.studentId) && 
+    (d.name.toLowerCase().includes("aadhar") || d.name.toLowerCase().includes("aadhaar"))
+  );
+  const isAadharVerified = Boolean(
+    student.isAadharVerified === true ||
+    student.aadharVerified === true ||
+    student.aadharStatus === "Verified" ||
+    student.adminManualUnlock === true ||
+    (aadharDoc && aadharDoc.status === "Verified")
+  );
   const completedClassesCount = bookings.filter(b => b.status === 'Completed' || b.status === 'completed').length;
   const isCourseEnded = (student.courseEnded || completedClassesCount >= 15) && !student.planExtended;
 
@@ -5586,6 +5666,28 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                           <Navigation className="w-3.5 h-3.5 text-[#D4AF37]" /> Track Coach Location
                         </button>
                       )}
+
+                      {/* Manage / Cancel Class Quick Options */}
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('classes');
+                            const hist = document.getElementById('booking-history-section');
+                            if (hist) hist.scrollIntoView({ behavior: 'smooth' });
+                          }}
+                          className="text-slate-400 hover:text-slate-200 transition-colors font-semibold"
+                        >
+                          Booking Details
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelClass(b.id)}
+                          className="text-rose-400 hover:text-rose-300 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3 h-3" /> Cancel Class
+                        </button>
+                      </div>
                     </div>
                   ));
                 })()
@@ -5879,9 +5981,15 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                                             status: "Pending",
                                             uploadedAt: new Date().toISOString().split("T")[0]
                                           };
-                                          const updatedDocs = [newDoc, ...documents.filter(d => d.name !== "Aadhar Card")];
+                                          const updatedDocs = [newDoc, ...documents.filter(d => !d.name.toLowerCase().includes("aadhar") && !d.name.toLowerCase().includes("aadhaar"))];
                                           MockDatabase.saveDocuments(updatedDocs);
                                           setDocuments(updatedDocs);
+                                          const updatedStudent = {
+                                            ...student,
+                                            aadharStatus: "Pending" as const
+                                          };
+                                          MockDatabase.saveStudent(updatedStudent);
+                                          setStudent(updatedStudent);
                                           setAadharUploading(false);
                                           onStateChange();
                                           showNotification("Aadhar Card uploaded successfully! Awaiting Admin verification.");
@@ -8551,6 +8659,108 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                 className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs py-3 rounded-xl transition-all shadow-md cursor-pointer active:scale-95 text-center"
               >
                 Proceed & Keep Account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CLASS CANCELLATION CONFIRMATION MODAL */}
+      {bookingToCancel && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[200] flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 flex flex-col gap-4 relative overflow-hidden animate-scaleUp text-slate-800">
+            {/* Header */}
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 text-rose-600 flex items-center justify-center shrink-0 shadow-sm">
+                  <CalendarX className="w-6 h-6 text-rose-600" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-[#161623] text-base leading-tight">Cancel Driving Class</h3>
+                  <p className="text-[10px] text-rose-500 font-bold uppercase tracking-wider mt-0.5">Confirmation Required</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBookingToCancel(null)}
+                disabled={isCancellingBooking}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Prompt Question */}
+            <div className="bg-rose-50/70 border border-rose-100 p-3.5 rounded-2xl">
+              <p className="font-bold text-xs text-rose-950 leading-snug">
+                Are you sure you want to cancel your class?
+              </p>
+              <p className="text-[11px] text-rose-900/80 mt-1 leading-relaxed">
+                Once cancelled, this scheduled slot will be released and your trainer will be notified immediately.
+              </p>
+            </div>
+
+            {/* Class Details Summary Box */}
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 flex flex-col gap-2 text-xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Class Summary</span>
+              
+              <div className="flex items-center gap-2.5 text-slate-700">
+                <Calendar className="w-4 h-4 text-[#6D3BFF] shrink-0" />
+                <span className="font-bold text-[#161623]">{bookingToCancel.date}</span>
+                <span className="text-slate-300">•</span>
+                <span className="font-semibold text-slate-600">{bookingToCancel.timeSlot}</span>
+              </div>
+
+              {bookingToCancel.trainerName && (
+                <div className="flex items-center gap-2.5 text-slate-700">
+                  <User className="w-4 h-4 text-[#6D3BFF] shrink-0" />
+                  <span className="text-slate-600">Trainer: <strong className="text-slate-800">{bookingToCancel.trainerName}</strong></span>
+                </div>
+              )}
+
+              {bookingToCancel.carName && (
+                <div className="flex items-center gap-2.5 text-slate-700">
+                  <Car className="w-4 h-4 text-[#6D3BFF] shrink-0" />
+                  <span className="text-slate-600">{bookingToCancel.carName} {bookingToCancel.carPlate ? `(${bookingToCancel.carPlate})` : ''}</span>
+                </div>
+              )}
+
+              {bookingToCancel.location && (
+                <div className="flex items-center gap-2.5 text-slate-700">
+                  <MapPin className="w-4 h-4 text-[#6D3BFF] shrink-0" />
+                  <span className="text-slate-600 truncate">{bookingToCancel.location}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-2.5 mt-1">
+              <button
+                type="button"
+                onClick={() => setBookingToCancel(null)}
+                disabled={isCancellingBooking}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-3 rounded-xl transition-all cursor-pointer text-center"
+              >
+                No, Keep Class
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConfirmCancelClass(bookingToCancel.id)}
+                disabled={isCancellingBooking}
+                className="flex-1 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-extrabold text-xs py-3 rounded-xl transition-all shadow-md shadow-rose-500/20 cursor-pointer text-center flex items-center justify-center gap-1.5"
+              >
+                {isCancellingBooking ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Cancelling...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Yes, Cancel Class</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

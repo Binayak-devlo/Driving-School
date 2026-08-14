@@ -48,6 +48,13 @@ export interface Student {
   deletionStatus?: 'none' | 'requested' | 'rejected' | 'approved';
   deletionReason?: string;
   lastLoginAt?: string; // ISO timestamp
+  studentLat?: number;
+  studentLng?: number;
+
+  // Aadhaar Identity Verification States
+  aadharStatus?: 'Not Uploaded' | 'Pending' | 'Verified' | 'Rejected';
+  isAadharVerified?: boolean;
+  aadharVerified?: boolean;
 }
 
 export interface Trainer {
@@ -216,13 +223,14 @@ export interface AICoachAdvice {
   actionItems: string[];
 }
 
-export type TrackingStatus = 'WAITING' | 'PICKUP_STARTED' | 'ARRIVED' | 'CLASS_STARTED' | 'CLASS_COMPLETED';
+export type TrackingStatus = 'WAITING' | 'PICKUP_STARTED' | 'ARRIVED' | 'CLASS_STARTED' | 'CLASS_COMPLETED' | 'CANCELLED';
 
 export interface TrackingSession {
   trackingSessionId: string;
   studentId: string;
   trainerId: string;
   classId: string;
+  bookingId?: string;
   status: TrackingStatus;
   isTracking?: boolean;
   routeStatus?: string;

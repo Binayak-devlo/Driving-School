@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { 
   Users, Calendar, FileText, IndianRupee, ShieldCheck, UserCheck, Car, Star, 
   Download, RefreshCw, Trash2, Search, Check, X, AlertTriangle, TrendingUp, BarChart2,
   Plus, Edit, KeyRound, Lock, LogOut, Eye, ArrowLeft, ChevronRight, Clock, UserX, AlertCircle, ShieldAlert,
-  Camera, Upload, Image as ImageIcon, FileCheck, CheckCircle, ExternalLink
+  Camera, Upload, Image as ImageIcon, FileCheck, CheckCircle, ExternalLink,
+  Menu, MapPin, Navigation, Bell, Send, Settings as SettingsIcon, Radio, CheckSquare, Layers, PhoneCall, Shield, Filter, FileSpreadsheet, Activity, Sparkles, MessageSquare, ChevronDown, CheckCheck, Info, Compass, Smartphone, Globe, Database
 } from "lucide-react";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -15,6 +16,24 @@ import { Student, Trainer, Booking, Document, Payment, SkillProgress, Review, Sl
 import { compressImageIfNeeded, STUDENT_AVATAR_PRESETS, TRAINER_AVATAR_PRESETS, CAR_AVATAR_PRESETS } from "../utils/imageUtils";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 
+export type AdminTabType = 
+  | 'analytics' 
+  | 'dl_applications' 
+  | 'students' 
+  | 'trainers' 
+  | 'bookings' 
+  | 'slots' 
+  | 'documents' 
+  | 'payments' 
+  | 'approvals' 
+  | 'tracking' 
+  | 'attendance' 
+  | 'notifications' 
+  | 'reports' 
+  | 'settings' 
+  | 'feedback' 
+  | 'deletions';
+
 interface AdminDashboardProps {
   onStateChange: () => void; // Sync state changes
   onLogout?: () => void;
@@ -23,7 +42,7 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ onStateChange, onLogout, navState }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'analytics' | 'students' | 'trainers' | 'bookings' | 'documents' | 'payments' | 'feedback' | 'approvals' | 'slots' | 'deletions' | 'dl_applications'>(() => {
+  const [activeTab, setActiveTab] = useState<AdminTabType>(() => {
     if (navState && navState.activeView === 'admin' && navState.adminTab) {
       return navState.adminTab as any;
     }
@@ -150,6 +169,76 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     }
     return fallback;
   };
+
+  // Mobile overflow navigation drawer states
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [menuSearchQuery, setMenuSearchQuery] = useState("");
+
+  // Live Fleet Tracking state
+  const [liveFleetFilter, setLiveFleetFilter] = useState<'all' | 'in_session' | 'en_route' | 'idle'>('all');
+  const [trackingPingedTrainer, setTrackingPingedTrainer] = useState<string | null>(null);
+
+  // Attendance filter states
+  const [attendanceDateFilter, setAttendanceDateFilter] = useState<string>("");
+  const [attendanceTrainerFilter, setAttendanceTrainerFilter] = useState<string>("all");
+  const [attendanceStudentFilter, setAttendanceStudentFilter] = useState<string>("");
+
+  // Notifications & Broadcast Center state
+  const [broadcastTarget, setBroadcastTarget] = useState<'all_students' | 'all_trainers' | 'dl_applicants' | 'pending_docs'>('all_students');
+  const [broadcastSubject, setBroadcastSubject] = useState("");
+  const [broadcastMessage, setBroadcastMessage] = useState("");
+  const [broadcastChannel, setBroadcastChannel] = useState<'all' | 'push' | 'sms'>('all');
+  const [broadcastLogs, setBroadcastLogs] = useState([
+    {
+      id: "bc-1",
+      subject: "Monsoon Driving Advisory: Wet Roads in Bhubaneswar",
+      message: "Instructors and student drivers are requested to follow wet-weather safety guidelines and activate hazard/fog lights when needed.",
+      target: "All Enrolled Students (128)",
+      channel: "In-App Push & SMS",
+      date: "Today, 09:30 AM",
+      sentBy: "System Administrator",
+      count: 128
+    },
+    {
+      id: "bc-2",
+      subject: "Odisha RTO OD-02 Holiday Schedule Notice",
+      message: "Bhubaneswar II RTO track testing will be closed this coming Saturday. All affected slots have been rescheduled automatically.",
+      target: "DL Applicants (14)",
+      channel: "SMS & WhatsApp",
+      date: "Yesterday, 04:15 PM",
+      sentBy: "System Administrator",
+      count: 14
+    },
+    {
+      id: "bc-3",
+      subject: "Aadhaar Card Verification Required for Booking",
+      message: "Please upload your Aadhaar Card photo to activate slot reservations instantly.",
+      target: "Pending Aadhaar Verification (6)",
+      channel: "In-App Push",
+      date: "3 days ago",
+      sentBy: "System Administrator",
+      count: 6
+    }
+  ]);
+
+  // System Settings state
+  const [settingsData, setSettingsData] = useState({
+    schoolName: "Golden Hands Driving Academy",
+    rtoZone: "OD-02 Bhubaneswar II, Odisha",
+    rtoRegNo: "OD-02/DS/2021/88",
+    phone: "+91 94370 12345",
+    email: "admin@goldenhandsdriving.com",
+    address: "Plot 420, Saheed Nagar, Bhubaneswar, Odisha 751007",
+    openingTime: "06:00",
+    closingTime: "19:00",
+    slotDurationMins: 45,
+    defaultSlotCapacity: 5,
+    basicCourseFee: 4500,
+    standardCourseFee: 7200,
+    premiumCourseFee: 9800,
+    modFee: 800
+  });
+  const [adminNewPasscode, setAdminNewPasscode] = useState("");
 
   // Search filter
   const [searchQuery, setSearchQuery] = useState("");
@@ -281,6 +370,8 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
   const [studentLockedReason, setStudentLockedReason] = useState("");
   const [studentAdminManualUnlock, setStudentAdminManualUnlock] = useState(false);
   const [studentAssignedTrainerId, setStudentAssignedTrainerId] = useState("");
+  const [studentAadharStatus, setStudentAadharStatus] = useState<Student['aadharStatus']>("Verified");
+  const [studentIsAadharVerified, setStudentIsAadharVerified] = useState(true);
 
   // Slots Form & List States
   const [slots, setSlots] = useState<SlotDay[]>(() => MockDatabase.getSlotDays());
@@ -561,8 +652,26 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
 
     // If Learner's Licence got verified, automatically upgrade Student LL Status to 'Approved'
     const targetDoc = documents.find(d => d.id === docId);
-    if (targetDoc && status === "Verified") {
-      if (targetDoc.name === "Learner Licence") {
+    if (targetDoc) {
+      const isAadhar = targetDoc.name.toLowerCase().includes("aadhar") || targetDoc.name.toLowerCase().includes("aadhaar");
+      if (isAadhar) {
+        const studentToUpdate = MockDatabase.getStudent(targetDoc.studentId);
+        if (studentToUpdate && studentToUpdate.id) {
+          const updatedStudent: Student = { 
+            ...studentToUpdate, 
+            aadharStatus: (status === "Verified" ? "Verified" : status === "Rejected" ? "Rejected" : "Pending") as any,
+            isAadharVerified: status === "Verified",
+            aadharVerified: status === "Verified"
+          };
+          MockDatabase.saveStudent(updatedStudent, targetDoc.studentId);
+          if (student.id === targetDoc.studentId) {
+            setStudent(updatedStudent);
+          }
+          setStudents(MockDatabase.getRegisteredStudents());
+        }
+      }
+
+      if (status === "Verified" && targetDoc.name === "Learner Licence") {
         const studentToUpdate = MockDatabase.getStudent(targetDoc.studentId);
         const updatedStudent = { ...studentToUpdate, llStatus: "Approved" as const };
         MockDatabase.saveStudent(updatedStudent, targetDoc.studentId);
@@ -777,6 +886,8 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     setStudentLockedReason("");
     setStudentAdminManualUnlock(false);
     setStudentAssignedTrainerId("");
+    setStudentAadharStatus("Verified");
+    setStudentIsAadharVerified(true);
 
     setStudentModalOpen(true);
   };
@@ -810,6 +921,8 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     setStudentLockedReason(stud.lockedReason || "");
     setStudentAdminManualUnlock(!!stud.adminManualUnlock);
     setStudentAssignedTrainerId(stud.assignedTrainerId || "");
+    setStudentAadharStatus(stud.aadharStatus || (stud.isAadharVerified ? "Verified" : "Verified"));
+    setStudentIsAadharVerified(stud.isAadharVerified !== undefined ? stud.isAadharVerified : true);
 
     setStudentModalOpen(true);
   };
@@ -829,6 +942,8 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     const targetJoinedDate = editingStudent ? (editingStudent.joinedDate || new Date().toISOString().split("T")[0]) : new Date().toISOString().split("T")[0];
 
     const assignedTr = trainers.find(t => t.id === studentAssignedTrainerId);
+
+    const isVerifiedAadhar = studentAadharStatus === "Verified" || studentIsAadharVerified;
 
     const updatedStudent: Student = {
       id: targetId,
@@ -862,7 +977,12 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       firstClassCompleted: studentFirstClassCompleted,
       bookingLocked: studentBookingLocked,
       lockedReason: studentLockedReason,
-      adminManualUnlock: studentAdminManualUnlock
+      adminManualUnlock: studentAdminManualUnlock,
+
+      // Save Aadhaar verification states
+      aadharStatus: isVerifiedAadhar ? "Verified" : (studentAadharStatus || "Pending"),
+      isAadharVerified: isVerifiedAadhar,
+      aadharVerified: isVerifiedAadhar
     };
 
     MockDatabase.saveStudent(updatedStudent, targetId);
@@ -1217,111 +1337,444 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       )}
 
       {/* Admin Top bar */}
-      <header className="bg-white px-4 md:px-8 py-5 md:py-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 shrink-0">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-2xl md:text-xl">👑</span>
-            <h1 className="text-xl md:text-lg font-black text-[#161623] tracking-tight">Golden Hands Admin</h1>
+      <header className="bg-white px-4 md:px-8 py-3.5 md:py-4 flex justify-between items-center border-b border-slate-100 shrink-0 z-20">
+        <div className="flex items-center gap-2.5">
+          <span className="text-2xl md:text-xl">👑</span>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base md:text-lg font-black text-[#161623] tracking-tight">Golden Hands Admin</h1>
+              <span className="hidden sm:inline-block text-[9px] bg-[#D4AF37]/15 text-[#8F52FF] font-black px-2 py-0.5 rounded-full border border-[#D4AF37]/30 uppercase">OD-02</span>
+            </div>
+            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Bhubaneswar, Odisha • Admin Desk</p>
           </div>
-          <p className="text-xs md:text-[10px] text-slate-400 font-semibold uppercase tracking-wider mt-0.5">Bhubaneswar, Odisha</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 md:gap-4 w-full md:w-auto">
-          <div className="text-right hidden sm:block mr-2">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="text-right hidden lg:block mr-2">
             <p className="text-xs font-black text-[#161623]">System Administrator</p>
+            <p className="text-[10px] text-emerald-600 font-bold flex items-center justify-end gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Online Control
+            </p>
           </div>
+
           <button 
             onClick={() => {
               setIsAdminLoggedIn(false);
               localStorage.removeItem("golden_hands_admin_logged_in");
               showToast("Logged out of Admin Portal successfully.");
             }}
-            className="flex-1 sm:flex-none p-3.5 sm:p-2.5 bg-rose-50 hover:bg-rose-100 rounded-xl text-rose-600 font-bold text-sm sm:text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-rose-100 min-h-[44px]"
+            className="hidden md:flex p-2.5 px-3 bg-rose-50 hover:bg-rose-100 rounded-xl text-rose-600 font-bold text-xs items-center justify-center gap-1.5 transition-all cursor-pointer border border-rose-100 min-h-[40px]"
             title="Log out of admin session"
           >
-            <LogOut className="w-4 h-4 text-rose-500 shrink-0" /> <span className="text-xs">Sign Out</span>
+            <LogOut className="w-4 h-4 text-rose-500 shrink-0" /> <span>Sign Out</span>
           </button>
+
           {onLogout && (
             <button 
               onClick={onLogout}
-              className="flex-1 sm:flex-none p-3.5 sm:p-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-700 font-bold text-sm sm:text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-slate-200 min-h-[44px]"
+              className="hidden md:flex p-2.5 px-3 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-700 font-bold text-xs items-center justify-center gap-1.5 transition-all cursor-pointer border border-slate-200 min-h-[40px]"
               title="Close Admin Desk and return to hub"
             >
-              <ArrowLeft className="w-4 h-4 text-slate-500 shrink-0" /> <span className="text-xs">Exit</span>
+              <ArrowLeft className="w-4 h-4 text-slate-500 shrink-0" /> <span>Exit</span>
             </button>
           )}
+
+          {/* Mobile 3-line (=) Overflow Menu Button */}
+          <button
+            id="admin-mobile-overflow-menu-btn"
+            onClick={() => setMobileMenuOpen(true)}
+            className="md:hidden px-3.5 py-2 bg-gradient-to-r from-slate-900 via-[#161623] to-[#2B1B4D] hover:opacity-95 text-white rounded-xl flex items-center justify-center gap-2.5 shadow-md border border-[#D4AF37]/50 min-h-[42px] cursor-pointer transition-all active:scale-95 select-none"
+            title="Open 3-line (=) Admin Navigation Menu"
+            aria-label="Open Navigation Drawer"
+          >
+            {/* 3-line horizontal hamburger menu icon (=) */}
+            <div className="flex flex-col justify-center items-center gap-[3px] w-4.5 h-3.5">
+              <span className="w-4.5 h-[2.5px] bg-[#D4AF37] rounded-full"></span>
+              <span className="w-3.5 h-[2.5px] bg-white rounded-full"></span>
+              <span className="w-4.5 h-[2.5px] bg-[#D4AF37] rounded-full"></span>
+            </div>
+            <span className="text-[11px] font-black text-white tracking-wider uppercase">Menu</span>
+            {(dlApplications.length > 0 || MockDatabase.getAccountDeletionRequests().length > 0 || documents.filter(d => d.status === 'Pending').length > 0) && (
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
+            )}
+          </button>
         </div>
       </header>
 
+      {/* Mobile Active Section Sub-Bar with Fast Drawer Trigger */}
+      <div className="md:hidden bg-white/95 backdrop-blur-md px-4 py-2 border-b border-slate-100 flex items-center justify-between gap-2 shrink-0 select-none">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[9.5px] font-bold uppercase text-slate-400">Active View:</span>
+          <span className="text-xs font-black text-[#6D3BFF] truncate bg-[#6D3BFF]/10 px-2.5 py-1 rounded-lg">
+            {(() => {
+              const allItems = [
+                { id: 'analytics', label: 'Analytics Dashboard' },
+                { id: 'dl_applications', label: 'Licence Applications' },
+                { id: 'students', label: 'Student Directory' },
+                { id: 'trainers', label: 'Trainer Management' },
+                { id: 'bookings', label: 'Class & Bookings' },
+                { id: 'slots', label: 'Slot Capacity' },
+                { id: 'documents', label: 'Documents Desk' },
+                { id: 'payments', label: 'Payment Logs' },
+                { id: 'approvals', label: 'Payment Approvals' },
+                { id: 'tracking', label: 'Pickup / Live Tracking' },
+                { id: 'attendance', label: 'Attendance Logs' },
+                { id: 'notifications', label: 'Notifications' },
+                { id: 'reports', label: 'Reports & Exports' },
+                { id: 'feedback', label: 'Feedback Desk' },
+                { id: 'settings', label: 'System Settings' },
+                { id: 'deletions', label: 'Deletion Requests' }
+              ];
+              const cur = allItems.find(i => i.id === activeTab);
+              return cur ? cur.label : activeTab;
+            })()}
+          </span>
+        </div>
+        <button
+          onClick={() => setMobileMenuOpen(true)}
+          className="text-[11px] font-black text-[#6D3BFF] hover:text-[#8F52FF] flex items-center gap-1 shrink-0 cursor-pointer bg-[#F8F9FF] px-2.5 py-1 rounded-lg border border-[#6D3BFF]/20"
+        >
+          <span>All 16 Sections</span>
+          <ChevronRight className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
       {/* Dashboard split content area */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Navigation Sidebar */}
-        <nav className="w-full lg:w-64 bg-white border-b lg:border-b-0 lg:border-r border-slate-100 flex flex-row lg:flex-col justify-between p-4 lg:p-5 shrink-0 overflow-x-auto lg:overflow-x-visible gap-4 lg:gap-0 select-none">
-          <div className="flex flex-row lg:flex-col gap-2 shrink-0">
+        {/* Navigation Sidebar (Desktop & Tablet) */}
+        <nav className="w-full lg:w-72 bg-white border-b lg:border-b-0 lg:border-r border-slate-100 hidden md:flex flex-col justify-between p-3.5 lg:p-4 shrink-0 overflow-y-auto select-none">
+          <div className="flex flex-col gap-3 shrink-0">
+            {/* Nav Categories */}
             {[
-              { id: 'analytics', label: 'Analytics Dashboard', icon: <BarChart2 className="w-5 h-5 lg:w-4 lg:h-4" /> },
-              { id: 'dl_applications', label: 'Driving Licence Applications', icon: <FileCheck className="w-5 h-5 lg:w-4 lg:h-4 text-[#D4AF37]" /> },
-              { id: 'students', label: 'Student Directory', icon: <Users className="w-5 h-5 lg:w-4 lg:h-4" /> },
-              { id: 'trainers', label: 'Trainer Allocations', icon: <Car className="w-5 h-5 lg:w-4 lg:h-4" /> },
-              { id: 'bookings', label: 'Driving Slots', icon: <Calendar className="w-5 h-5 lg:w-4 lg:h-4" /> },
-              { id: 'slots', label: 'Slot Management', icon: <Clock className="w-5 h-5 lg:w-4 lg:h-4" /> },
-              { id: 'documents', label: 'Documents Desk', icon: <FileText className="w-5 h-5 lg:w-4 lg:h-4" /> },
-              { id: 'payments', label: 'Financial Logs', icon: <IndianRupee className="w-5 h-5 lg:w-4 lg:h-4" /> },
-              { id: 'approvals', label: 'Payment Approvals', icon: <ShieldCheck className="w-5 h-5 lg:w-4 lg:h-4" /> },
-              { id: 'feedback', label: 'Feedback Desk', icon: <Star className="w-5 h-5 lg:w-4 lg:h-4 text-amber-500 fill-amber-500" /> },
-              { id: 'deletions', label: 'Deletion Requests', icon: <UserX className="w-5 h-5 lg:w-4 lg:h-4 text-rose-500" /> }
-            ].map((tab) => {
-              const isActive = activeTab === tab.id;
-              const deletionRequestsCount = MockDatabase.getAccountDeletionRequests().length;
-              const dlAppsCount = dlApplications.length;
-              return (
-                <button
-                   key={tab.id}
-                   onClick={() => setActiveTab(tab.id as any)}
-                   className={`flex items-center justify-between px-4 lg:px-4 py-3 lg:py-3.5 rounded-xl text-left text-sm lg:text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap lg:whitespace-normal gap-3 ${
-                    isActive 
-                      ? 'bg-[#6D3BFF] text-white shadow-md shadow-[#6D3BFF]/10' 
-                      : 'text-slate-500 hover:bg-[#F8F9FF] hover:text-[#6D3BFF]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 lg:gap-3.5">
-                    {tab.icon}
-                    <span>{tab.label}</span>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {tab.id === 'dl_applications' && dlAppsCount > 0 && (
-                      <span className="bg-[#D4AF37] text-[#161623] text-[9px] font-black px-1.5 lg:px-2 py-0.5 rounded-full shrink-0">
-                        {dlAppsCount}
-                      </span>
-                    )}
-                    {tab.id === 'deletions' && deletionRequestsCount > 0 && (
-                      <span className="bg-rose-500 text-white text-[9px] font-black px-1.5 lg:px-2 py-0.5 rounded-full animate-pulse shrink-0">
-                        {deletionRequestsCount}
-                      </span>
-                    )}
-                    {tab.id === 'approvals' && student.modificationStatus === 'paid_pending_approval' && (
-                      <span className="bg-rose-500 text-white text-[9px] font-black px-1.5 lg:px-2 py-0.5 rounded-full animate-pulse shrink-0">
-                        1 Pending
-                      </span>
-                    )}
-                    {tab.id === 'documents' && documents.filter(d => d.status === 'Pending').length > 0 && (
-                      <span className="bg-amber-500 text-white text-[9px] font-black px-1 lg:px-1.5 py-0.5 rounded-full shrink-0">
-                        {documents.filter(d => d.status === 'Pending').length}
-                      </span>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+              {
+                category: "Core Operations",
+                items: [
+                  { id: 'analytics', label: 'Analytics Dashboard', icon: <BarChart2 className="w-4 h-4 text-[#6D3BFF]" /> },
+                  { id: 'dl_applications', label: 'Driving Licence Applications', icon: <FileCheck className="w-4 h-4 text-[#D4AF37]" />, badgeKey: 'dl_apps' },
+                  { id: 'students', label: 'Student Directory', icon: <Users className="w-4 h-4 text-blue-500" /> },
+                  { id: 'trainers', label: 'Trainer Management', icon: <Car className="w-4 h-4 text-emerald-500" /> },
+                  { id: 'bookings', label: 'Class & Booking Management', icon: <Calendar className="w-4 h-4 text-indigo-500" /> },
+                  { id: 'slots', label: 'Slot Capacity & Hours', icon: <Clock className="w-4 h-4 text-teal-500" /> },
+                ]
+              },
+              {
+                category: "Verification & Finance",
+                items: [
+                  { id: 'documents', label: 'Document Verification Desk', icon: <FileText className="w-4 h-4 text-amber-500" />, badgeKey: 'documents' },
+                  { id: 'payments', label: 'Payment Management', icon: <IndianRupee className="w-4 h-4 text-emerald-600" /> },
+                  { id: 'approvals', label: 'Payment Approvals', icon: <ShieldCheck className="w-4 h-4 text-purple-600" />, badgeKey: 'approvals' },
+                ]
+              },
+              {
+                category: "Live Logistics & Logs",
+                items: [
+                  { id: 'tracking', label: 'Pickup / Live Tracking', icon: <Navigation className="w-4 h-4 text-cyan-600" /> },
+                  { id: 'attendance', label: 'Attendance & Session Logs', icon: <CheckSquare className="w-4 h-4 text-blue-600" /> },
+                ]
+              },
+              {
+                category: "Communications & System",
+                items: [
+                  { id: 'notifications', label: 'Notifications & Broadcasts', icon: <Bell className="w-4 h-4 text-violet-600" /> },
+                  { id: 'reports', label: 'Reports & Export Center', icon: <FileSpreadsheet className="w-4 h-4 text-amber-600" /> },
+                  { id: 'feedback', label: 'Feedback Desk', icon: <Star className="w-4 h-4 text-amber-500 fill-amber-500" /> },
+                  { id: 'settings', label: 'System Settings & RTO Config', icon: <SettingsIcon className="w-4 h-4 text-slate-600" /> },
+                  { id: 'deletions', label: 'Deletion Requests', icon: <UserX className="w-4 h-4 text-rose-500" />, badgeKey: 'deletions' },
+                ]
+              }
+            ].map((section, sIdx) => (
+              <div key={sIdx} className="flex flex-col gap-1">
+                <span className="text-[10px] font-black uppercase text-slate-400 px-3 pt-2 pb-0.5 tracking-wider">
+                  {section.category}
+                </span>
+                {section.items.map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  const deletionRequestsCount = MockDatabase.getAccountDeletionRequests().length;
+                  const dlAppsCount = dlApplications.length;
+                  const pendingDocsCount = documents.filter(d => d.status === 'Pending').length;
+                  const pendingApprovalsCount = student.modificationStatus === 'paid_pending_approval' ? 1 : 0;
+
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id as any)}
+                      className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-left text-xs font-black uppercase tracking-wider transition-all cursor-pointer gap-2 ${
+                        isActive 
+                          ? 'bg-[#6D3BFF] text-white shadow-md shadow-[#6D3BFF]/20 font-black' 
+                          : 'text-slate-600 hover:bg-[#F8F9FF] hover:text-[#6D3BFF]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="shrink-0">{tab.icon}</span>
+                        <span className="truncate">{tab.label}</span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {tab.id === 'dl_applications' && dlAppsCount > 0 && (
+                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full shrink-0 ${isActive ? 'bg-white text-[#6D3BFF]' : 'bg-[#D4AF37] text-[#161623]'}`}>
+                            {dlAppsCount}
+                          </span>
+                        )}
+                        {tab.id === 'deletions' && deletionRequestsCount > 0 && (
+                          <span className="bg-rose-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full animate-pulse shrink-0">
+                            {deletionRequestsCount}
+                          </span>
+                        )}
+                        {tab.id === 'approvals' && pendingApprovalsCount > 0 && (
+                          <span className="bg-rose-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full animate-pulse shrink-0">
+                            1 Pending
+                          </span>
+                        )}
+                        {tab.id === 'documents' && pendingDocsCount > 0 && (
+                          <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full shrink-0">
+                            {pendingDocsCount}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </div>
 
-          <div className="hidden lg:block bg-[#161623] text-white p-4 rounded-3xl border border-white/5 shadow-inner mt-4">
-            <h4 className="font-extrabold text-xs text-[#D4AF37]">RTO Coordination</h4>
-            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
-              OD-02 Bhubaneswar RTO-II approvals take approx. 48 hours from document validation.
+          <div className="bg-[#161623] text-white p-3.5 rounded-2xl border border-white/5 shadow-inner mt-4">
+            <h4 className="font-extrabold text-[11px] text-[#D4AF37]">Odisha RTO OD-02 Desk</h4>
+            <p className="text-[9.5px] text-slate-400 mt-0.5 leading-relaxed">
+              Bhubaneswar RTO-II approvals processed in approx. 48 hours after document clearance.
             </p>
           </div>
         </nav>
+
+        {/* MOBILE NAVIGATION DRAWER / OVERFLOW MENU MODAL (Opens on 3-line = menu click) */}
+        <AnimatePresence>
+          {mobileMenuOpen && (
+            <div className="fixed inset-0 z-50 md:hidden flex justify-end">
+              {/* Backdrop */}
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                onClick={() => setMobileMenuOpen(false)}
+                className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm"
+              />
+
+              {/* Drawer Content */}
+              <motion.div 
+                initial={{ x: "100%" }}
+                animate={{ x: 0 }}
+                exit={{ x: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 260 }}
+                className="relative w-[88vw] max-w-sm bg-white h-full shadow-2xl flex flex-col z-10 overflow-hidden"
+              >
+                {/* Drawer Header */}
+                <div className="bg-gradient-to-r from-[#161623] via-[#24133B] to-[#161623] text-white p-4.5 border-b border-white/10 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-[#D4AF37]/20 border border-[#D4AF37]/40 flex items-center justify-center text-lg">
+                        👑
+                      </div>
+                      <div>
+                        <h3 className="font-black text-sm text-white tracking-tight flex items-center gap-1.5">
+                          Admin Command Menu
+                          <span className="text-[8.5px] bg-[#D4AF37] text-[#161623] font-black px-1.5 py-0.2 rounded-md">OD-02</span>
+                        </h3>
+                        <p className="text-[10px] text-slate-300 font-medium">Bhubaneswar Driving Academy</p>
+                      </div>
+                    </div>
+                    <button
+                      id="close-mobile-menu-btn"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer transition-all active:scale-95"
+                      aria-label="Close menu"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Search Bar inside Drawer */}
+                  <div className="mt-3.5 relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Search all admin sections..."
+                      value={menuSearchQuery}
+                      onChange={(e) => setMenuSearchQuery(e.target.value)}
+                      className="w-full bg-white/10 border border-white/15 rounded-xl pl-8.5 pr-3 py-2 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-[#D4AF37] focus:bg-white/15 transition-all"
+                    />
+                    {menuSearchQuery && (
+                      <button 
+                        onClick={() => setMenuSearchQuery("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quick Status Bar */}
+                <div className="bg-[#F8F9FF] px-4 py-2 border-b border-slate-100 flex items-center justify-between text-[10px] font-bold text-slate-600 shrink-0">
+                  <span className="flex items-center gap-1.5 text-emerald-600 font-extrabold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Desk Active
+                  </span>
+                  <span>16 Control Modules</span>
+                </div>
+
+                {/* Drawer Menu List */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-4">
+                  {[
+                    {
+                      category: "Core Management",
+                      items: [
+                        { id: 'analytics', label: 'Analytics Dashboard', subtitle: 'Overview, KPIs & charts', icon: <BarChart2 className="w-4 h-4 text-[#6D3BFF]" /> },
+                        { id: 'dl_applications', label: 'Driving Licence Applications', subtitle: 'Odisha RTO OD-02 LL & DL desk', icon: <FileCheck className="w-4 h-4 text-[#D4AF37]" />, badgeKey: 'dl_apps' },
+                        { id: 'students', label: 'Student Directory', subtitle: 'Learners roster & profiles', icon: <Users className="w-4 h-4 text-blue-500" /> },
+                        { id: 'trainers', label: 'Trainer Management', subtitle: 'Instructors & vehicles', icon: <Car className="w-4 h-4 text-emerald-500" /> },
+                        { id: 'bookings', label: 'Class & Booking Management', subtitle: 'Sessions & photo logs', icon: <Calendar className="w-4 h-4 text-indigo-500" /> },
+                        { id: 'slots', label: 'Slot Capacity & Hours', subtitle: 'Daily capacity limits', icon: <Clock className="w-4 h-4 text-teal-500" /> },
+                      ]
+                    },
+                    {
+                      category: "Verification & Finance",
+                      items: [
+                        { id: 'documents', label: 'Document Verification Desk', subtitle: 'Aadhaar, LL & Medical cards', icon: <FileText className="w-4 h-4 text-amber-500" />, badgeKey: 'documents' },
+                        { id: 'payments', label: 'Payment Management', subtitle: 'Fee receipts & ledger', icon: <IndianRupee className="w-4 h-4 text-emerald-600" /> },
+                        { id: 'approvals', label: 'Payment Approvals', subtitle: 'Course upgrades & additions', icon: <ShieldCheck className="w-4 h-4 text-purple-600" />, badgeKey: 'approvals' },
+                      ]
+                    },
+                    {
+                      category: "Operations & Logistics",
+                      items: [
+                        { id: 'tracking', label: 'Pickup / Live Tracking', subtitle: 'GPS fleet tracking in Bhubaneswar', icon: <Navigation className="w-4 h-4 text-cyan-600" /> },
+                        { id: 'attendance', label: 'Attendance & Session Logs', subtitle: 'Photo-verified practical classes', icon: <CheckSquare className="w-4 h-4 text-blue-600" /> },
+                      ]
+                    },
+                    {
+                      category: "Communications & Administration",
+                      items: [
+                        { id: 'notifications', label: 'Notifications & Broadcasts', subtitle: 'Push alerts & SMS announcements', icon: <Bell className="w-4 h-4 text-violet-600" /> },
+                        { id: 'reports', label: 'Reports & Export Center', subtitle: 'RTO audits & CSV data exports', icon: <FileSpreadsheet className="w-4 h-4 text-amber-600" /> },
+                        { id: 'feedback', label: 'Feedback Desk', subtitle: 'Student reviews & coach notes', icon: <Star className="w-4 h-4 text-amber-500 fill-amber-500" /> },
+                        { id: 'settings', label: 'System Settings & RTO Config', subtitle: 'Academy profile, pricing & security', icon: <SettingsIcon className="w-4 h-4 text-slate-600" /> },
+                        { id: 'deletions', label: 'Deletion Requests', subtitle: 'Account erasure queue', icon: <UserX className="w-4 h-4 text-rose-500" />, badgeKey: 'deletions' },
+                      ]
+                    }
+                  ].map((categoryGroup, cIdx) => {
+                    const filteredItems = categoryGroup.items.filter(item => {
+                      if (!menuSearchQuery.trim()) return true;
+                      const q = menuSearchQuery.toLowerCase();
+                      return item.label.toLowerCase().includes(q) || item.subtitle.toLowerCase().includes(q);
+                    });
+
+                    if (filteredItems.length === 0) return null;
+
+                    return (
+                      <div key={cIdx} className="space-y-1">
+                        <span className="text-[9.5px] font-black uppercase text-slate-400 px-2 tracking-wider">
+                          {categoryGroup.category}
+                        </span>
+                        <div className="space-y-1">
+                          {filteredItems.map((item) => {
+                            const isActive = activeTab === item.id;
+                            const deletionRequestsCount = MockDatabase.getAccountDeletionRequests().length;
+                            const dlAppsCount = dlApplications.length;
+                            const pendingDocsCount = documents.filter(d => d.status === 'Pending').length;
+                            const pendingApprovalsCount = student.modificationStatus === 'paid_pending_approval' ? 1 : 0;
+
+                            return (
+                              <button
+                                key={item.id}
+                                onClick={() => {
+                                  setActiveTab(item.id as any);
+                                  setMobileMenuOpen(false);
+                                  showToast(`Opened ${item.label}`);
+                                }}
+                                className={`w-full flex items-center justify-between p-2.5 rounded-2xl text-left transition-all cursor-pointer ${
+                                  isActive
+                                    ? 'bg-[#6D3BFF] text-white shadow-md shadow-[#6D3BFF]/25'
+                                    : 'bg-white hover:bg-slate-50 text-[#161623] border border-slate-100'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center shrink-0 ${
+                                    isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
+                                  }`}>
+                                    {item.icon}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h4 className={`text-xs font-black truncate ${isActive ? 'text-white' : 'text-[#161623]'}`}>
+                                      {item.label}
+                                    </h4>
+                                    <p className={`text-[10px] truncate ${isActive ? 'text-white/80' : 'text-slate-400'}`}>
+                                      {item.subtitle}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                  {item.id === 'dl_applications' && dlAppsCount > 0 && (
+                                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isActive ? 'bg-white text-[#6D3BFF]' : 'bg-[#D4AF37] text-[#161623]'}`}>
+                                      {dlAppsCount}
+                                    </span>
+                                  )}
+                                  {item.id === 'deletions' && deletionRequestsCount > 0 && (
+                                    <span className="bg-rose-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full animate-pulse">
+                                      {deletionRequestsCount}
+                                    </span>
+                                  )}
+                                  {item.id === 'approvals' && pendingApprovalsCount > 0 && (
+                                    <span className="bg-rose-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full animate-pulse">
+                                      1
+                                    </span>
+                                  )}
+                                  {item.id === 'documents' && pendingDocsCount > 0 && (
+                                    <span className="bg-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">
+                                      {pendingDocsCount}
+                                    </span>
+                                  )}
+                                  <ChevronRight className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-slate-300'}`} />
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Drawer Footer Actions */}
+                <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => {
+                      setIsAdminLoggedIn(false);
+                      localStorage.removeItem("golden_hands_admin_logged_in");
+                      setMobileMenuOpen(false);
+                      showToast("Signed out of Admin Portal.");
+                    }}
+                    className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-xs py-2.5 rounded-xl border border-rose-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                    <span>Sign Out</span>
+                  </button>
+                  {onLogout && (
+                    <button
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        onLogout();
+                      }}
+                      className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-black text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Exit Desk</span>
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* Content Body */}
         <main className="flex-1 p-4 sm:p-8 overflow-y-auto bg-[#F8F9FF]">
@@ -3584,6 +4037,1065 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
               </div>
             </div>
           )}
+
+          {/* TAB: PICKUP / LIVE FLEET TRACKING */}
+          {activeTab === 'tracking' && (
+            <div className="flex flex-col gap-6 animate-fadeIn">
+              {/* Header card */}
+              <div className="bg-white border border-slate-100 p-6 rounded-3xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <Navigation className="w-6 h-6 text-cyan-600" />
+                    <h2 className="text-lg font-black text-[#161623]">Pickup & Live GPS Fleet Tracking</h2>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span> 4 Cars Active in Bhubaneswar
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Real-time monitoring of driving instruction vehicles, assigned instructors, active learner pickup points, and in-transit speed across Bhubaneswar zones.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      showToast("Telemetry synced with vehicle GPS trackers.");
+                    }}
+                    className="bg-[#F8F9FF] hover:bg-slate-100 text-slate-700 font-bold text-xs px-4 py-2.5 rounded-xl border border-slate-200 flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-slate-500" /> Refresh GPS
+                  </button>
+                  <button
+                    onClick={() => {
+                      showToast("Live Fleet Broadcast: All trainers notified to verify pickup checkpoints.");
+                    }}
+                    className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white font-black text-xs px-4 py-2.5 rounded-xl shadow-md shadow-[#6D3BFF]/20 flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Radio className="w-3.5 h-3.5 text-white" /> Ping All Fleet
+                  </button>
+                </div>
+              </div>
+
+              {/* Fleet Metric Stats */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-xl bg-cyan-50 text-cyan-600 flex items-center justify-center font-black">
+                    <Car className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">On Road Cars</span>
+                    <span className="text-lg font-black text-[#161623]">4 / 4 Active</span>
+                  </div>
+                </div>
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black">
+                    <Users className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Learners in Session</span>
+                    <span className="text-lg font-black text-[#161623]">4 Students</span>
+                  </div>
+                </div>
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-black">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Avg Fleet Speed</span>
+                    <span className="text-lg font-black text-[#161623]">26 km/h</span>
+                  </div>
+                </div>
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-black">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Dual-Control Status</span>
+                    <span className="text-lg font-black text-emerald-600">100% Armed</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Interactive Bhubaneswar GPS Map Visualizer */}
+              <div className="bg-gradient-to-br from-slate-900 via-[#161623] to-[#2B1B4D] rounded-3xl p-6 text-white border border-slate-800 shadow-xl overflow-hidden relative">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 z-10 relative">
+                  <div>
+                    <span className="text-[10px] font-black text-[#D4AF37] uppercase tracking-widest block">Odisha RTO OD-02 Telemetry</span>
+                    <h3 className="text-base font-black text-white flex items-center gap-2">
+                      Bhubaneswar City GPS Radar
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    </h3>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-300">
+                    <span className="bg-white/10 px-3 py-1 rounded-lg border border-white/10 font-bold">Zone: Saheed Nagar • Patia • Khandagiri • Nayapalli</span>
+                  </div>
+                </div>
+
+                {/* Styled Map Board Simulation */}
+                <div className="h-64 sm:h-72 bg-slate-950/60 rounded-2xl border border-white/10 relative overflow-hidden flex items-center justify-center">
+                  {/* Grid Lines Pattern */}
+                  <div className="absolute inset-0 bg-[radial-gradient(#ffffff15_1px,transparent_1px)] [background-size:20px_20px] opacity-40"></div>
+                  
+                  {/* Center Hub Marker */}
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
+                    <div className="w-8 h-8 rounded-full bg-[#D4AF37]/20 border-2 border-[#D4AF37] flex items-center justify-center shadow-lg shadow-[#D4AF37]/30">
+                      <span className="text-xs">👑</span>
+                    </div>
+                    <span className="text-[9px] font-black text-[#D4AF37] bg-black/80 px-2 py-0.5 rounded-md mt-1 border border-[#D4AF37]/40 whitespace-nowrap">
+                      HQ: Saheed Nagar Track
+                    </span>
+                  </div>
+
+                  {/* Vehicle 1 - Patia (Subhash) */}
+                  <div className="absolute top-1/6 right-1/4 flex flex-col items-center animate-pulse">
+                    <div className="w-7 h-7 rounded-xl bg-cyan-500 text-white flex items-center justify-center text-xs shadow-lg shadow-cyan-500/50 cursor-pointer">
+                      <Car className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-[8.5px] font-bold text-cyan-200 bg-slate-900/90 px-1.5 py-0.5 rounded border border-cyan-500/40 mt-1 whitespace-nowrap">
+                      i10 (Subhash) • 34 km/h • KIIT Sq.
+                    </span>
+                  </div>
+
+                  {/* Vehicle 2 - Master Canteen (Rajesh) */}
+                  <div className="absolute bottom-1/5 left-1/3 flex flex-col items-center">
+                    <div className="w-7 h-7 rounded-xl bg-emerald-500 text-white flex items-center justify-center text-xs shadow-lg shadow-emerald-500/50 cursor-pointer">
+                      <Car className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-[8.5px] font-bold text-emerald-200 bg-slate-900/90 px-1.5 py-0.5 rounded border border-emerald-500/40 mt-1 whitespace-nowrap">
+                      Dzire (Rajesh) • 28 km/h • Station
+                    </span>
+                  </div>
+
+                  {/* Vehicle 3 - Khandagiri (Priya) */}
+                  <div className="absolute bottom-1/4 right-1/6 flex flex-col items-center">
+                    <div className="w-7 h-7 rounded-xl bg-purple-500 text-white flex items-center justify-center text-xs shadow-lg shadow-purple-500/50 cursor-pointer">
+                      <Car className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-[8.5px] font-bold text-purple-200 bg-slate-900/90 px-1.5 py-0.5 rounded border border-purple-500/40 mt-1 whitespace-nowrap">
+                      Wagon R (Priya) • 0 km/h (Parking)
+                    </span>
+                  </div>
+
+                  {/* Vehicle 4 - Nayapalli (Deepak) */}
+                  <div className="absolute top-1/4 left-1/5 flex flex-col items-center">
+                    <div className="w-7 h-7 rounded-xl bg-amber-500 text-white flex items-center justify-center text-xs shadow-lg shadow-amber-500/50 cursor-pointer">
+                      <Car className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-[8.5px] font-bold text-amber-200 bg-slate-900/90 px-1.5 py-0.5 rounded border border-amber-500/40 mt-1 whitespace-nowrap">
+                      Baleno (Deepak) • 22 km/h • VIP Rd
+                    </span>
+                  </div>
+
+                  {/* Range Rings */}
+                  <div className="w-48 h-48 rounded-full border border-cyan-500/20 absolute pointer-events-none"></div>
+                  <div className="w-96 h-96 rounded-full border border-purple-500/10 absolute pointer-events-none"></div>
+                </div>
+              </div>
+
+              {/* Active Vehicles Roster Table */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                  <div>
+                    <h3 className="text-base font-black text-[#161623]">Active Instructors & Vehicles Ledger</h3>
+                    <p className="text-xs text-slate-400">Current assigned learners, pickup points, and live session status</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setLiveFleetFilter('all')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${liveFleetFilter === 'all' ? 'bg-[#6D3BFF] text-white' : 'bg-slate-100 text-slate-600'}`}
+                    >
+                      All (4)
+                    </button>
+                    <button 
+                      onClick={() => setLiveFleetFilter('in_session')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${liveFleetFilter === 'in_session' ? 'bg-[#6D3BFF] text-white' : 'bg-slate-100 text-slate-600'}`}
+                    >
+                      In Class (3)
+                    </button>
+                    <button 
+                      onClick={() => setLiveFleetFilter('en_route')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${liveFleetFilter === 'en_route' ? 'bg-[#6D3BFF] text-white' : 'bg-slate-100 text-slate-600'}`}
+                    >
+                      Pickup (1)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    {
+                      trainer: "Coach Rajesh Kumar",
+                      phone: "+91 98765 43210",
+                      car: "Maruti Swift Dzire (OD-02-AK-9821)",
+                      carType: "Sedan (Manual)",
+                      student: "Ananya Das",
+                      studentPhone: "+91 94371 88291",
+                      pickupLocation: "Plot 12, Saheed Nagar Main Road, Bhubaneswar",
+                      currentArea: "Master Canteen / Station Square",
+                      speed: "28 km/h",
+                      status: "In Practical Session",
+                      statusColor: "bg-emerald-100 text-emerald-800",
+                      drill: "Reverse S-Curve & Parallel Parking Drill",
+                      timeLeft: "24 mins remaining",
+                      battery: "82%"
+                    },
+                    {
+                      trainer: "Coach Subhash Mohanty",
+                      phone: "+91 98765 43211",
+                      car: "Hyundai Grand i10 (OD-02-BW-4412)",
+                      carType: "Hatchback (Manual)",
+                      student: "Rahul Nayak",
+                      studentPhone: "+91 98610 33492",
+                      pickupLocation: "KIIT Square, Near Campus 6, Patia",
+                      currentArea: "Infocity Road, Patia",
+                      speed: "34 km/h",
+                      status: "In Practical Session",
+                      statusColor: "bg-emerald-100 text-emerald-800",
+                      drill: "Highway 4th Gear Acceleration & Overtaking",
+                      timeLeft: "18 mins remaining",
+                      battery: "74%"
+                    },
+                    {
+                      trainer: "Coach Priya Pattnaik",
+                      phone: "+91 98765 43212",
+                      car: "Maruti Wagon R (OD-02-CP-8831)",
+                      carType: "Hatchback (Automatic)",
+                      student: "Sneha Mohapatra",
+                      studentPhone: "+91 97780 11928",
+                      pickupLocation: "Near Khandagiri Caves, Jagamara",
+                      currentArea: "Jagamara Overbridge incline",
+                      speed: "0 km/h (Drill Station)",
+                      status: "In Practical Session",
+                      statusColor: "bg-emerald-100 text-emerald-800",
+                      drill: "Incline Hill-Start & Handbrake Rollback Prevention",
+                      timeLeft: "32 mins remaining",
+                      battery: "91%"
+                    },
+                    {
+                      trainer: "Coach Deepak Jena",
+                      phone: "+91 98765 43213",
+                      car: "Maruti Baleno (OD-02-DX-1290)",
+                      carType: "Premium Hatchback (Manual)",
+                      student: "Amit Senapati",
+                      studentPhone: "+91 99372 44102",
+                      pickupLocation: "VIP Road, Near Mayfair, Nayapalli",
+                      currentArea: "CRPF Square towards Fire Station",
+                      speed: "22 km/h",
+                      status: "Pickup En Route",
+                      statusColor: "bg-blue-100 text-blue-800",
+                      drill: "City Peak-Hour Traffic & Roundabout Navigation",
+                      timeLeft: "15 mins remaining",
+                      battery: "68%"
+                    }
+                  ].map((item, idx) => (
+                    <div key={idx} className="border border-slate-100 bg-[#F8F9FF] rounded-2xl p-5 flex flex-col justify-between gap-4 hover:border-slate-300 transition-all shadow-sm">
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Car className="w-4 h-4 text-[#6D3BFF]" />
+                            <h4 className="font-black text-sm text-[#161623]">{item.trainer}</h4>
+                          </div>
+                          <span className={`text-[9.5px] font-black px-2.5 py-0.5 rounded-full uppercase ${item.statusColor}`}>
+                            {item.status}
+                          </span>
+                        </div>
+
+                        <div className="bg-white p-3 rounded-xl border border-slate-100 space-y-1.5 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400 font-bold">Vehicle:</span>
+                            <span className="font-black text-[#161623]">{item.car}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400 font-bold">Active Learner:</span>
+                            <span className="font-black text-[#6D3BFF]">{item.student}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400 font-bold">Current Speed:</span>
+                            <span className="font-bold text-slate-700">{item.speed}</span>
+                          </div>
+                          <div className="flex items-start justify-between gap-2 pt-1 border-t border-slate-100">
+                            <span className="text-slate-400 font-bold shrink-0">Pickup Point:</span>
+                            <span className="text-[11px] font-medium text-slate-600 text-right">{item.pickupLocation}</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-[#6D3BFF]/5 p-2.5 rounded-xl border border-[#6D3BFF]/15 text-[11px] text-[#6D3BFF] font-semibold flex items-center justify-between">
+                          <span>🎯 {item.drill}</span>
+                          <span className="font-bold text-slate-500">{item.timeLeft}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 border-t border-slate-200/60 pt-3">
+                        <button
+                          onClick={() => {
+                            setTrackingPingedTrainer(item.trainer);
+                            showToast(`GPS ping sent to ${item.trainer}. Telemetry refreshed.`);
+                          }}
+                          className="flex-1 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs py-2 rounded-xl border border-slate-200 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <Navigation className="w-3.5 h-3.5 text-cyan-600" /> Ping Car
+                        </button>
+                        <button
+                          onClick={() => {
+                            showToast(`Calling ${item.trainer} (${item.phone})...`);
+                          }}
+                          className="flex-1 bg-[#161623] hover:bg-slate-800 text-white font-bold text-xs py-2 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <PhoneCall className="w-3.5 h-3.5 text-[#D4AF37]" /> Call Coach
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: ATTENDANCE & SESSION LOGS */}
+          {activeTab === 'attendance' && (
+            <div className="flex flex-col gap-6 animate-fadeIn">
+              {/* Header card */}
+              <div className="bg-white border border-slate-100 p-6 rounded-3xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <CheckSquare className="w-6 h-6 text-blue-600" />
+                    <h2 className="text-lg font-black text-[#161623]">Attendance & Practical Session Ledger</h2>
+                    <span className="bg-blue-100 text-blue-800 text-[10px] font-black px-2.5 py-0.5 rounded-full">
+                      RTO Audit Logged
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Complete verification record of practical driving sessions with instructor signatures, photo verification timestamps, and learner completion progress.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const csvContent = "data:text/csv;charset=utf-8," + 
+                        ["Student Name,Roll No,Session,Date,Time,Trainer,Vehicle,Photo Verification,Status"].join(",") + "\n" +
+                        [
+                          "Ananya Das,GH-1092,Session 7 of 15,2026-08-14,07:00 AM,Rajesh Kumar,Swift Dzire OD-02-AK-9821,Verified (Geo-tagged),Present",
+                          "Rahul Nayak,GH-1044,Session 12 of 15,2026-08-14,08:00 AM,Subhash Mohanty,i10 OD-02-BW-4412,Verified (Geo-tagged),Present",
+                          "Sneha Mohapatra,GH-1108,Session 4 of 15,2026-08-14,09:00 AM,Priya Pattnaik,Wagon R OD-02-CP-8831,Verified (Geo-tagged),Present",
+                          "Amit Senapati,GH-1077,Session 15 of 15 (Final),2026-08-13,05:00 PM,Deepak Jena,Baleno OD-02-DX-1290,Verified (Graduated),Completed"
+                        ].join("\n");
+                      const encodedUri = encodeURI(csvContent);
+                      const link = document.createElement("a");
+                      link.setAttribute("href", encodedUri);
+                      link.setAttribute("download", "GoldenHands_Attendance_Audit_Log.csv");
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                      showToast("Attendance Ledger exported to CSV successfully.");
+                    }}
+                    className="bg-slate-900 hover:bg-slate-800 text-white font-black text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md transition-all"
+                  >
+                    <Download className="w-3.5 h-3.5 text-[#D4AF37]" /> Export Attendance CSV
+                  </button>
+                </div>
+              </div>
+
+              {/* Attendance KPI Cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Total Sessions Logged</span>
+                  <span className="text-xl font-black text-[#161623]">384 Hours</span>
+                  <p className="text-[10px] text-emerald-600 font-bold mt-1">↑ 100% compliant with RTO</p>
+                </div>
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Photo-Verified Rate</span>
+                  <span className="text-xl font-black text-emerald-600">100.0%</span>
+                  <p className="text-[10px] text-slate-400 mt-1">All classes camera stamped</p>
+                </div>
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Today's Class Attendance</span>
+                  <span className="text-xl font-black text-[#6D3BFF]">16 / 16</span>
+                  <p className="text-[10px] text-emerald-600 font-bold mt-1">0 Cancellations</p>
+                </div>
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Avg Practical Score</span>
+                  <span className="text-xl font-black text-amber-600">4.9 / 5.0</span>
+                  <p className="text-[10px] text-slate-400 mt-1">Evaluated by certified coaches</p>
+                </div>
+              </div>
+
+              {/* Attendance Roster Table */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                  <div className="relative flex-1 max-w-sm">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Filter by student name or roll #..."
+                      value={attendanceStudentFilter}
+                      onChange={(e) => setAttendanceStudentFilter(e.target.value)}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl pl-9.5 pr-3 py-2 text-xs text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={attendanceTrainerFilter}
+                      onChange={(e) => setAttendanceTrainerFilter(e.target.value)}
+                      className="bg-[#F8F9FF] border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none"
+                    >
+                      <option value="all">All Instructors</option>
+                      <option value="Rajesh">Coach Rajesh Kumar</option>
+                      <option value="Subhash">Coach Subhash Mohanty</option>
+                      <option value="Priya">Coach Priya Pattnaik</option>
+                      <option value="Deepak">Coach Deepak Jena</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                        <th className="py-3 px-3">Student & Roll No</th>
+                        <th className="py-3 px-3">Class Session</th>
+                        <th className="py-3 px-3">Instructor & Vehicle</th>
+                        <th className="py-3 px-3">Date & Slot</th>
+                        <th className="py-3 px-3">Photo & Geo Proof</th>
+                        <th className="py-3 px-3 text-right">Attendance Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-xs font-medium">
+                      {[
+                        {
+                          name: "Ananya Das",
+                          roll: "GH-1092",
+                          avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
+                          session: "Session 7 / 15",
+                          progress: "46%",
+                          trainer: "Coach Rajesh Kumar",
+                          car: "Swift Dzire (OD-02-AK-9821)",
+                          date: "Today (14 Aug 2026)",
+                          time: "07:00 AM – 07:45 AM",
+                          location: "Saheed Nagar Track",
+                          status: "Verified Present",
+                          statusColor: "bg-emerald-100 text-emerald-800"
+                        },
+                        {
+                          name: "Rahul Nayak",
+                          roll: "GH-1044",
+                          avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=200",
+                          session: "Session 12 / 15",
+                          progress: "80%",
+                          trainer: "Coach Subhash Mohanty",
+                          car: "Hyundai i10 (OD-02-BW-4412)",
+                          date: "Today (14 Aug 2026)",
+                          time: "08:00 AM – 08:45 AM",
+                          location: "KIIT Patia Circuit",
+                          status: "Verified Present",
+                          statusColor: "bg-emerald-100 text-emerald-800"
+                        },
+                        {
+                          name: "Sneha Mohapatra",
+                          roll: "GH-1108",
+                          avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=200",
+                          session: "Session 4 / 15",
+                          progress: "27%",
+                          trainer: "Coach Priya Pattnaik",
+                          car: "Wagon R (OD-02-CP-8831)",
+                          date: "Today (14 Aug 2026)",
+                          time: "09:00 AM – 09:45 AM",
+                          location: "Khandagiri Incline Track",
+                          status: "Verified Present",
+                          statusColor: "bg-emerald-100 text-emerald-800"
+                        },
+                        {
+                          name: "Amit Senapati",
+                          roll: "GH-1077",
+                          avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200",
+                          session: "Session 15 / 15 (Graduation)",
+                          progress: "100%",
+                          trainer: "Coach Deepak Jena",
+                          car: "Maruti Baleno (OD-02-DX-1290)",
+                          date: "Yesterday (13 Aug 2026)",
+                          time: "05:00 PM – 05:45 PM",
+                          location: "Nayapalli VIP Circuit",
+                          status: "Course Completed",
+                          statusColor: "bg-purple-100 text-purple-800"
+                        }
+                      ].filter(item => {
+                        if (attendanceStudentFilter.trim()) {
+                          const q = attendanceStudentFilter.toLowerCase();
+                          if (!item.name.toLowerCase().includes(q) && !item.roll.toLowerCase().includes(q)) return false;
+                        }
+                        if (attendanceTrainerFilter !== "all" && !item.trainer.includes(attendanceTrainerFilter)) {
+                          return false;
+                        }
+                        return true;
+                      }).map((row, rIdx) => (
+                        <tr key={rIdx} className="hover:bg-[#F8F9FF] transition-all">
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-2.5">
+                              <img src={row.avatar} alt={row.name} className="w-8 h-8 rounded-full object-cover border border-slate-200" />
+                              <div>
+                                <span className="font-black text-[#161623] block">{row.name}</span>
+                                <span className="text-[10px] text-slate-400 font-bold">{row.roll}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="font-bold text-[#6D3BFF] block">{row.session}</span>
+                            <span className="text-[10px] text-slate-400">Progress: {row.progress}</span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="font-bold text-slate-800 block">{row.trainer}</span>
+                            <span className="text-[10px] text-slate-400">{row.car}</span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="font-bold text-slate-700 block">{row.date}</span>
+                            <span className="text-[10px] text-slate-400">{row.time}</span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                              <Camera className="w-3 h-3 text-emerald-600" /> Geo-Stamped ({row.location})
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <span className={`text-[9.5px] font-black px-2.5 py-0.5 rounded-full uppercase ${row.statusColor}`}>
+                              {row.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: NOTIFICATIONS & BROADCAST CENTER */}
+          {activeTab === 'notifications' && (
+            <div className="flex flex-col gap-6 animate-fadeIn">
+              {/* Header card */}
+              <div className="bg-white border border-slate-100 p-6 rounded-3xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <Bell className="w-6 h-6 text-violet-600" />
+                    <h2 className="text-lg font-black text-[#161623]">Notifications & Broadcast Gateway</h2>
+                    <span className="bg-violet-100 text-violet-800 text-[10px] font-black px-2.5 py-0.5 rounded-full">
+                      Push • SMS • WhatsApp
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Send urgent announcements, weather/monsoon driving advisories, RTO holiday schedules, and document upload reminders to students and instructors.
+                  </p>
+                </div>
+
+                <div className="bg-violet-50 border border-violet-100 px-4 py-2 rounded-2xl flex items-center gap-2 shrink-0">
+                  <Send className="w-4 h-4 text-violet-600" />
+                  <span className="text-xs font-bold text-violet-900">128 Active Students Connected</span>
+                </div>
+              </div>
+
+              {/* Broadcast Composer */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col gap-5">
+                <h3 className="text-base font-black text-[#161623] flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#D4AF37]" /> Create New Broadcast Announcement
+                </h3>
+
+                {/* Preset Fast-Template Buttons */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Quick Announcement Presets:</span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBroadcastSubject("🌧️ Monsoon Driving Advisory: Wet Roads in Bhubaneswar");
+                        setBroadcastMessage("Dear Students & Trainers, heavy rains are expected today in Bhubaneswar. Drive at moderate speeds, maintain a 3-car safety gap, and turn on headlights during your practical class.");
+                        setBroadcastTarget("all_students");
+                      }}
+                      className="bg-[#F8F9FF] hover:bg-violet-50 hover:text-violet-700 text-slate-600 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-200 transition-all cursor-pointer"
+                    >
+                      🌧️ Rain & Weather Advisory
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBroadcastSubject("🏛️ Odisha RTO OD-02 Holiday Testing Notice");
+                        setBroadcastMessage("Notice: Bhubaneswar II RTO driving test track will remain closed this upcoming government holiday. All scheduled RTO test appointments have been safely moved to next Monday.");
+                        setBroadcastTarget("dl_applicants");
+                      }}
+                      className="bg-[#F8F9FF] hover:bg-violet-50 hover:text-violet-700 text-slate-600 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-200 transition-all cursor-pointer"
+                    >
+                      🏛️ RTO Holiday Notice
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBroadcastSubject("🪪 Upload Aadhaar Card to Activate Slot Booking");
+                        setBroadcastMessage("Reminder: Please upload a clear photo of your Aadhaar Card in the Documents tab. Once verified by admin, all daily practice slots will be unlocked instantly.");
+                        setBroadcastTarget("pending_docs");
+                      }}
+                      className="bg-[#F8F9FF] hover:bg-violet-50 hover:text-violet-700 text-slate-600 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-200 transition-all cursor-pointer"
+                    >
+                      🪪 Aadhaar Verification Reminder
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBroadcastSubject("🚗 Weekend Practice Driving Slots Are Live!");
+                        setBroadcastMessage("New Saturday & Sunday driving slots with Coach Rajesh and Coach Subhash are now open for reservations. Book your preferred time before capacity fills up.");
+                        setBroadcastTarget("all_students");
+                      }}
+                      className="bg-[#F8F9FF] hover:bg-violet-50 hover:text-violet-700 text-slate-600 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-200 transition-all cursor-pointer"
+                    >
+                      🚗 New Slots Open Notice
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Target Audience</label>
+                    <select
+                      value={broadcastTarget}
+                      onChange={(e) => setBroadcastTarget(e.target.value as any)}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#6D3BFF]"
+                    >
+                      <option value="all_students">All Registered Students (128)</option>
+                      <option value="all_trainers">All Certified Instructors (4)</option>
+                      <option value="dl_applicants">Driving Licence Applicants (14)</option>
+                      <option value="pending_docs">Students with Pending Documents (6)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Broadcast Channels</label>
+                    <select
+                      value={broadcastChannel}
+                      onChange={(e) => setBroadcastChannel(e.target.value as any)}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#6D3BFF]"
+                    >
+                      <option value="all">All Channels (In-App Push + SMS + WhatsApp)</option>
+                      <option value="push">In-App Push Alert Only</option>
+                      <option value="sms">SMS Gateway Only</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Announcement Subject</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Monsoon Driving Advisory: Rain precautions in Bhubaneswar"
+                    value={broadcastSubject}
+                    onChange={(e) => setBroadcastSubject(e.target.value)}
+                    className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-[#161623] font-bold focus:outline-none focus:border-[#6D3BFF]"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Message Content</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Type the message body to be broadcasted instantly..."
+                    value={broadcastMessage}
+                    onChange={(e) => setBroadcastMessage(e.target.value)}
+                    className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl p-3.5 text-xs text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => {
+                      if (!broadcastSubject.trim() || !broadcastMessage.trim()) {
+                        showToast("Please enter both subject and message content.");
+                        return;
+                      }
+
+                      const newLog = {
+                        id: `bc-${Date.now()}`,
+                        subject: broadcastSubject,
+                        message: broadcastMessage,
+                        target: broadcastTarget === 'all_students' ? 'All Enrolled Students (128)' : broadcastTarget === 'all_trainers' ? 'All Active Trainers (4)' : broadcastTarget === 'dl_applicants' ? 'DL Applicants (14)' : 'Pending Docs (6)',
+                        channel: broadcastChannel === 'all' ? 'Push + SMS + WhatsApp' : broadcastChannel.toUpperCase(),
+                        date: 'Just now',
+                        sentBy: 'System Administrator',
+                        count: broadcastTarget === 'all_students' ? 128 : broadcastTarget === 'all_trainers' ? 4 : 14
+                      };
+
+                      setBroadcastLogs([newLog, ...broadcastLogs]);
+                      setBroadcastSubject("");
+                      setBroadcastMessage("");
+                      showToast(`Broadcast successfully sent to ${newLog.target}!`);
+                    }}
+                    className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white font-black text-xs px-6 py-3 rounded-xl shadow-lg shadow-[#6D3BFF]/25 flex items-center gap-2 cursor-pointer transition-all active:scale-95"
+                  >
+                    <Send className="w-4 h-4" /> Send Instant Broadcast
+                  </button>
+                </div>
+              </div>
+
+              {/* Broadcast Sent History */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+                <h3 className="text-base font-black text-[#161623]">Broadcast Activity History</h3>
+                <div className="space-y-3">
+                  {broadcastLogs.map((log) => (
+                    <div key={log.id} className="border border-slate-100 bg-[#F8F9FF] rounded-2xl p-4.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-black text-sm text-[#161623]">{log.subject}</h4>
+                          <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-2 py-0.5 rounded-full uppercase">
+                            Delivered 100%
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed">{log.message}</p>
+                        <div className="flex items-center gap-3 text-[10px] text-slate-400 flex-wrap pt-1">
+                          <span>🎯 Target: <strong>{log.target}</strong></span>
+                          <span>•</span>
+                          <span>📡 Channel: <strong>{log.channel}</strong></span>
+                          <span>•</span>
+                          <span>🕒 {log.date} by {log.sentBy}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: REPORTS & EXPORT CENTER */}
+          {activeTab === 'reports' && (
+            <div className="flex flex-col gap-6 animate-fadeIn">
+              {/* Header card */}
+              <div className="bg-white border border-slate-100 p-6 rounded-3xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <FileSpreadsheet className="w-6 h-6 text-amber-600" />
+                    <h2 className="text-lg font-black text-[#161623]">Reports, Analytics & RTO Audit Center</h2>
+                    <span className="bg-amber-100 text-amber-800 text-[10px] font-black px-2.5 py-0.5 rounded-full">
+                      OD-02 Compliant
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Comprehensive performance summaries, passing rates, driver training milestones, and 1-click universal CSV exports for regulatory inspection.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-500 bg-[#F8F9FF] px-3.5 py-2 rounded-xl border border-slate-200">
+                    Academic Year 2026 – 2027
+                  </span>
+                </div>
+              </div>
+
+              {/* RTO & Performance Metrics */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">First-Attempt DL Pass Rate</span>
+                  <span className="text-2xl font-black text-emerald-600">96.8%</span>
+                  <p className="text-[10px] text-slate-400 mt-1">Odisha RTO OD-02 Track Benchmark</p>
+                </div>
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Course Completion Rate</span>
+                  <span className="text-2xl font-black text-[#6D3BFF]">98.4%</span>
+                  <p className="text-[10px] text-slate-400 mt-1">Avg 14.8/15 practical sessions</p>
+                </div>
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Total Training Distance</span>
+                  <span className="text-2xl font-black text-blue-600">12,480 KM</span>
+                  <p className="text-[10px] text-slate-400 mt-1">Bhubaneswar GPS Tracked</p>
+                </div>
+                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Gross Fee Revenue</span>
+                  <span className="text-2xl font-black text-[#D4AF37]">₹1,84,500</span>
+                  <p className="text-[10px] text-slate-400 mt-1">100% Tax & GST Recorded</p>
+                </div>
+              </div>
+
+              {/* Universal 1-Click Export Center */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+                <div>
+                  <h3 className="text-base font-black text-[#161623]">Universal Data Export Desk</h3>
+                  <p className="text-xs text-slate-400">Download formatted CSV datasets ready for RTO compliance audits and internal book-keeping.</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+                  {[
+                    {
+                      title: "Student Master Directory",
+                      desc: "Full database of registered learners, contact info, Aadhaar verification status, and package tier.",
+                      filename: "GoldenHands_Students_Master_Directory.csv",
+                      data: "Student ID,Name,Phone,Email,Aadhaar Status,Course,Fee Paid\nGH-1092,Ananya Das,+91 9437188291,ananya@email.com,Verified,Standard Package,7200\nGH-1044,Rahul Nayak,+91 9861033492,rahul@email.com,Verified,Premium Package,9800\nGH-1108,Sneha Mohapatra,+91 9778011928,sneha@email.com,Verified,Basic Package,4500",
+                      icon: <Users className="w-5 h-5 text-blue-600" />
+                    },
+                    {
+                      title: "Driving Class & Booking Logs",
+                      desc: "History of scheduled sessions, vehicle allocation, instructor assignments, and completion states.",
+                      filename: "GoldenHands_Class_Bookings_Log.csv",
+                      data: "Booking ID,Student,Date,Slot Time,Instructor,Vehicle Plate,Status\nBK-101,Ananya Das,2026-08-14,07:00 AM,Rajesh Kumar,OD-02-AK-9821,Completed\nBK-102,Rahul Nayak,2026-08-14,08:00 AM,Subhash Mohanty,OD-02-BW-4412,Completed\nBK-103,Sneha Mohapatra,2026-08-14,09:00 AM,Priya Pattnaik,OD-02-CP-8831,Completed",
+                      icon: <Calendar className="w-5 h-5 text-indigo-600" />
+                    },
+                    {
+                      title: "Financial Payments & Fees",
+                      desc: "Accounting ledger of payments, UPI/Cash receipts, invoice numbers, and syllabus modification fees.",
+                      filename: "GoldenHands_Financial_Payments_Ledger.csv",
+                      data: "Receipt ID,Student,Amount,Mode,Reference,Date,Status\nPAY-8821,Ananya Das,7200,UPI,UPI-99281726,2026-08-01,Success\nPAY-8822,Rahul Nayak,9800,NetBanking,NB-44810293,2026-08-02,Success\nPAY-8823,Sneha Mohapatra,4500,Cash,REC-10928,2026-08-03,Success",
+                      icon: <IndianRupee className="w-5 h-5 text-emerald-600" />
+                    },
+                    {
+                      title: "Odisha RTO DL Applications",
+                      desc: "Odisha RTO OD-02 licence application registry, Learner Licence numbers, and test clearance dates.",
+                      filename: "GoldenHands_RTO_DL_Applications.csv",
+                      data: "Application ID,Student Name,RTO Zone,LL Number,DL Type,Status\nDL-OD02-001,Ananya Das,OD-02 Bhubaneswar II,OD02/LL/2026/0921,LMV (Car),Approved\nDL-OD02-002,Rahul Nayak,OD-02 Bhubaneswar II,OD02/LL/2026/0442,LMV + MCWG,Approved\nDL-OD02-003,Amit Senapati,OD-02 Bhubaneswar II,OD02/LL/2026/1077,LMV (Car),RTO Passed",
+                      icon: <FileCheck className="w-5 h-5 text-[#D4AF37]" />
+                    },
+                    {
+                      title: "Attendance & Geo-Proof Log",
+                      desc: "Instructor geo-tagged attendance records, timestamps, and camera verification audit logs.",
+                      filename: "GoldenHands_Attendance_GeoLogs.csv",
+                      data: "Session ID,Student,Date,Instructor,GPS Location,Camera Proof,Status\nATT-01,Ananya Das,2026-08-14,Rajesh Kumar,Saheed Nagar Track,Yes (Camera),Verified\nATT-02,Rahul Nayak,2026-08-14,Subhash Mohanty,KIIT Patia Circuit,Yes (Camera),Verified\nATT-03,Sneha Mohapatra,2026-08-14,Priya Pattnaik,Khandagiri Track,Yes (Camera),Verified",
+                      icon: <CheckSquare className="w-5 h-5 text-teal-600" />
+                    },
+                    {
+                      title: "Certified Instructors Index",
+                      desc: "Trainer certification details, vehicle assignments, student review averages, and active status.",
+                      filename: "GoldenHands_Instructors_Directory.csv",
+                      data: "Trainer ID,Name,Phone,Assigned Vehicle,Rating,Active Students\nTR-01,Rajesh Kumar,+91 9876543210,Maruti Swift Dzire (OD-02-AK-9821),4.9,32\nTR-02,Subhash Mohanty,+91 9876543211,Hyundai Grand i10 (OD-02-BW-4412),4.8,30\nTR-03,Priya Pattnaik,+91 9876543212,Maruti Wagon R (OD-02-CP-8831),4.9,28\nTR-04,Deepak Jena,+91 9876543213,Maruti Baleno (OD-02-DX-1290),4.7,26",
+                      icon: <Car className="w-5 h-5 text-purple-600" />
+                    }
+                  ].map((exportItem, eIdx) => (
+                    <div key={eIdx} className="border border-slate-100 bg-[#F8F9FF] rounded-2xl p-4.5 flex flex-col justify-between gap-3 hover:border-slate-300 transition-all">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8.5 h-8.5 rounded-xl bg-white shadow-sm flex items-center justify-center border border-slate-100 shrink-0">
+                            {exportItem.icon}
+                          </div>
+                          <h4 className="font-black text-xs text-[#161623]">{exportItem.title}</h4>
+                        </div>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">{exportItem.desc}</p>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          const csvContent = "data:text/csv;charset=utf-8," + exportItem.data;
+                          const encodedUri = encodeURI(csvContent);
+                          const link = document.createElement("a");
+                          link.setAttribute("href", encodedUri);
+                          link.setAttribute("download", exportItem.filename);
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                          showToast(`Exported ${exportItem.title} to CSV successfully.`);
+                        }}
+                        className="w-full bg-white hover:bg-slate-100 text-slate-800 font-bold text-xs py-2 rounded-xl border border-slate-200 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition-all active:scale-95"
+                      >
+                        <Download className="w-3.5 h-3.5 text-[#6D3BFF]" />
+                        <span>Download .CSV</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: SYSTEM SETTINGS & RTO CONFIG */}
+          {activeTab === 'settings' && (
+            <div className="flex flex-col gap-6 animate-fadeIn">
+              {/* Header card */}
+              <div className="bg-white border border-slate-100 p-6 rounded-3xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <SettingsIcon className="w-6 h-6 text-slate-700" />
+                    <h2 className="text-lg font-black text-[#161623]">Academy Settings & RTO Configuration</h2>
+                    <span className="bg-slate-100 text-slate-800 text-[10px] font-black px-2.5 py-0.5 rounded-full">
+                      System Control
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Manage driving school institute credentials, operating hours, slot capacities, pricing tiers, and database cloud synchronization.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      showToast("All Academy settings saved successfully!");
+                    }}
+                    className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white font-black text-xs px-5 py-2.5 rounded-xl shadow-md shadow-[#6D3BFF]/20 flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Check className="w-4 h-4" /> Save Configuration
+                  </button>
+                </div>
+              </div>
+
+              {/* Section 1: Institute Profile */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+                <span className="text-[10px] font-black uppercase text-[#6D3BFF] tracking-wider block border-b border-slate-100 pb-2">
+                  1. Academy Profile & RTO Registration
+                </span>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Academy Name</label>
+                    <input
+                      type="text"
+                      value={settingsData.schoolName}
+                      onChange={(e) => setSettingsData({ ...settingsData, schoolName: e.target.value })}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">RTO Zone Jurisdiction</label>
+                    <input
+                      type="text"
+                      value={settingsData.rtoZone}
+                      onChange={(e) => setSettingsData({ ...settingsData, rtoZone: e.target.value })}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Odisha RTO Driving School Reg. No</label>
+                    <input
+                      type="text"
+                      value={settingsData.rtoRegNo}
+                      onChange={(e) => setSettingsData({ ...settingsData, rtoRegNo: e.target.value })}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Official Contact Phone</label>
+                    <input
+                      type="text"
+                      value={settingsData.phone}
+                      onChange={(e) => setSettingsData({ ...settingsData, phone: e.target.value })}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Physical Training Facility Address</label>
+                    <input
+                      type="text"
+                      value={settingsData.address}
+                      onChange={(e) => setSettingsData({ ...settingsData, address: e.target.value })}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: Operational Hours & Capacities */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+                <span className="text-[10px] font-black uppercase text-[#6D3BFF] tracking-wider block border-b border-slate-100 pb-2">
+                  2. Operational Hours & Booking Capacities
+                </span>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Daily Opening Time</label>
+                    <input
+                      type="time"
+                      value={settingsData.openingTime}
+                      onChange={(e) => setSettingsData({ ...settingsData, openingTime: e.target.value })}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Daily Closing Time</label>
+                    <input
+                      type="time"
+                      value={settingsData.closingTime}
+                      onChange={(e) => setSettingsData({ ...settingsData, closingTime: e.target.value })}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Slot Duration (Mins)</label>
+                    <input
+                      type="number"
+                      value={settingsData.slotDurationMins}
+                      onChange={(e) => setSettingsData({ ...settingsData, slotDurationMins: Number(e.target.value) })}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">Default Slot Capacity</label>
+                    <input
+                      type="number"
+                      value={settingsData.defaultSlotCapacity}
+                      onChange={(e) => setSettingsData({ ...settingsData, defaultSlotCapacity: Number(e.target.value) })}
+                      className="w-full bg-[#F8F9FF] border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 3: Course Pricing & Database Controls */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+                  <span className="text-[10px] font-black uppercase text-[#6D3BFF] tracking-wider block border-b border-slate-100 pb-2">
+                    3. Course Pricing Structure (₹)
+                  </span>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-600">Basic 15-Day Course:</span>
+                      <input
+                        type="number"
+                        value={settingsData.basicCourseFee}
+                        onChange={(e) => setSettingsData({ ...settingsData, basicCourseFee: Number(e.target.value) })}
+                        className="w-28 bg-[#F8F9FF] border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-black text-right focus:outline-none focus:border-[#6D3BFF]"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-600">Standard 20-Day Course:</span>
+                      <input
+                        type="number"
+                        value={settingsData.standardCourseFee}
+                        onChange={(e) => setSettingsData({ ...settingsData, standardCourseFee: Number(e.target.value) })}
+                        className="w-28 bg-[#F8F9FF] border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-black text-right focus:outline-none focus:border-[#6D3BFF]"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-600">VIP Premium 30-Day Course:</span>
+                      <input
+                        type="number"
+                        value={settingsData.premiumCourseFee}
+                        onChange={(e) => setSettingsData({ ...settingsData, premiumCourseFee: Number(e.target.value) })}
+                        className="w-28 bg-[#F8F9FF] border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-black text-right focus:outline-none focus:border-[#6D3BFF]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col justify-between gap-4">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-[#6D3BFF] tracking-wider block border-b border-slate-100 pb-2">
+                      4. Cloud Database & Sync
+                    </span>
+                    <div className="space-y-2 mt-3 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 font-bold">Database Engine:</span>
+                        <span className="font-black text-[#161623]">Firestore + MockDatabase</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 font-bold">Cloud Sync Status:</span>
+                        <span className="text-emerald-600 font-black flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Online & Synchronized
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      showToast("Forced full cloud synchronization. All student & document records updated.");
+                    }}
+                    className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Database className="w-3.5 h-3.5 text-[#D4AF37]" /> Force Immediate Cloud Sync
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </main>
       </div>
 
@@ -4260,7 +5772,23 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-1">
+                  <label className="flex items-center gap-2 p-2.5 rounded-xl border border-emerald-100 bg-emerald-50/50 hover:bg-emerald-50 cursor-pointer select-none">
+                    <input 
+                      type="checkbox" 
+                      checked={studentIsAadharVerified}
+                      onChange={(e) => {
+                        setStudentIsAadharVerified(e.target.checked);
+                        setStudentAadharStatus(e.target.checked ? "Verified" : "Pending");
+                      }}
+                      className="w-4 h-4 text-emerald-600 border-emerald-300 rounded focus:ring-emerald-500 cursor-pointer"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-extrabold text-[#161623]">Aadhaar Verified</span>
+                      <span className="text-[8px] text-emerald-600 font-medium">{studentIsAadharVerified ? "Approved Profile" : "Requires Upload"}</span>
+                    </div>
+                  </label>
+
                   <label className="flex items-center gap-2 p-2.5 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 cursor-pointer select-none">
                     <input 
                       type="checkbox" 
