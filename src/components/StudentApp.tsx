@@ -50,6 +50,7 @@ import { Booking, ChatMessage, Document, MockTestAttempt, Payment, SlotDay, NavS
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import { MOCK_TEST_QUESTIONS, MockDatabase } from "../utils/db";
 import { LiveTrackingMap } from "./LiveTrackingMap";
+import PullToRefresh from "./PullToRefresh";
 import { calculateDistanceKm, calculateEtaMinutes, formatTimeAgo, DEFAULT_BHUBANESWAR_LOCATION, getCoordinatesFromLocation } from "../utils/geo";
 import { auth, db } from "../utils/firebase";
 import {
@@ -1689,6 +1690,25 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       clearInterval(syncInterval);
     };
   }, []);
+
+  // Pull-to-refresh data sync handler on mobile view
+  const handlePullToRefresh = async () => {
+    try {
+      console.log("[StudentApp] Pull-to-refresh triggered: synchronizing latest cloud records...");
+      await MockDatabase.syncFromCloud();
+      setStudent(MockDatabase.getStudent());
+      setProgress(MockDatabase.getProgress());
+      setBookings(MockDatabase.getBookings());
+      setTrainers(MockDatabase.getTrainers());
+      setDocuments(MockDatabase.getDocuments());
+      setPayments(MockDatabase.getPayments());
+      setChats(MockDatabase.getChats());
+      setAttempts(MockDatabase.getMockAttempts());
+      if (onStateChange) onStateChange();
+    } catch (err) {
+      console.warn("[StudentApp] Pull-to-refresh error:", err);
+    }
+  };
 
   // OTP Countdown timer
   useEffect(() => {
@@ -3606,8 +3626,12 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         </div>
       )}
 
-      {/* App Main Area (Scrollable body) */}
-      <div className="flex-1 overflow-y-auto scrollable-touch custom-scrollbar pb-24 pt-1">
+      {/* App Main Area (Scrollable body with Mobile Pull-To-Refresh) */}
+      <PullToRefresh
+        id="student-pull-to-refresh"
+        onRefresh={handlePullToRefresh}
+        className="flex-1 overflow-y-auto scrollable-touch custom-scrollbar pb-24 pt-1"
+      >
         {currentScreen === 'splash' && (
           <div className="h-full bg-gradient-to-br from-[#161623] to-[#252538] text-white p-6 flex flex-col justify-between text-center relative overflow-hidden">
             <div className="absolute top-[-50px] right-[-50px] w-64 h-64 bg-[#6D3BFF] opacity-20 rounded-full blur-3xl" />
@@ -7276,7 +7300,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
             )}
           </div>
         )}
-      </div>
+      </PullToRefresh>
 
       {/* Bottom Floating Navigation (Visible in main app screen) */}
       {currentScreen === 'app' && activeSubPage !== 'ai-coach' && (

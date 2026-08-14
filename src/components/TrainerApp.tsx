@@ -12,6 +12,7 @@ import { Booking, Student, SkillProgress, ChatMessage, Trainer, NavState, Tracki
 import { calculateDistanceKm, DEFAULT_BHUBANESWAR_LOCATION, getCoordinatesFromLocation } from "../utils/geo";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import { LiveTrackingMap } from "./LiveTrackingMap";
+import PullToRefresh from "./PullToRefresh";
 
 interface TrainerAppProps {
   onStateChange: () => void; // Sync changes with other views
@@ -417,6 +418,33 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     window.addEventListener("db-updated", handleDbUpdated);
     return () => window.removeEventListener("db-updated", handleDbUpdated);
   }, [selectedStudentId, selectedBooking]);
+
+  // Pull-to-refresh data sync handler for Trainer portal on mobile view
+  const handlePullToRefresh = async () => {
+    try {
+      console.log("[TrainerApp] Pull-to-refresh triggered: synchronizing latest records...");
+      await MockDatabase.syncFromCloud();
+      const allBookings = MockDatabase.getAllBookings();
+      setBookings(allBookings);
+      if (selectedBooking) {
+        const fresh = allBookings.find(b => b.id === selectedBooking.id);
+        if (fresh) setSelectedBooking(fresh);
+      }
+      const studentsList = MockDatabase.getRegisteredStudents();
+      let currentActiveId = selectedStudentId;
+      if (!currentActiveId && studentsList.length > 0) {
+        currentActiveId = studentsList[0].id;
+        setSelectedStudentId(currentActiveId);
+      }
+      setStudent(MockDatabase.getStudent(currentActiveId));
+      setProgress(MockDatabase.getProgress(currentActiveId));
+      setChats(MockDatabase.getChats(currentActiveId));
+      setTrainers(MockDatabase.getTrainers());
+      if (onStateChange) onStateChange();
+    } catch (err) {
+      console.warn("[TrainerApp] Pull-to-refresh error:", err);
+    }
+  };
 
   // Back navigation support: Sync local states when parent navigation state updates
   useEffect(() => {
@@ -987,8 +1015,13 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
         </div>
       )}
 
-      {/* Main content body */}
-      <div className="flex-1 overflow-y-auto scrollable-touch custom-scrollbar custom-scrollbar-dark pb-24 pt-1">
+      {/* Main content body (with Mobile Pull-to-Refresh) */}
+      <PullToRefresh
+        id="trainer-pull-to-refresh"
+        onRefresh={handlePullToRefresh}
+        dark={true}
+        className="flex-1 overflow-y-auto scrollable-touch custom-scrollbar custom-scrollbar-dark pb-24 pt-1"
+      >
         {selectedBooking ? (
           <div className="p-5 animate-fadeIn flex flex-col gap-4 max-w-lg mx-auto">
             {/* Header */}
@@ -1901,7 +1934,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
             )}
           </div>
         )}
-      </div>
+      </PullToRefresh>
 
       {/* Bottom Floating Navigation (Visible in main app screen) */}
       {!selectedBooking && (

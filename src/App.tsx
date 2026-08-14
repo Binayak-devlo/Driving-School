@@ -12,6 +12,7 @@ import TrainerApp from "./components/TrainerApp";
 import AdminDashboard from "./components/AdminDashboard";
 import SplashScreen from "./components/SplashScreen";
 import UnifiedAuthPortal from "./components/UnifiedAuthPortal";
+import PullToRefresh from "./components/PullToRefresh";
 import { MockDatabase } from "./utils/db";
 import { NavState } from "./types";
 
@@ -661,8 +662,19 @@ export default function App() {
       {/* Main Sandbox Workspace */}
       <main className="flex-1 overflow-hidden relative">
         {activeView === 'portal' && (
-          <div className="h-full overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 max-w-2xl mx-auto flex flex-col justify-center">
-            
+          <PullToRefresh
+            id="portal-pull-to-refresh"
+            onRefresh={async () => {
+              try {
+                console.log("[App] Portal pull-to-refresh: syncing cloud database...");
+                await MockDatabase.syncFromCloud();
+                handleStateChange();
+              } catch (err) {
+                console.warn("[App] Portal pull-to-refresh error:", err);
+              }
+            }}
+            className="h-full overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 max-w-2xl mx-auto flex flex-col justify-center"
+          >
             {/* Top Branding Section (Hidden on Mobile View per focus selection, visible on tablet/PC) */}
             <div className="hidden sm:block text-center mb-6 animate-fade-in">
               <span className="bg-[#6D3BFF]/10 text-[#6D3BFF] font-black text-[10px] uppercase tracking-widest px-4 py-1.5 rounded-full border border-[#6D3BFF]/15 inline-block">
@@ -729,7 +741,7 @@ export default function App() {
                 <span className="font-bold text-slate-500 uppercase text-[10px]">Real-time syncing engine online</span>
               </div>
             </div>
-          </div>
+          </PullToRefresh>
         )}
 
         {/* 1. Student Standalone Screen View */}

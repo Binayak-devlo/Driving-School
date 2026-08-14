@@ -15,6 +15,7 @@ import { MockDatabase } from "../utils/db";
 import { Student, Trainer, Booking, Document, Payment, SkillProgress, Review, SlotDay, NavState, DrivingLicenceApplication, DrivingLicenceDocumentItem } from "../types";
 import { compressImageIfNeeded, STUDENT_AVATAR_PRESETS, TRAINER_AVATAR_PRESETS, CAR_AVATAR_PRESETS } from "../utils/imageUtils";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
+import PullToRefresh from "./PullToRefresh";
 
 export type AdminTabType = 
   | 'analytics' 
@@ -430,6 +431,27 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       window.removeEventListener("storage", handleDbUpdated);
     };
   }, []);
+
+  // Pull-to-refresh handler on mobile/tablet view for Admin Dashboard
+  const handlePullToRefresh = async () => {
+    try {
+      console.log("[AdminDashboard] Pull-to-refresh triggered: syncing latest database...");
+      await MockDatabase.syncFromCloud();
+      setStudent(MockDatabase.getStudent());
+      setStudents(MockDatabase.getRegisteredStudents());
+      setTrainers(MockDatabase.getTrainers());
+      setBookings(MockDatabase.getAllBookings());
+      setDocuments(MockDatabase.getAllDocuments());
+      setPayments(MockDatabase.getAllPayments());
+      setProgress(MockDatabase.getProgress());
+      setReviews(MockDatabase.getReviews());
+      setSlots(MockDatabase.getSlotDays());
+      setDlApplications(MockDatabase.getLicenceApplications());
+      if (onStateChange) onStateChange();
+    } catch (err) {
+      console.warn("[AdminDashboard] Pull-to-refresh error:", err);
+    }
+  };
 
   // Periodically pull latest database from Firebase Firestore to keep multi-user portals in sync
   useEffect(() => {
@@ -1866,8 +1888,12 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
           )}
         </AnimatePresence>
 
-        {/* Content Body */}
-        <main className="flex-1 p-4 sm:p-8 overflow-y-auto bg-[#F8F9FF]">
+        {/* Content Body (with Mobile Pull-to-Refresh) */}
+        <PullToRefresh
+          id="admin-pull-to-refresh"
+          onRefresh={handlePullToRefresh}
+          className="flex-1 p-4 sm:p-8 overflow-y-auto bg-[#F8F9FF]"
+        >
           {/* TAB: ANALYTICS & CHARTS */}
           {activeTab === 'analytics' && (
             <div className="flex flex-col gap-6 animate-fadeIn">
@@ -5176,7 +5202,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
               </div>
             </div>
           )}
-        </main>
+        </PullToRefresh>
       </div>
 
       {/* TRAINER ADD/EDIT MODAL OVERLAY */}

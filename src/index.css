@@ -4,22 +4,13 @@
 @layer base {
   html {
     font-size: 112.5%;
-    overscroll-behavior: none !important;
-    overscroll-behavior-y: none !important;
-    overscroll-behavior-x: none !important;
+    overscroll-behavior-y: contain;
     -webkit-tap-highlight-color: transparent;
   }
   
   body {
-    overscroll-behavior: none !important;
-    overscroll-behavior-y: none !important;
-    overscroll-behavior-x: none !important;
+    overscroll-behavior-y: contain;
     -webkit-tap-highlight-color: transparent;
-  }
-
-  #root {
-    overscroll-behavior: none !important;
-    overscroll-behavior-y: none !important;
   }
 }
 
@@ -35,8 +26,7 @@
 .scrollable-touch {
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
-  overscroll-behavior: none !important;
-  overscroll-behavior-y: none !important;
+  overscroll-behavior-y: contain;
 }
 
 /* Custom modern scrollbar */
