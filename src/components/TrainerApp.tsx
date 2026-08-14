@@ -150,15 +150,20 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   // Notification toast helper
   const [trainerToast, setTrainerToast] = useState<string | null>(null);
 
-  // Active GPS geolocation watch ID ref & throttle refs
+  // Active GPS geolocation watch ID ref, 30s interval ref & throttle refs
   const [liveTrackingSession, setLiveTrackingSession] = useState<TrackingSession | null>(null);
   const activeWatchIdRef = useRef<number | null>(null);
+  const gpsIntervalRef = useRef<NodeJS.Timeout | number | null>(null);
   const lastGpsSaveTimeRef = useRef<number>(0);
   const lastGpsCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
 
-  // Clean up GPS watch on unmount
+  // Clean up GPS watch & 30-sec interval timer on unmount
   useEffect(() => {
     return () => {
+      if (gpsIntervalRef.current !== null) {
+        clearInterval(gpsIntervalRef.current as any);
+        gpsIntervalRef.current = null;
+      }
       if (activeWatchIdRef.current !== null) {
         navigator.geolocation.clearWatch(activeWatchIdRef.current);
         activeWatchIdRef.current = null;
@@ -171,13 +176,18 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     setTimeout(() => setTrainerToast(null), 4000);
   };
 
-  // Start continuous real GPS tracking for an active pickup class session
+  // Start continuous real GPS tracking (with 30-second automatic refresh) for an active pickup class session
   const startGpsTracking = (bookingId: string, targetStudentId: string) => {
     if (!navigator.geolocation) {
       triggerToast("Unable to get your current location. Please enable Location/GPS and try again.");
       return;
     }
 
+    // Clear any previous interval or watch
+    if (gpsIntervalRef.current !== null) {
+      clearInterval(gpsIntervalRef.current as any);
+      gpsIntervalRef.current = null;
+    }
     if (activeWatchIdRef.current !== null) {
       navigator.geolocation.clearWatch(activeWatchIdRef.current);
       activeWatchIdRef.current = null;
@@ -191,10 +201,16 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       const latestSessionInDb = MockDatabase.getTrainerSession(activeTrainerId);
       if (latestSessionInDb && latestSessionInDb.activeSessionId && latestSessionInDb.activeSessionId !== activeSess) {
         console.warn("[TrainerApp] GPS update rejected: Session is no longer active on this device.");
-        if (activeWatchIdRef.current !== null) {
-          navigator.geolocation.clearWatch(activeWatchIdRef.current);
-          activeWatchIdRef.current = null;
-        }
+        stopGpsTracking(bookingId);
+        return;
+      }
+
+      // Verify the booking is still active and valid for tracking
+      const allBookings = MockDatabase.getAllBookings();
+      const currentBooking = allBookings.find(b => b.id === bookingId);
+      if (!currentBooking || currentBooking.status === 'completed' || currentBooking.status === 'cancelled' || (!currentBooking.pickupStatus || currentBooking.pickupStatus === 'idle')) {
+        console.log("[TrainerApp] Booking is no longer in active pickup route or class. Stopping GPS tracking.");
+        stopGpsTracking(bookingId);
         return;
       }
 
@@ -204,7 +220,10 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       lastGpsCoordsRef.current = { lat: latitude, lng: longitude };
 
       const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
-      if (existing && existing.status === 'CLASS_COMPLETED') return;
+      if (existing && (existing.status === 'CLASS_COMPLETED' || existing.status === 'CANCELLED')) {
+        stopGpsTracking(bookingId);
+        return;
+      }
 
       const targetStudent = MockDatabase.getStudent(targetStudentId);
       const studentCoords = (existing?.studentLat && existing?.studentLng)
@@ -213,14 +232,24 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
             ? { lat: targetStudent.studentLat, lng: targetStudent.studentLng }
             : getCoordinatesFromLocation(targetStudent?.location));
 
+      const distToStudent = (studentCoords.lat && studentCoords.lng)
+        ? calculateDistanceKm(latitude, longitude, studentCoords.lat, studentCoords.lng)
+        : 999;
+      const hasReachedPickup = distToStudent <= 0.05; // 50 meters arrival radius
+      const isArrived = existing?.status === 'ARRIVED' || currentBooking.pickupStatus === 'picked_up' || hasReachedPickup;
+      const isClassStarted = currentBooking.classStatus === 'class_started';
+
+      const sessionStatus = isClassStarted ? 'CLASS_STARTED' : (isArrived ? 'ARRIVED' : 'PICKUP_STARTED');
+      const sessionRouteStatus = isClassStarted ? 'en_route' : (isArrived ? 'arrived' : 'pickup_started');
+
       const session: TrackingSession = {
         trackingSessionId: `track_${bookingId}`,
         studentId: targetStudentId,
         trainerId: activeTrainerId,
         classId: bookingId,
-        status: existing?.status === 'ARRIVED' ? 'ARRIVED' : 'PICKUP_STARTED',
+        status: sessionStatus,
         isTracking: true,
-        routeStatus: existing?.status === 'ARRIVED' ? 'arrived' : 'pickup_started',
+        routeStatus: sessionRouteStatus,
         latitude,
         longitude,
         studentLat: studentCoords.lat,
@@ -234,7 +263,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
         locationUnavailable: false,
         sessionId: activeSess || undefined
       };
-      console.log("[TrainerApp] Saving REAL GPS tracking position:", { latitude, longitude, targetStudentId, activeTrainerId, sessionId: activeSess });
+      console.log("[TrainerApp] [30s Interval/Live GPS] Saved real GPS tracking position:", { latitude, longitude, targetStudentId, activeTrainerId, timestamp: session.lastUpdatedAt });
       MockDatabase.saveTrackingSession(session);
       setLiveTrackingSession(session);
     };
@@ -242,13 +271,11 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     const handleGpsError = (err: GeolocationPositionError) => {
       console.warn("[TrainerApp] GPS location error:", err);
       if (err.code === 1) { // PERMISSION_DENIED
-        triggerToast("Location permission is required to start live pickup tracking.");
-      } else {
-        triggerToast("Unable to get your current location. Please enable Location/GPS and try again.");
+        triggerToast("Location permission is required for live GPS pickup tracking.");
       }
 
       const existing = MockDatabase.getTrackingSessionByClassId(bookingId);
-      if (existing && existing.status !== 'CLASS_COMPLETED') {
+      if (existing && existing.status !== 'CLASS_COMPLETED' && existing.status !== 'CANCELLED') {
         MockDatabase.saveTrackingSession({
           ...existing,
           locationUnavailable: true,
@@ -257,21 +284,38 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       }
     };
 
-    // 1. Request immediate position
-    navigator.geolocation.getCurrentPosition(
-      saveGpsLocation,
-      handleGpsError,
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
-    );
+    const queryRealGps = () => {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(
+        saveGpsLocation,
+        handleGpsError,
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 } // maximumAge 0 prevents cached GPS coordinates
+      );
+    };
 
-    // 2. Start watchPosition for continuous real-time updates
+    // 1. Send and save immediate real GPS position
+    queryRealGps();
+
+    // 2. Schedule automatic real GPS location query and save every 30 seconds
+    gpsIntervalRef.current = setInterval(() => {
+      console.log("[TrainerApp] 30s GPS timer tick: Requesting latest real device coordinates...");
+      queryRealGps();
+    }, 30000);
+
+    // 3. Keep watchPosition active for smooth orientation/heading changes
     const watchId = navigator.geolocation.watchPosition(
-      saveGpsLocation,
+      (pos) => {
+        // Save if not saved in last 30s or significant movement
+        const now = Date.now();
+        if (now - lastGpsSaveTimeRef.current >= 30000) {
+          saveGpsLocation(pos);
+        }
+      },
       handleGpsError,
       {
         enableHighAccuracy: true,
         timeout: 15000,
-        maximumAge: 5000
+        maximumAge: 0
       }
     );
     activeWatchIdRef.current = watchId;
@@ -281,26 +325,24 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   useEffect(() => {
     const trainerId = currentTrainerId || currentTrainer?.id;
     const activeEnRouteBooking = bookings.find(b => 
-      b.trainerId === trainerId && b.pickupStatus === 'en_route'
-    );
-    const trackingSessions = MockDatabase.getTrackingSessions();
-    const activeTrackingSession = trackingSessions.find(s => 
-      s.trainerId === trainerId &&
-      s.isTracking === true &&
-      (s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route')
+      b.trainerId === trainerId && 
+      b.pickupStatus === 'en_route' && 
+      b.status !== 'completed' && 
+      b.status !== 'cancelled'
     );
 
-    const bookingIdToTrack = activeEnRouteBooking?.id || activeTrackingSession?.classId;
-    const studentIdToTrack = activeEnRouteBooking?.studentId || activeTrackingSession?.studentId;
-
-    if (bookingIdToTrack && studentIdToTrack && activeWatchIdRef.current === null) {
-      console.log("[TrainerApp] Active pickup session detected on this device. Starting live real GPS tracking...", { bookingIdToTrack, studentIdToTrack });
-      startGpsTracking(bookingIdToTrack, studentIdToTrack);
+    if (activeEnRouteBooking && activeWatchIdRef.current === null && gpsIntervalRef.current === null) {
+      console.log("[TrainerApp] Active pickup session detected on this device. Starting live real GPS tracking (30s interval)...", { bookingId: activeEnRouteBooking.id, studentId: activeEnRouteBooking.studentId });
+      startGpsTracking(activeEnRouteBooking.id, activeEnRouteBooking.studentId);
     }
   }, [bookings, currentTrainerId]);
 
-  // Stop GPS tracking when class is completed
+  // Stop GPS tracking when class is completed or cancelled
   const stopGpsTracking = (bookingId: string) => {
+    if (gpsIntervalRef.current !== null) {
+      clearInterval(gpsIntervalRef.current as any);
+      gpsIntervalRef.current = null;
+    }
     if (activeWatchIdRef.current !== null) {
       navigator.geolocation.clearWatch(activeWatchIdRef.current);
       activeWatchIdRef.current = null;
@@ -623,7 +665,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       senderId: currentTrainerId,
       senderName: currentTrainer.name,
       receiverId: targetStudentId,
-      text: `🚗 I have started my pickup route in ${currentTrainer.carName} (${currentTrainer.carPlate}) and I am heading to your location! Please check your Live Pickup Tracking screen in the Student App.`,
+      text: `🚗 I have started my pickup route in ${currentTrainer.carName || "the training car"} and I am heading to your location! Please check your Live Pickup Tracking screen in the Student App.`,
       timestamp: new Date().toISOString(),
       isRead: false
     };
@@ -770,7 +812,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       senderId: currentTrainerId,
       senderName: currentTrainer.name,
       receiverId: targetStudentId,
-      text: `🚨 I have reached your location in ${currentTrainer.carName} (${currentTrainer.carPlate}). See you in 2 mins!`,
+      text: `🚨 I have reached your location in ${currentTrainer.carName || "the training car"}. See you in 2 mins!`,
       timestamp: new Date().toISOString(),
       isRead: false
     };
@@ -784,8 +826,11 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   // Active pickup route resolution for Map tab
   const activeTrainerId = currentTrainerId || currentTrainer?.id;
   const activePickupBooking = bookings.find(b => 
-    b.trainerId === activeTrainerId && b.pickupStatus === 'en_route'
-  ) || (selectedBooking && selectedBooking.pickupStatus === 'en_route' && selectedBooking.trainerId === activeTrainerId ? selectedBooking : null);
+    b.trainerId === activeTrainerId && 
+    b.pickupStatus === 'en_route' &&
+    b.status !== 'completed' && 
+    b.status !== 'cancelled'
+  ) || (selectedBooking && selectedBooking.pickupStatus === 'en_route' && selectedBooking.trainerId === activeTrainerId && selectedBooking.status !== 'completed' && selectedBooking.status !== 'cancelled' ? selectedBooking : null);
 
   const activePickupStudent = activePickupBooking 
     ? (MockDatabase.getStudent(activePickupBooking.studentId) || {
@@ -1560,7 +1605,6 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                         trainerLat={activeTrackingSession?.latitude ?? liveTrackingSession?.latitude ?? lastGpsCoordsRef.current?.lat ?? DEFAULT_BHUBANESWAR_LOCATION.lat}
                         trainerLng={activeTrackingSession?.longitude ?? liveTrackingSession?.longitude ?? lastGpsCoordsRef.current?.lng ?? DEFAULT_BHUBANESWAR_LOCATION.lng}
                         trainerName={currentTrainer.name}
-                        carPlate={currentTrainer.carPlate}
                         studentLat={
                           activeTrackingSession?.studentLat ?? 
                           liveTrackingSession?.studentLat ?? 
@@ -1654,7 +1698,6 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                     <div className="bg-black/40 border border-white/10 rounded-2xl overflow-hidden shadow-xl h-56 relative">
                       <LiveTrackingMap 
                         trainerName={currentTrainer.name}
-                        carPlate={currentTrainer.carPlate}
                         studentName="Student"
                         pickupLocationName="Rasulgarh Center, Bhubaneswar"
                         status="WAITING"

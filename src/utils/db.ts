@@ -1014,19 +1014,48 @@ export class MockDatabase {
   }
 
   static getTrackingSessionByClassId(classId: string): TrackingSession | null {
+    if (!classId) return null;
+    const allBookings = this.getAllBookings();
+    const booking = allBookings.find(b => b.id === classId);
+    if (!booking || booking.status === 'completed' || booking.status === 'cancelled') {
+      return null;
+    }
+    // Only return tracking session if pickup route has actually been started or class is in session
+    if (!booking.pickupStatus || booking.pickupStatus === 'idle') {
+      return null;
+    }
+
     const sessions = this.getTrackingSessions();
-    const session = sessions.find(s => s.classId === classId) || null;
-    if (session && (session.isTracking === false || session.status === 'CLASS_COMPLETED' || session.routeStatus === 'completed')) {
+    const session = sessions.find(s => (s.classId === classId || s.bookingId === classId)) || null;
+    if (session && (session.isTracking === false || session.status === 'CLASS_COMPLETED' || session.status === 'CANCELLED' || session.routeStatus === 'completed')) {
       return null;
     }
     return session;
   }
 
   static getTrackingSessionByStudent(studentId: string): TrackingSession | null {
+    if (!studentId) return null;
+    const studentBookings = this.getBookings(studentId);
+    // Strict Check: Look for an active, confirmed/upcoming booking where pickup route has explicitly started
+    const activeBooking = studentBookings.find(b => 
+      b.status !== 'completed' && 
+      b.status !== 'cancelled' && 
+      (b.pickupStatus === 'en_route' || b.pickupStatus === 'picked_up' || b.classStatus === 'class_started')
+    );
+
+    if (!activeBooking) {
+      // If no active booking with an initiated pickup route exists, tracking is strictly inactive
+      return null;
+    }
+
     const sessions = this.getTrackingSessions();
-    const studentSessions = sessions.filter(s => s.studentId === studentId);
-    if (studentSessions.length === 0) return null;
-    const active = studentSessions.find(s => s.isTracking === true && (s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route'));
+    const active = sessions.find(s => 
+      (s.classId === activeBooking.id || s.bookingId === activeBooking.id || s.studentId === studentId) &&
+      s.isTracking === true &&
+      s.status !== 'CLASS_COMPLETED' &&
+      s.status !== 'CANCELLED' &&
+      (s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route' || s.routeStatus === 'arrived')
+    );
     return active || null;
   }
 

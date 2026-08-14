@@ -1161,19 +1161,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     if (!student?.id) return;
 
     const findActiveSession = () => {
-      const allSessions = MockDatabase.getTrackingSessions();
-      const studentBookings = MockDatabase.getBookings().filter(b => b.studentId === student.id);
-      const studentClassIds = studentBookings.map(b => b.id);
-
-      const matched = allSessions.filter(s =>
-        s.studentId === student.id || studentClassIds.includes(s.classId)
-      );
-
-      const active = matched.find(s => 
-        s.isTracking === true && 
-        (s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route')
-      );
-      return active || null;
+      return MockDatabase.getTrackingSessionByStudent(student.id);
     };
 
     // 1. Initial Local Database Sync
@@ -1184,17 +1172,34 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     let unsubFirestore: (() => void) | null = null;
     try {
       unsubFirestore = onSnapshot(collection(db, "trackingSessions"), (snapshot) => {
-        const studentBookings = MockDatabase.getBookings().filter(b => b.studentId === student.id);
-        const studentClassIds = studentBookings.map(b => b.id);
+        const studentBookings = MockDatabase.getBookings(student.id).filter(b => 
+          b.status !== 'completed' && 
+          b.status !== 'cancelled'
+        );
+        const activeBooking = studentBookings.find(b => 
+          b.pickupStatus === 'en_route' || b.pickupStatus === 'picked_up' || b.classStatus === 'class_started'
+        );
+
+        if (!activeBooking) {
+          setTrackingSession(null);
+          return;
+        }
+
         const studentSessions: TrackingSession[] = [];
 
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as TrackingSession;
           if (data && (
-            data.studentId === student.id ||
-            studentClassIds.includes(data.classId)
+            data.classId === activeBooking.id ||
+            data.bookingId === activeBooking.id ||
+            data.studentId === student.id
           )) {
-            studentSessions.push(data);
+            if (data.isTracking === true && 
+                data.status !== 'CLASS_COMPLETED' && 
+                data.status !== 'CANCELLED' && 
+                (data.status === 'PICKUP_STARTED' || data.status === 'ARRIVED' || data.status === 'CLASS_STARTED' || data.routeStatus === 'pickup_started' || data.routeStatus === 'en_route' || data.routeStatus === 'arrived')) {
+              studentSessions.push(data);
+            }
           }
         });
 
@@ -1205,10 +1210,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
           return timeB - timeA;
         });
 
-        const active = studentSessions.find(
-          s => s.isTracking === true && (s.status === 'PICKUP_STARTED' || s.status === 'ARRIVED' || s.status === 'CLASS_STARTED' || s.routeStatus === 'pickup_started' || s.routeStatus === 'en_route')
-        );
-        setTrackingSession(active || null);
+        setTrackingSession(studentSessions[0] || null);
       }, (err) => {
         console.warn("[StudentApp] Firestore trackingSessions onSnapshot error:", err);
       });
@@ -1224,9 +1226,11 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
     window.addEventListener('storage', handleLocalSync);
     window.addEventListener('golden_hands_db_update', handleLocalSync);
+    const syncInterval = setInterval(handleLocalSync, 5000);
 
     return () => {
       if (unsubFirestore) unsubFirestore();
+      clearInterval(syncInterval);
       window.removeEventListener('storage', handleLocalSync);
       window.removeEventListener('golden_hands_db_update', handleLocalSync);
     };
@@ -6513,36 +6517,66 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   <div className="flex items-center justify-between">
                     <h2 className="text-xl font-extrabold text-[#161623]">Live Pickup Tracking</h2>
                     {(() => {
-                      const isPickupEnRoute = trackingSession && trackingSession.isTracking === true && (
+                      const activeBooking = bookings.find(b => 
+                        b.studentId === student?.id && 
+                        b.status !== 'completed' && 
+                        b.status !== 'cancelled' &&
+                        (b.pickupStatus === 'en_route' || b.pickupStatus === 'picked_up' || b.classStatus === 'class_started')
+                      );
+                      const isRouteStarted = !!activeBooking;
+                      const isPickupEnRoute = isRouteStarted && trackingSession && trackingSession.isTracking === true && (
                         trackingSession.status === 'PICKUP_STARTED' ||
                         trackingSession.routeStatus === 'pickup_started' ||
                         trackingSession.routeStatus === 'en_route'
                       );
+                      const isTrainerArrived = isRouteStarted && trackingSession && trackingSession.isTracking === true && (
+                        trackingSession.status === 'ARRIVED' ||
+                        trackingSession.routeStatus === 'arrived' ||
+                        activeBooking?.pickupStatus === 'picked_up'
+                      );
+                      const isClassActive = isRouteStarted && trackingSession && trackingSession.isTracking === true && (
+                        trackingSession.status === 'CLASS_STARTED' ||
+                        activeBooking?.classStatus === 'class_started'
+                      );
+
                       return (
                         <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
                           isPickupEnRoute
                             ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                            : trackingSession && trackingSession.status === 'ARRIVED'
+                            : isTrainerArrived
                             ? 'bg-amber-100 text-amber-800 border-amber-300'
-                            : trackingSession && trackingSession.status === 'CLASS_STARTED'
+                            : isClassActive
                             ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
                             : 'bg-slate-100 text-slate-600 border-slate-300'
                         }`}>
                           {isPickupEnRoute && '🟢 On The Way'}
-                          {trackingSession?.status === 'ARRIVED' && '📍 Arrived'}
-                          {trackingSession?.status === 'CLASS_STARTED' && '🚗 Class Active'}
-                          {(!isPickupEnRoute && trackingSession?.status !== 'ARRIVED' && trackingSession?.status !== 'CLASS_STARTED') && 'Map Inactive'}
+                          {isTrainerArrived && '📍 Arrived'}
+                          {isClassActive && '🚗 Class Active'}
+                          {!isPickupEnRoute && !isTrainerArrived && !isClassActive && 'Map Inactive'}
                         </span>
                       );
                     })()}
                   </div>
 
                   {(() => {
-                    const isPickupEnRoute = trackingSession && trackingSession.isTracking === true && (
+                    const activeBooking = bookings.find(b => 
+                      b.studentId === student?.id && 
+                      b.status !== 'completed' && 
+                      b.status !== 'cancelled' &&
+                      (b.pickupStatus === 'en_route' || b.pickupStatus === 'picked_up' || b.classStatus === 'class_started')
+                    );
+                    const isRouteStarted = !!activeBooking;
+                    const isPickupEnRoute = isRouteStarted && trackingSession && trackingSession.isTracking === true && (
                       trackingSession.status === 'PICKUP_STARTED' ||
                       trackingSession.routeStatus === 'pickup_started' ||
                       trackingSession.routeStatus === 'en_route'
                     );
+                    const isTrainerArrived = isRouteStarted && trackingSession && trackingSession.isTracking === true && (
+                      trackingSession.status === 'ARRIVED' ||
+                      trackingSession.routeStatus === 'arrived' ||
+                      activeBooking?.pickupStatus === 'picked_up'
+                    );
+
                     if (!assignedTrainer) {
                       return (
                         <p className="text-[10px] text-slate-600 font-bold flex items-center gap-1 mt-1 bg-slate-100 px-2.5 py-1 rounded-xl border border-slate-200">
@@ -6556,7 +6590,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                           Live GPS Active: {assignedTrainer.name} is on the way to your location.
                         </p>
                       );
-                    } else if (trackingSession && trackingSession.status === 'ARRIVED') {
+                    } else if (isTrainerArrived) {
                       return (
                         <p className="text-[10px] text-amber-800 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200">
                           📍 {assignedTrainer.name} has arrived at your pickup point!
@@ -6573,12 +6607,28 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                 </div>
 
                 {(() => {
-                  const isPickupEnRoute = trackingSession && trackingSession.isTracking === true && (
+                  const activeBooking = bookings.find(b => 
+                    b.studentId === student?.id && 
+                    b.status !== 'completed' && 
+                    b.status !== 'cancelled' &&
+                    (b.pickupStatus === 'en_route' || b.pickupStatus === 'picked_up' || b.classStatus === 'class_started')
+                  );
+                  const isRouteStarted = !!activeBooking;
+                  const isPickupEnRoute = isRouteStarted && trackingSession && trackingSession.isTracking === true && (
                     trackingSession.status === 'PICKUP_STARTED' ||
                     trackingSession.routeStatus === 'pickup_started' ||
                     trackingSession.routeStatus === 'en_route'
                   );
-                  const isMapActive = isPickupEnRoute || trackingSession?.status === 'ARRIVED' || trackingSession?.status === 'CLASS_STARTED';
+                  const isTrainerArrived = isRouteStarted && trackingSession && trackingSession.isTracking === true && (
+                    trackingSession.status === 'ARRIVED' ||
+                    trackingSession.routeStatus === 'arrived' ||
+                    activeBooking?.pickupStatus === 'picked_up'
+                  );
+                  const isClassActive = isRouteStarted && trackingSession && trackingSession.isTracking === true && (
+                    trackingSession.status === 'CLASS_STARTED' ||
+                    activeBooking?.classStatus === 'class_started'
+                  );
+                  const isMapActive = isPickupEnRoute || isTrainerArrived || isClassActive;
 
                   return (
                     <>
@@ -6589,12 +6639,11 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                           trainerLng={isMapActive ? trackingSession?.longitude : undefined}
                           trainerHeading={trackingSession?.heading}
                           trainerName={assignedTrainer?.name || "Trainer"}
-                          carPlate={assignedTrainer?.carPlate || "OD 02 AB 1234"}
                           studentLat={trackingSession?.studentLat || studentGps?.lat || (student ? getCoordinatesFromLocation(student.location).lat : DEFAULT_BHUBANESWAR_LOCATION.lat)}
                           studentLng={trackingSession?.studentLng || studentGps?.lng || (student ? getCoordinatesFromLocation(student.location).lng : DEFAULT_BHUBANESWAR_LOCATION.lng)}
                           studentName={student?.name || "Student"}
                           pickupLocationName={student?.location || "Rasulgarh Square, Bhubaneswar"}
-                          status={isPickupEnRoute ? (trackingSession?.status || 'PICKUP_STARTED') : (trackingSession?.status === 'ARRIVED' ? 'ARRIVED' : (trackingSession?.status === 'CLASS_STARTED' ? 'CLASS_STARTED' : 'WAITING'))}
+                          status={isPickupEnRoute ? (trackingSession?.status || 'PICKUP_STARTED') : (isTrainerArrived ? 'ARRIVED' : (isClassActive ? 'CLASS_STARTED' : 'WAITING'))}
                           locationUnavailable={trackingSession?.locationUnavailable}
                           lastUpdatedAt={trackingSession?.lastUpdatedAt || new Date().toISOString()}
                           onMetricsUpdate={(d, e) => setRoadMetrics({ distKm: d, etaMin: e })}
@@ -6663,7 +6712,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       <div>
                         <p className="font-bold text-xs">{assignedTrainer.name}</p>
                         <p className="text-[9px] text-[#27AE60] flex items-center gap-1">
-                          ● Assigned Instructor ({assignedTrainer.carName || "Vehicle"} - {assignedTrainer.carPlate || "OD 02 AB 1234"})
+                          ● Assigned Instructor {assignedTrainer.carName ? `(${assignedTrainer.carName})` : ''}
                         </p>
                       </div>
                     </div>
