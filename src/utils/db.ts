@@ -288,6 +288,18 @@ export const MOCK_TEST_QUESTIONS: MockTestQuestion[] = [
 
 // Helper to interact with Local Storage Database
 export class MockDatabase {
+  static notifyChange(): void {
+    if (typeof window !== "undefined") {
+      try {
+        window.dispatchEvent(new CustomEvent("db-updated"));
+        window.dispatchEvent(new CustomEvent("golden_hands_db_update"));
+        window.dispatchEvent(new Event("storage"));
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   private static getStored<T>(key: string, defaultValue: T): T {
     try {
       const data = localStorage.getItem(`golden_hands_${key}`);
@@ -311,6 +323,7 @@ export class MockDatabase {
 
   static setCurrentStudentId(id: string): void {
     localStorage.setItem("golden_hands_current_student_id", id);
+    this.notifyChange();
   }
 
   static getCurrentTrainerId(): string {
@@ -319,6 +332,7 @@ export class MockDatabase {
 
   static setCurrentTrainerId(id: string): void {
     localStorage.setItem("golden_hands_current_trainer_id", id);
+    this.notifyChange();
   }
 
   static getRegisteredStudents(): Student[] {
@@ -348,6 +362,8 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase write error:", e);
     }
+
+    this.notifyChange();
   }
 
 
@@ -546,6 +562,8 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase trainers write error:", e);
     }
+
+    this.notifyChange();
   }
 
   static getProgress(studentId?: string): SkillProgress {
@@ -580,6 +598,8 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase progress write error:", e);
     }
+
+    this.notifyChange();
   }
 
   static getDocuments(studentId?: string): Document[] {
@@ -704,6 +724,8 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase documents write error:", e);
     }
+
+    this.notifyChange();
   }
 
   static getPayments(studentId?: string): Payment[] {
@@ -750,6 +772,8 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase payments write error:", e);
     }
+
+    this.notifyChange();
   }
 
   static sanitizeBookings(bookings: Booking[]): Booking[] {
@@ -819,6 +843,8 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase bookings write error:", e);
     }
+
+    this.notifyChange();
   }
 
   static getAllBookings(): Booking[] {
@@ -896,6 +922,8 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase reviews write error:", e);
     }
+
+    this.notifyChange();
   }
 
   static getChats(studentId?: string): ChatMessage[] {
@@ -941,6 +969,8 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase chats write error:", e);
     }
+
+    this.notifyChange();
   }
 
   static getMockAttempts(studentId?: string): MockTestAttempt[] {
@@ -975,6 +1005,8 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase attempts write error:", e);
     }
+
+    this.notifyChange();
   }
 
   static getTrackingSessions(): TrackingSession[] {
@@ -1007,14 +1039,12 @@ export class MockDatabase {
       sessions.push(session);
     }
     this.setStored("tracking_sessions", sessions);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new Event('golden_hands_db_update'));
-    }
     try {
       saveToCloud("trackingSessions", session.trackingSessionId, session);
     } catch (e) {
       console.error("Firebase trackingSession write error:", e);
     }
+    this.notifyChange();
   }
 
   static deleteTrackingSession(trackingSessionId: string) {
@@ -1026,6 +1056,7 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase trackingSession delete error:", e);
     }
+    this.notifyChange();
   }
 
   // --- Trainer Active Device Sessions Methods ---
@@ -1053,14 +1084,12 @@ export class MockDatabase {
       sessions.push(sessionObj);
     }
     this.setStored("trainer_sessions", sessions);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new Event('golden_hands_db_update'));
-    }
     try {
       saveToCloud("trainerSessions", trainerId, sessionObj);
     } catch (e) {
       console.error("Firebase trainerSession write error:", e);
     }
+    this.notifyChange();
     return sessionObj;
   }
 
@@ -1090,6 +1119,7 @@ export class MockDatabase {
     } catch (e) {
       console.error("Firebase dl_applications write error:", e);
     }
+    this.notifyChange();
   }
 
   static updateLicenceApplicationStatus(appId: string, newStatus: 'Applied' | 'Under Review' | 'Approved' | 'Rejected') {
@@ -1369,6 +1399,7 @@ export class MockDatabase {
       }
 
       console.log("[Firebase] Synchronization complete.");
+      this.notifyChange();
       return true;
     } catch (e) {
       console.error("[Firebase] Sync failed:", e);
