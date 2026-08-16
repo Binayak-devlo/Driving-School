@@ -46,9 +46,9 @@ async function generateGeminiContentWithFallback(params: {
   systemInstruction?: string;
 }): Promise<string | null> {
   const modelsToTry = [
-    "gemini-3.7-flash",
     "gemini-flash-latest",
-    "gemini-3.1-flash-lite"
+    "gemini-3.1-flash-lite",
+    "gemini-3.7-flash"
   ];
 
   for (const model of modelsToTry) {
@@ -61,10 +61,8 @@ async function generateGeminiContentWithFallback(params: {
       if (response && response.text) {
         return response.text;
       }
-    } catch (err: any) {
-      const status = err?.status || err?.error?.code || err?.statusCode || "";
-      const msg = err?.message || "";
-      console.warn(`[Gemini Model ${model}] Notice (${status}: ${msg.slice(0, 70)}). Trying fallback model...`);
+    } catch (_err: any) {
+      // Gracefully advance to next available model without throwing
     }
   }
   return null;
