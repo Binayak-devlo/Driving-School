@@ -13,6 +13,7 @@ import { calculateDistanceKm, DEFAULT_BHUBANESWAR_LOCATION, getCoordinatesFromLo
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import { LiveTrackingMap } from "./LiveTrackingMap";
 import PullToRefresh from "./PullToRefresh";
+import OdnexAssistant from "./OdnexAssistant";
 
 interface TrainerAppProps {
   onStateChange: () => void; // Sync changes with other views
@@ -22,7 +23,7 @@ interface TrainerAppProps {
 }
 
 export default function TrainerApp({ onStateChange, onLogout, navState }: TrainerAppProps) {
-  const [activeTab, setActiveTab] = useState<'schedule' | 'confirm' | 'map' | 'students' | 'performance'>(() => {
+  const [activeTab, setActiveTab] = useState<'schedule' | 'confirm' | 'map' | 'students' | 'performance' | 'odnex'>(() => {
     if (navState && navState.activeView === 'trainer' && navState.trainerTab) {
       return navState.trainerTab as any;
     }
@@ -441,8 +442,10 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       setChats(MockDatabase.getChats(currentActiveId));
       setTrainers(MockDatabase.getTrainers());
       if (onStateChange) onStateChange();
+      triggerToast("Trainer schedule & classes refreshed!");
     } catch (err) {
       console.warn("[TrainerApp] Pull-to-refresh error:", err);
+      triggerToast("Trainer portal refreshed from local state.");
     }
   };
 
@@ -1442,18 +1445,19 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
             </div>
 
             {/* TABS SELECTOR */}
-            <div className="flex bg-white/5 p-1 rounded-2xl mb-4 border border-white/5">
+            <div className="flex bg-white/5 p-1 rounded-2xl mb-4 border border-white/5 overflow-x-auto scrollbar-none">
               {[
                 { id: 'schedule', label: 'Schedule' },
                 { id: 'confirm', label: `Confirm${requestedBookings.length > 0 ? ` (${requestedBookings.length})` : ''}` },
                 { id: 'map', label: `Map${activePickupBooking ? ' 🟢' : ''}` },
-                { id: 'students', label: 'My Students' },
-                { id: 'performance', label: 'Metrics' }
+                { id: 'students', label: 'Students' },
+                { id: 'performance', label: 'Metrics' },
+                { id: 'odnex', label: 'ODNEX ✨' }
               ].map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex-1 py-2 text-[9px] sm:text-[10px] font-black rounded-xl uppercase transition-all cursor-pointer ${
+                  className={`flex-1 py-2 px-2 text-[9px] sm:text-[10px] font-black rounded-xl uppercase transition-all cursor-pointer whitespace-nowrap ${
                     activeTab === tab.id 
                       ? 'bg-gradient-to-r from-amber-500 to-[#D4AF37] text-black shadow-md' 
                       : 'text-slate-400 hover:text-white'
@@ -1463,6 +1467,21 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                 </button>
               ))}
             </div>
+
+            {/* TAB CONTENT: ODNEX SUPER AI COPILOT */}
+            {activeTab === 'odnex' && (
+              <div className="animate-fadeIn h-[560px] pb-16">
+                <OdnexAssistant
+                  role="trainer"
+                  currentTrainer={currentTrainer}
+                  onNavigateTab={(tab) => setActiveTab(tab as any)}
+                  onStateChange={() => {
+                    setBookings(MockDatabase.getAllBookings());
+                    onStateChange();
+                  }}
+                />
+              </div>
+            )}
 
             {/* TAB CONTENT: SCHEDULE */}
             {activeTab === 'schedule' && (
@@ -1977,10 +1996,17 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
           </button>
           <button 
             onClick={() => setActiveTab('performance')}
-            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all ${activeTab === 'performance' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
+            className={`flex flex-col items-center gap-1 py-1 px-2 rounded-xl transition-all ${activeTab === 'performance' ? 'text-[#D4AF37]' : 'text-slate-500'}`}
           >
             <Sliders className="w-4.5 h-4.5" />
             <span className="text-[8px] font-bold">Metrics</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('odnex')}
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all ${activeTab === 'odnex' ? 'text-[#D4AF37] bg-amber-500/10' : 'text-amber-400 hover:text-amber-300'}`}
+          >
+            <Sparkles className="w-4.5 h-4.5 animate-pulse text-[#D4AF37]" />
+            <span className="text-[8px] font-extrabold text-[#D4AF37]">ODNEX</span>
           </button>
         </div>
       )}

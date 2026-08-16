@@ -448,8 +448,10 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       setSlots(MockDatabase.getSlotDays());
       setDlApplications(MockDatabase.getLicenceApplications());
       if (onStateChange) onStateChange();
+      showToast("Admin Dashboard synchronized with cloud database!");
     } catch (err) {
       console.warn("[AdminDashboard] Pull-to-refresh error:", err);
+      showToast("Refreshed from local cache.");
     }
   };
 
@@ -2045,7 +2047,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                   
                   <div className="flex flex-col gap-2.5">
                     {[
-                      { text: `${student.name || "Guest Student"} requested clutch & parking coaching via AI Coach`, time: "2 mins ago" },
+                      { text: `${student.name || "Guest Student"} requested clutch & parking coaching via ODNEX`, time: "2 mins ago" },
                       { text: `Licence verification status changed to '${student.llStatus || "Applied"}' for student ${student.name || "Guest Student"}`, time: "1 hour ago" },
                       { text: `Trainer ${trainers[0]?.name || "Chief Trainer"} completed scheduled class '${trainers[0]?.carPlate || "OD 02 AB 1234"}'`, time: "3 hours ago" }
                     ].map((log, idx) => (

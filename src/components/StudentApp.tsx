@@ -53,6 +53,7 @@ import { LiveTrackingMap } from "./LiveTrackingMap";
 import PullToRefresh from "./PullToRefresh";
 import { calculateDistanceKm, calculateEtaMinutes, formatTimeAgo, DEFAULT_BHUBANESWAR_LOCATION, getCoordinatesFromLocation } from "../utils/geo";
 import { auth, db } from "../utils/firebase";
+import OdnexAssistant from "./OdnexAssistant";
 import {
   collection,
   doc,
@@ -1696,17 +1697,12 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     try {
       console.log("[StudentApp] Pull-to-refresh triggered: synchronizing latest cloud records...");
       await MockDatabase.syncFromCloud();
-      setStudent(MockDatabase.getStudent());
-      setProgress(MockDatabase.getProgress());
-      setBookings(MockDatabase.getBookings());
-      setTrainers(MockDatabase.getTrainers());
-      setDocuments(MockDatabase.getDocuments());
-      setPayments(MockDatabase.getPayments());
-      setChats(MockDatabase.getChats());
-      setAttempts(MockDatabase.getMockAttempts());
+      refreshLocalState();
       if (onStateChange) onStateChange();
+      showNotification("App Refreshed! All records synchronized with cloud.");
     } catch (err) {
       console.warn("[StudentApp] Pull-to-refresh error:", err);
+      showNotification("App refreshed from local storage.");
     }
   };
 
@@ -3060,11 +3056,28 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     } catch {
       // Offline / fallback mock advice
       setTimeout(() => {
+        const qLower = (userMsg || "").toLowerCase();
+        let fallbackReply = `Thanks for asking! I am ODNEX, your AI Driving Coach. Regarding **${userMsg}**, safety is paramount. Keep your hands at 10-and-2 or 9-and-3 on the steering wheel for optimal control. At high speeds on Cuttack-Puri highway, ensure you mirror check every 8 seconds. Let's work on this in your next class with ${assignedTrainer ? assignedTrainer.name : "your assigned instructor"}!`;
+        
+        if (
+          qLower.includes("creator") || 
+          qLower.includes("who created") || 
+          qLower.includes("who made") || 
+          qLower.includes("who makes you") || 
+          qLower.includes("who makes u") ||
+          qLower.includes("who built") || 
+          qLower.includes("who developed") || 
+          qLower.includes("bnp tech") || 
+          qLower.includes("binayak")
+        ) {
+          fallbackReply = "BNP Tech Binayak Sir created me specially as a driving school assistant.";
+        }
+
         setCoachChat(prev => [...prev, { 
           role: 'model', 
-          text: `Thanks for asking! Regarding **${userMsg}**, safety is paramount. Keep your hands at 10-and-2 or 9-and-3 on the steering wheel for optimal control. At high speeds on Cuttack-Puri highway, ensure you mirror check every 8 seconds. Let's work on this in your next class with ${assignedTrainer ? assignedTrainer.name : "your assigned instructor"}!` 
+          text: fallbackReply 
         }]);
-      }, 1500);
+      }, 1000);
     } finally {
       setCoachLoading(false);
     }
@@ -3630,6 +3643,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       <PullToRefresh
         id="student-pull-to-refresh"
         onRefresh={handlePullToRefresh}
+        disabled={activeSubPage === 'ai-coach' || activeSubPage === 'mock-test'}
         className="flex-1 overflow-y-auto scrollable-touch custom-scrollbar pb-24 pt-1"
       >
         {currentScreen === 'splash' && (
@@ -4190,69 +4204,23 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
             {/* AI COACH SUBPAGE */}
             {activeSubPage === 'ai-coach' && (
-              <div className="pt-2 animate-fadeIn">
-                <div className="flex items-center justify-between mb-4">
-                  <button onClick={() => setActiveSubPage(null)} className="flex items-center gap-1 text-xs text-slate-500 font-bold">
-                    <ArrowLeft className="w-3.5 h-3.5" /> Back
-                  </button>
-                  <span className="bg-[#6D3BFF]/10 text-[#6D3BFF] text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <Sparkles className="w-2.5 h-2.5" /> Gemini 3.5 Flash
-                  </span>
-                </div>
-
-                <div className="bg-[#161623] rounded-3xl p-4 text-white mb-4 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-[#D4AF37] opacity-10 rounded-full blur-2xl" />
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-[#D4AF37] text-black font-extrabold rounded-xl flex items-center justify-center text-sm shadow-md">
-                      AI
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-sm text-[#D4AF37]">Goldie</h3>
-                      <p className="text-[10px] text-slate-400">AI Driving Coach & Weakness Detector</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Chat window */}
-                <div className="bg-white rounded-3xl p-3 border border-slate-100 shadow-sm h-[380px] overflow-y-auto scrollable-touch custom-scrollbar flex flex-col gap-3.5 mb-3">
-                  {coachChat.map((msg, index) => (
-                    <div key={index} className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'}`}>
-                      <div className={`p-3 rounded-2xl text-xs leading-relaxed ${
-                        msg.role === 'user' 
-                          ? 'bg-[#6D3BFF] text-white rounded-tr-none' 
-                          : 'bg-[#F8F9FF] text-[#1A1A1A] border border-[#E9ECF4] rounded-tl-none'
-                      }`}>
-                        {msg.text.split("\n").map((para, i) => (
-                          <p key={i} className="mb-1.5">{para}</p>
-                        ))}
-                      </div>
-                      <span className="text-[9px] text-slate-400 mt-0.5 px-1">{msg.role === 'user' ? 'You' : 'Coach Goldie'}</span>
-                    </div>
-                  ))}
-                  {coachLoading && (
-                    <div className="self-start flex items-center gap-1.5 bg-[#F8F9FF] p-3 rounded-2xl text-xs text-slate-500 border border-slate-100">
-                      <RefreshCw className="w-3 h-3 animate-spin text-[#6D3BFF]" /> Coach is thinking...
-                    </div>
-                  )}
-                </div>
-
-                <form onSubmit={handleCoachQuery} className="flex gap-2">
-                  <input 
-                    type="text" 
-                    value={coachInput}
-                    onChange={(e) => setCoachInput(e.target.value)}
-                    placeholder="Ask about parallel parking, clutch..."
-                    className="flex-1 bg-white border border-slate-200 rounded-xl p-3 text-xs focus:outline-none focus:border-[#6D3BFF] font-medium"
-                    required
-                  />
-                  <button 
-                    type="submit" 
-                    disabled={coachLoading}
-                    className="w-12 h-12 bg-[#6D3BFF] text-white rounded-xl flex items-center justify-center hover:bg-[#8F52FF]"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
-                </form>
+              <div className="pt-2 animate-fadeIn h-[620px] sm:h-[660px] pb-4">
+                <OdnexAssistant
+                  role="student"
+                  currentStudent={student}
+                  onNavigateTab={(tab, sub) => {
+                    setActiveTab(tab as any);
+                    if (sub) setActiveSubPage(sub as any);
+                    else setActiveSubPage(null);
+                  }}
+                  onStateChange={() => {
+                    const fresh = MockDatabase.getStudent(student.id);
+                    if (fresh) setStudent(fresh);
+                    setBookings(MockDatabase.getAllBookings().filter(b => b.studentId === student.id));
+                    onStateChange();
+                  }}
+                  onClose={() => setActiveSubPage(null)}
+                />
               </div>
             )}
 
@@ -4359,7 +4327,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         }}
                         className="flex-1 bg-[#6D3BFF] text-white font-semibold text-xs py-3 rounded-xl hover:bg-[#8F52FF]"
                       >
-                        Ask Coach Goldie
+                        Ask ODNEX
                       </button>
                     </div>
                   </div>
@@ -7164,7 +7132,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   <div className="grid grid-cols-3 gap-2">
                     {[
                       { icon: <Award className="w-5 h-5 text-[#6D3BFF]" />, label: "Selected Plan", onClick: () => { setActiveTab('modify'); } },
-                      { icon: <Sparkles className="w-5 h-5 text-[#D4AF37]" />, label: "AI Coach", onClick: () => setActiveSubPage('ai-coach') },
+                      { icon: <Sparkles className="w-5 h-5 text-[#D4AF37]" />, label: "Chat with ODNEX", onClick: () => setActiveSubPage('ai-coach') },
                       { icon: <Award className="w-5 h-5 text-[#8F52FF]" />, label: "Mock Test", onClick: () => setActiveSubPage('mock-test') },
                       { icon: <Folder className="w-5 h-5 text-[#6D3BFF]" />, label: "My Files", onClick: () => setActiveSubPage('vault-files') },
                       { icon: <Edit3 className="w-5 h-5 text-indigo-500" />, label: "My Notes", onClick: () => setActiveSubPage('vault-notes') }
@@ -7315,7 +7283,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
             <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
           </div>
           <Sparkles className="w-3.5 h-3.5 text-amber-300 fill-amber-300 animate-pulse" />
-          <span>Ask AI Coach</span>
+          <span>Ask ODNEX</span>
         </button>
       )}
 

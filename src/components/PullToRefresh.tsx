@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { ArrowDown, RefreshCw, CheckCircle2, Sparkles } from "lucide-react";
+import { ArrowDown, RefreshCw, CheckCircle2 } from "lucide-react";
 
 interface PullToRefreshProps {
   onRefresh: () => Promise<void> | void;
@@ -20,7 +20,7 @@ export default function PullToRefresh({
   disabled = false,
   id = "pull-to-refresh-container",
   pullThreshold = 65,
-  maxPull = 110,
+  maxPull = 120,
 }: PullToRefreshProps) {
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -28,72 +28,89 @@ export default function PullToRefresh({
   const [isDragging, setIsDragging] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const contentWrapperRef = useRef<HTMLDivElement>(null);
   const startYRef = useRef(0);
   const startXRef = useRef(0);
   const isPullingRef = useRef(false);
   const reachedThresholdRef = useRef(false);
   const refreshingHeight = 52;
+  const isRefreshingRef = useRef(false);
 
-  // Track touch starts
-  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (disabled || isRefreshing) return;
+  // Sync ref
+  useEffect(() => {
+    isRefreshingRef.current = isRefreshing;
+  }, [isRefreshing]);
 
+  // Handle start of touch/pointer
+  const handleStart = useCallback((clientY: number, clientX: number, target?: EventTarget | null) => {
+    if (disabled || isRefreshingRef.current) return;
     const container = containerRef.current;
     if (!container) return;
 
-    // Only allow pull-down if container (or window) is at top scroll position
+    // If the touch or click originated inside a nested scrollable element or data-no-ptr, skip PTR
+    if (target && target instanceof Element) {
+      const nestedScrollable = target.closest('[data-no-ptr="true"], .overflow-y-auto, .overflow-y-scroll, textarea, input');
+      if (nestedScrollable && nestedScrollable !== container) {
+        isPullingRef.current = false;
+        return;
+      }
+    }
+
+    // Check if container is at or very near the top scroll position
     const scrollTop = container.scrollTop;
-    if (scrollTop <= 2) {
-      startYRef.current = e.touches[0].clientY;
-      startXRef.current = e.touches[0].clientX;
+    if (scrollTop <= 4) {
+      startYRef.current = clientY;
+      startXRef.current = clientX;
       isPullingRef.current = true;
       reachedThresholdRef.current = false;
     } else {
       isPullingRef.current = false;
     }
-  };
+  }, [disabled]);
 
-  // Track touch move with rubber-band damping
-  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (disabled || isRefreshing || !isPullingRef.current) return;
-
+  // Handle dragging / moving
+  const handleMove = useCallback((clientY: number, clientX: number, e?: Event) => {
+    if (disabled || isRefreshingRef.current || !isPullingRef.current) return;
     const container = containerRef.current;
     if (!container) return;
 
-    // Check if still at top
-    if (container.scrollTop > 2) {
+    // If user has scrolled down, abort pull
+    if (container.scrollTop > 4) {
       isPullingRef.current = false;
       setPullDistance(0);
       setIsDragging(false);
       return;
     }
 
-    const currentY = e.touches[0].clientY;
-    const currentX = e.touches[0].clientX;
-    const deltaY = currentY - startYRef.current;
-    const deltaX = currentX - startXRef.current;
+    const deltaY = clientY - startYRef.current;
+    const deltaX = clientX - startXRef.current;
 
-    // If horizontal scroll is dominant, cancel pull-to-refresh so carousels work smoothly
-    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10 && pullDistance === 0) {
+    // If horizontal scroll is dominant at the beginning, cancel pull so carousels/swiping works smoothly
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 8 && pullDistance === 0) {
       isPullingRef.current = false;
       return;
     }
 
-    // Only handle downward drag
+    // Only handle downward pull
     if (deltaY > 0) {
-      // Elastic rubber-banding formula
-      const dampedDistance = Math.min(maxPull, Math.pow(deltaY, 0.82) * 0.75);
+      // Prevent browser native pull-to-refresh or outer scrolling
+      if (e && e.cancelable) {
+        e.preventDefault();
+      }
+
+      // Elastic rubber-band resistance curve
+      const dampedDistance = Math.min(maxPull, Math.pow(deltaY, 0.84) * 0.85);
       setPullDistance(dampedDistance);
       setIsDragging(true);
 
-      // Trigger light haptic when crossing the threshold
+      // Trigger subtle haptic vibration when crossing threshold
       if (dampedDistance >= pullThreshold && !reachedThresholdRef.current) {
         reachedThresholdRef.current = true;
         if (typeof navigator !== "undefined" && navigator.vibrate) {
           try {
             navigator.vibrate(15);
           } catch {
-            // Ignore if vibration is disallowed
+            // Ignore
           }
         }
       } else if (dampedDistance < pullThreshold && reachedThresholdRef.current) {
@@ -103,27 +120,27 @@ export default function PullToRefresh({
       setPullDistance(0);
       setIsDragging(false);
     }
-  };
+  }, [disabled, maxPull, pullDistance, pullThreshold]);
 
-  // Handle touch end / release
-  const handleTouchEnd = async () => {
-    if (disabled || isRefreshing || !isPullingRef.current) return;
+  // Handle release / end
+  const handleEnd = useCallback(async () => {
+    if (disabled || isRefreshingRef.current || !isPullingRef.current) return;
 
     isPullingRef.current = false;
     setIsDragging(false);
 
     if (pullDistance >= pullThreshold) {
-      // Threshold reached -> trigger refresh action
+      // Threshold reached -> trigger active refresh
       setIsRefreshing(true);
       setPullDistance(refreshingHeight);
 
       try {
         await Promise.resolve(onRefresh());
       } catch (err) {
-        console.warn("[PullToRefresh] Error during refresh handler:", err);
+        console.warn("[PullToRefresh] Error during refresh execution:", err);
       }
 
-      // Show completed state briefly
+      // Show completion confirmation state
       setIsCompleted(true);
       if (typeof navigator !== "undefined" && navigator.vibrate) {
         try {
@@ -133,54 +150,140 @@ export default function PullToRefresh({
         }
       }
 
+      // Smoothly snap back after brief completion display
       setTimeout(() => {
         setIsCompleted(false);
         setIsRefreshing(false);
         setPullDistance(0);
-      }, 500);
+      }, 550);
     } else {
-      // Revert smoothly without refresh
+      // Snap back smoothly without refresh
       setPullDistance(0);
     }
-  };
+  }, [disabled, onRefresh, pullDistance, pullThreshold]);
 
-  // Progress percentage (0 to 1)
+  // Register non-passive native touch event listeners on container for reliable mobile capture
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        handleStart(e.touches[0].clientY, e.touches[0].clientX, e.target);
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        handleMove(e.touches[0].clientY, e.touches[0].clientX, e);
+      }
+    };
+
+    const onTouchEnd = () => {
+      handleEnd();
+    };
+
+    const onTouchCancel = () => {
+      handleEnd();
+    };
+
+    // Important: { passive: false } allows preventDefault() when user pulls down at top of view
+    container.addEventListener("touchstart", onTouchStart, { passive: true });
+    container.addEventListener("touchmove", onTouchMove, { passive: false });
+    container.addEventListener("touchend", onTouchEnd, { passive: true });
+    container.addEventListener("touchcancel", onTouchCancel, { passive: true });
+
+    // Pointer events for desktop emulator & mouse testing
+    let isPointerDown = false;
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      if (e.target instanceof Element) {
+        const nested = e.target.closest('[data-no-ptr="true"], .overflow-y-auto, .overflow-y-scroll, textarea, input, button, select');
+        if (nested && nested !== container) {
+          return;
+        }
+      }
+      isPointerDown = true;
+      handleStart(e.clientY, e.clientX, e.target);
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isPointerDown) return;
+      handleMove(e.clientY, e.clientX, e);
+    };
+
+    const onPointerUp = () => {
+      if (isPointerDown) {
+        isPointerDown = false;
+        handleEnd();
+      }
+    };
+
+    const onPointerCancel = () => {
+      if (isPointerDown) {
+        isPointerDown = false;
+        handleEnd();
+      }
+    };
+
+    container.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+
+    return () => {
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+      container.removeEventListener("touchend", onTouchEnd);
+      container.removeEventListener("touchcancel", onTouchCancel);
+
+      container.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+    };
+  }, [handleStart, handleMove, handleEnd]);
+
+  // Calculate pull progress (0.0 to 1.0)
   const progress = Math.min(1, pullDistance / pullThreshold);
   const isPastThreshold = pullDistance >= pullThreshold;
+
+  // Active translation distance for content
+  const activeTranslateY = isRefreshing ? refreshingHeight : pullDistance;
 
   return (
     <div
       id={id}
       ref={containerRef}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchEnd}
-      className={`relative flex flex-col w-full h-full overscroll-y-contain ${className}`}
+      style={{
+        overscrollBehaviorY: "contain",
+        touchAction: "pan-y pan-x",
+      }}
+      className={`relative w-full h-full overscroll-contain select-none ${className}`}
     >
-      {/* Pull-down Visual Indicator Pill */}
+      {/* Floating Refresh Indicator Pill */}
       <div
         id={`${id}-indicator`}
         style={{
-          height: `${pullDistance}px`,
-          transition: isDragging ? "none" : "height 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
+          transform: `translateY(${Math.min(activeTranslateY, 68)}px)`,
+          opacity: pullDistance > 8 || isRefreshing ? 1 : 0,
+          transition: isDragging ? "none" : "all 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
         }}
-        className="w-full overflow-hidden shrink-0 flex items-center justify-center pointer-events-none select-none z-30"
+        className="absolute top-[-44px] left-0 right-0 z-40 flex items-center justify-center pointer-events-none"
       >
         <div
           style={{
-            opacity: pullDistance > 12 ? Math.min(1, (pullDistance - 10) / 25) : 0,
-            transform: `scale(${Math.min(1, 0.7 + progress * 0.3)})`,
-            transition: isDragging ? "none" : "all 0.25s ease-out",
+            transform: `scale(${Math.min(1, 0.75 + progress * 0.25)})`,
+            transition: isDragging ? "none" : "transform 0.25s ease-out",
           }}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full shadow-lg border text-xs font-bold transition-colors ${
+          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full shadow-xl border text-xs font-bold transition-all backdrop-blur-md ${
             dark
               ? isPastThreshold || isRefreshing
-                ? "bg-slate-800/95 text-[#D4AF37] border-[#D4AF37]/40 shadow-black/50"
-                : "bg-slate-900/90 text-slate-300 border-white/10 shadow-black/40"
+                ? "bg-slate-800/95 text-[#D4AF37] border-[#D4AF37]/50 shadow-black/70 ring-1 ring-[#D4AF37]/20"
+                : "bg-slate-900/95 text-slate-300 border-white/10 shadow-black/60"
               : isPastThreshold || isRefreshing
-              ? "bg-white/95 text-[#6D3BFF] border-[#6D3BFF]/30 shadow-[#6D3BFF]/10"
-              : "bg-white/90 text-slate-600 border-slate-200 shadow-slate-200/50"
+              ? "bg-white/98 text-[#6D3BFF] border-[#6D3BFF]/40 shadow-[#6D3BFF]/15 ring-1 ring-[#6D3BFF]/20"
+              : "bg-white/95 text-slate-700 border-slate-200 shadow-slate-300/50"
           }`}
         >
           {isCompleted ? (
@@ -191,12 +294,12 @@ export default function PullToRefresh({
           ) : isRefreshing ? (
             <>
               <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#6D3BFF] shrink-0" />
-              <span className="text-[10.5px] font-extrabold tracking-tight">Syncing with Cloud...</span>
+              <span className="text-[11px] font-extrabold tracking-tight">Syncing data...</span>
             </>
           ) : (
             <>
               <div className="relative w-4 h-4 flex items-center justify-center shrink-0">
-                {/* SVG Progress Ring */}
+                {/* SVG Radial Progress Ring */}
                 <svg className="w-4 h-4 -rotate-90" viewBox="0 0 24 24">
                   <circle
                     cx="12"
@@ -205,7 +308,7 @@ export default function PullToRefresh({
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="2.5"
-                    strokeOpacity={0.2}
+                    strokeOpacity={0.25}
                   />
                   <circle
                     cx="12"
@@ -227,15 +330,23 @@ export default function PullToRefresh({
                 />
               </div>
               <span className="text-[10px] font-extrabold uppercase tracking-wider">
-                {isPastThreshold ? "Release to sync" : "Pull to refresh"}
+                {isPastThreshold ? "Release to sync" : "Pull down to refresh"}
               </span>
             </>
           )}
         </div>
       </div>
 
-      {/* Child Scrollable Content */}
-      <div className="flex-1 flex flex-col min-h-0 w-full relative">
+      {/* Child Content with physical rubber-band displacement */}
+      <div
+        ref={contentWrapperRef}
+        style={{
+          transform: `translateY(${activeTranslateY}px)`,
+          transition: isDragging ? "none" : "transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
+          willChange: isDragging || isRefreshing ? "transform" : "auto",
+        }}
+        className="w-full min-h-full flex flex-col"
+      >
         {children}
       </div>
     </div>
