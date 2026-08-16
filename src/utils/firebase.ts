@@ -1,5 +1,17 @@
 import { initializeApp } from "firebase/app";
-import { initializeFirestore, doc, setDoc, deleteDoc, getDocs, getDocsFromServer, collection, getDocFromServer, enableIndexedDbPersistence } from "firebase/firestore";
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager,
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  getDocs, 
+  getDocsFromServer, 
+  collection, 
+  getDocFromServer,
+  setLogLevel
+} from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import appletConfig from "../../firebase-applet-config.json";
 
@@ -9,30 +21,30 @@ const app = initializeApp(appletConfig);
 // Firebase Authentication instance
 export const auth = getAuth(app);
 
-// Initialize Firestore with custom database ID AND long polling for maximum connection stability
-export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-}, appletConfig.firestoreDatabaseId);
+// Initialize Firestore with modern persistent local cache and auto-detect long polling
+export const db = initializeFirestore(
+  app,
+  {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+    experimentalAutoDetectLongPolling: true,
+  },
+  appletConfig.firestoreDatabaseId
+);
 
-// Enable Offline IndexedDB Persistence for hybrid mobile apps (Capacitor)
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code == 'failed-precondition') {
-    console.warn("[Firebase] Offline persistence failed-precondition (multiple tabs open).");
-  } else if (err.code == 'unimplemented') {
-    console.warn("[Firebase] Offline persistence unimplemented in this browser.");
-  } else {
-    console.warn("[Firebase] Offline persistence enablement error:", err);
-  }
-});
+// Set log level to error to avoid noisy offline retry warning traces
+setLogLevel("error");
 
 // Validate Connection to Firestore (MANDATORY per system integration guidelines)
 async function testConnection() {
   try {
-    // Check connection by loading a non-existent document with a 5s timeout
-    await withTimeout(getDocFromServer(doc(db, "students", "test_connection")), 5000, "Connection test timed out");
-    console.log("[Firebase] Connection test completed successfully.");
+    await withTimeout(getDocFromServer(doc(db, "test", "connection")), 4000, "Connection check");
+    console.log("[Firebase] Firestore connection initialized successfully.");
   } catch (error) {
-    console.warn("[Firebase] Connection test status (normal during offline/cold start):", error);
+    if (error instanceof Error && (error.message.includes("the client is offline") || error.message.includes("unavailable"))) {
+      console.log("[Firebase] Operating with local persistence cache until connection resumes.");
+    }
   }
 }
 testConnection();
