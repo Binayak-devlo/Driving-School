@@ -78,6 +78,9 @@ import {
   updateProfile
 } from "firebase/auth";
 
+import { downloadPaymentReceipt, downloadFileOrImage, downloadCSV } from "../utils/exportUtils";
+import { Download } from "lucide-react";
+
 interface StudentAppProps {
   onStateChange: () => void; // call when state needs to refresh across other roles
   onLogout?: () => void;
@@ -86,15 +89,7 @@ interface StudentAppProps {
 }
 
 const getApiUrl = (path: string): string => {
-  // If running in local webview, Capacitor, or similar, use the absolute deployed URL.
-  const isNativeOrLocal = 
-    window.location.origin.includes('localhost') || 
-    window.location.origin.includes('file://') || 
-    window.location.origin.startsWith('capacitor://');
-    
-  if (isNativeOrLocal) {
-    return `https://ais-pre-fha6at5q7a7mjolb2w3hyi-204689890096.asia-east1.run.app${path}`;
-  }
+  // Always use standard relative API endpoints which work across local, container, and Vercel hosting
   return path;
 };
 
@@ -4632,12 +4627,34 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                 <div className="flex flex-col gap-2">
                   <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider">Transaction History</h4>
                   {payments.map((p) => (
-                    <div key={p.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex items-center justify-between">
-                      <div>
-                        <p className="font-bold text-xs text-[#161623] truncate max-w-[180px]">{p.purpose}</p>
+                    <div key={p.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex items-center justify-between gap-2 hover:border-slate-200 transition-all">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-xs text-[#161623] truncate">{p.purpose}</p>
                         <p className="text-[9px] text-slate-400">{p.date} • {p.paymentMethod} • Ref: {p.transactionId}</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            downloadPaymentReceipt({
+                              id: p.id,
+                              transactionId: p.transactionId,
+                              amount: p.amount,
+                              purpose: p.purpose,
+                              paymentMethod: p.paymentMethod,
+                              date: p.date,
+                              status: p.status,
+                              studentName: student.name,
+                              studentPhone: student.phone,
+                              studentEmail: student.email,
+                              courseName: student.courseName
+                            });
+                            showNotification("Downloaded official payment receipt.");
+                          }}
+                          className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-bold text-[#6D3BFF] hover:text-[#8F52FF] bg-[#6D3BFF]/5 hover:bg-[#6D3BFF]/10 px-2 py-0.5 rounded-lg cursor-pointer transition-all"
+                        >
+                          <Download className="w-3 h-3" /> Download Receipt
+                        </button>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right shrink-0">
                         <p className="font-black text-xs text-[#161623]">₹{p.amount.toLocaleString()}</p>
                         <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase ${
                           p.status === 'Success' 

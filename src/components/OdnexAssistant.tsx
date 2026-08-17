@@ -197,7 +197,9 @@ export default function OdnexAssistant({
         body: JSON.stringify(payload)
       });
 
-      if (response.ok) {
+      const contentType = response.headers.get("content-type") || "";
+
+      if (response.ok && contentType.includes("application/json")) {
         const data = await response.json();
         
         const assistantMessage: OdnexMessage = {
@@ -213,24 +215,22 @@ export default function OdnexAssistant({
 
         setMessages(prev => [...prev, assistantMessage]);
       } else {
-        throw new Error("Server response failed");
+        throw new Error("Invalid or non-JSON response from server endpoint");
       }
     } catch (err) {
       console.warn("Using local ODNEX fallback engine:", err);
       // Intelligent Local Engine Fallback
       const localResult = executeLocalOdnexEngine(queryText, role, currentStudent, currentTrainer);
       
-      setTimeout(() => {
-        const fallbackMessage: OdnexMessage = {
-          id: `msg_odnex_${Date.now()}`,
-          role: "model",
-          text: localResult.text,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          action: localResult.action,
-          suggestedActions: localResult.suggestedActions
-        };
-        setMessages(prev => [...prev, fallbackMessage]);
-      }, 500);
+      const fallbackMessage: OdnexMessage = {
+        id: `msg_odnex_${Date.now()}`,
+        role: "model",
+        text: localResult.text,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        action: localResult.action,
+        suggestedActions: localResult.suggestedActions
+      };
+      setMessages(prev => [...prev, fallbackMessage]);
     } finally {
       setLoading(false);
     }

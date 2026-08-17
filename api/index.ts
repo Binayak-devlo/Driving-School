@@ -15,8 +15,57 @@ import {
   query, 
   where 
 } from "firebase/firestore";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
+
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn("WARNING: GEMINI_API_KEY environment variable is not defined. GoogleGenAI client will initialize with a placeholder key.");
+    }
+    aiInstance = new GoogleGenAI({
+      apiKey: apiKey || "PLACEHOLDER_KEY",
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  }
+  return aiInstance;
+}
+
+// Resilient helper to generate Gemini responses with fallback across models
+async function generateGeminiContentWithFallback(params: {
+  contents: any[];
+  systemInstruction?: string;
+}): Promise<string | null> {
+  const modelsToTry = [
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-3.7-flash"
+  ];
+
+  for (const model of modelsToTry) {
+    try {
+      const response = await getAI().models.generateContent({
+        model,
+        contents: params.contents,
+        config: params.systemInstruction ? { systemInstruction: params.systemInstruction } : undefined
+      });
+      if (response && response.text) {
+        return response.text;
+      }
+    } catch (_err: any) {
+      // Gracefully advance to next available model without throwing
+    }
+  }
+  return null;
+}
 
 // Load firebase-applet-config.json with fallback logic for Vercel Serverless environment
 let appletConfig: any;
@@ -464,27 +513,560 @@ app.post("/api/auth/verify-email", async (req, res) => {
   }
 });
 
-// API Route: AI Driving Coach / Chatbot
-app.post("/api/ai/coach", async (req, res) => {
-  try {
-    const { studentName, skillProgress, message, chatHistory } = req.body;
+// API Route: Simulated GPS Coordinates
+let driverLatitude = 20.2925;
+let driverLongitude = 85.8650;
 
-    // Mock AI responses - no external API calls
-    const mockResponses = [
-      `Hi ${studentName}! As your AI Driving Coach, I'm here to help. Looking at your stats, your **Clutch Control (70%)** needs some practice. When moving off, find the friction point, hold it for 3 seconds, then gently release while applying accelerator. What specific area would you like to cover today?`,
-      `Great question, ${studentName}! For parallel parking, remember the **MST (Mirror, Signal, Maneuver)** routine. Pull up parallel to the vehicle in front, about 2 feet away. Reverse straight until your rear bumper aligns with their rear tire, then turn your wheel fully toward the curb. Keep practicing!`,
-      `Perfect query! When starting on a hill, use the handbrake to prevent rolling back. Slowly release the clutch until you feel the engine dip slightly (friction point), then gently press the accelerator while lowering the handbrake. You can do this!`,
-      `Excellent progress, ${studentName}! Your lane changing technique is improving. Always check mirrors, use signals, and maintain a safe following distance. Practice makes perfect!`,
-      `Remember ${studentName}, smooth steering inputs are key to good control. Avoid jerky movements and always anticipate road conditions ahead. You're doing great!`
-    ];
+// API Route: AI Driving Coach / ODNEX Super AI Assistant
+app.post(["/api/ai/coach", "/api/ai/odnex"], async (req, res) => {
+  try {
+    const { role = "student", studentId, studentName, trainerId, trainerName, skillProgress, message, chatHistory } = req.body;
+
+    const todayStr = new Date().toISOString().split("T")[0];
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split("T")[0];
+
+    // ==========================================
+    // 1. TRAINER ROLE AI PROCESSING
+    // ==========================================
+    if (role === "trainer") {
+      let activeTrainerId = trainerId || "trainer_1";
+      let activeTrainerName = trainerName || "Rajesh Kumar";
+
+      // Fetch bookings for this trainer
+      let trainerBookings: any[] = [];
+      try {
+        const bookingsCol = collection(db, "bookings");
+        const qBookings = query(bookingsCol, where("trainerId", "==", activeTrainerId));
+        const bookingsSnap = await getDocs(qBookings);
+        trainerBookings = bookingsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+      } catch (err) {
+        console.error("Error fetching trainer bookings:", err);
+      }
+
+      // Fetch all registered students
+      let allStudents: any[] = [];
+      try {
+        const studentsCol = collection(db, "students");
+        const studentsSnap = await getDocs(studentsCol);
+        allStudents = studentsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+      } catch (err) {
+        console.error("Error fetching students for trainer:", err);
+      }
+
+      const todayClasses = trainerBookings.filter(b => b.date === todayStr && b.status !== "cancelled");
+      const nextPickupClass = todayClasses.find(b => b.pickupStatus === "on_the_way" || b.pickupStatus === "arrived" || b.pickupStatus === "idle") || todayClasses[0];
+      const assignedStudent = nextPickupClass 
+        ? allStudents.find(s => s.id === nextPickupClass.studentId || s.name === nextPickupClass.studentName) || { name: nextPickupClass.studentName || "Aman Pattnaik", phone: "+91 94370 12345", location: "Rasulgarh, Bhubaneswar" }
+        : (allStudents[0] || { name: "Aman Pattnaik", phone: "+91 94370 12345", location: "Rasulgarh, Bhubaneswar" });
+
+      const systemInstructionTrainer = `You are ODNEX, the central intelligent AI Assistant & Operations Copilot for Golden Hands Driving School in Bhubaneswar, Odisha.
+You are assisting Coach ${activeTrainerName}.
+TODAY'S DATE: ${todayStr}.
+
+CREATOR & IDENTITY MANDATE:
+If anyone asks ODNEX who was your creator, who created you, who makes/made you, who built you, or who developed you, you MUST state clearly:
+"BNP Tech Binayak Sir created me specially as a driving school assistant."
+
+TRAINER PROFILE:
+- Name: ${activeTrainerName}
+- Role: Chief Driving Instructor
+- Vehicle: Maruti Suzuki Swift (OD 02 AB 1234, Dual-Control)
+
+TODAY'S BOOKINGS FOR THIS TRAINER:
+${todayClasses.length > 0 ? todayClasses.map(c => `- Date: ${c.date}, Slot: ${c.timeSlot}, Student: ${c.studentName}, Phone: ${c.studentPhone || 'N/A'}, Status: ${c.status}, Pickup Status: ${c.pickupStatus || 'idle'}, Class: ${c.classStatus || 'not_started'}`).join("\n") : "No classes scheduled for today."}
+
+ASSIGNED STUDENTS:
+${allStudents.slice(0, 8).map(s => `- ${s.name} (Phone: ${s.phone || 'N/A'}, Package: ${s.courseName || 'Basic'}, Location: ${s.location || 'Bhubaneswar'})`).join("\n")}
+
+ACTIVE / NEXT PICKUP TARGET:
+- Student: ${assignedStudent.name}
+- Phone: ${assignedStudent.phone || "+91 94370 12345"}
+- Pickup Location: ${assignedStudent.location || "Rasulgarh, Bhubaneswar"}
+
+INSTRUCTIONS:
+1. If asked who created/made/developed you, always answer: "BNP Tech Binayak Sir created me specially as a driving school assistant."
+2. Provide concise, clear, and actionable responses.
+3. If asked to start pickup or navigate, provide clear details and confirm live GPS tracking will be broadcasted to the student.
+4. If asked about today's classes or schedule, list all sessions chronologically.
+5. If asked to contact or call a student, provide the student's verified phone number and pickup location.`;
+
+      let replyText = `Hello Coach ${activeTrainerName}! I am ODNEX, your operations copilot. You have ${todayClasses.length} driving classes scheduled for today.`;
+      let extractedAction: any = undefined;
+
+      const qLower = (message || "").toLowerCase();
+      const isCreatorTrainerQuery = qLower.includes("creator") || 
+        qLower.includes("who created") || 
+        qLower.includes("who made") || 
+        qLower.includes("who makes you") || 
+        qLower.includes("who makes u") ||
+        qLower.includes("who built") || 
+        qLower.includes("who developed") || 
+        qLower.includes("who programmed") ||
+        qLower.includes("who designed you") ||
+        qLower.includes("who is your developer") ||
+        qLower.includes("who is your maker") ||
+        qLower.includes("who is binayak") ||
+        qLower.includes("bnp tech");
+
+      if (isCreatorTrainerQuery) {
+        replyText = "BNP Tech Binayak Sir created me specially as a driving school assistant.";
+      } else if (qLower.includes("pickup") || qLower.includes("start route") || qLower.includes("start pickup") || qLower.includes("navigate")) {
+        extractedAction = {
+          type: "START_PICKUP_ROUTE",
+          data: {
+            studentName: assignedStudent.name,
+            location: assignedStudent.location || "Rasulgarh, Bhubaneswar",
+            phone: assignedStudent.phone || "+91 94370 12345"
+          }
+        };
+        replyText = `Engaging pickup route to **${assignedStudent.name}** at **${assignedStudent.location || "Rasulgarh, Bhubaneswar"}**. Live GPS telemetry will broadcast to the student's app.`;
+      } else if (qLower.includes("call") || qLower.includes("phone") || qLower.includes("contact student")) {
+        extractedAction = {
+          type: "CALL_STUDENT",
+          data: {
+            name: assignedStudent.name,
+            phone: assignedStudent.phone || "+91 94370 12345"
+          }
+        };
+        replyText = `Here is the contact details for **${assignedStudent.name}**:\n- **Phone**: ${assignedStudent.phone || "+91 94370 12345"}\n- **Pickup Address**: ${assignedStudent.location || "Rasulgarh, Bhubaneswar"}`;
+      } else if (qLower.includes("schedule") || qLower.includes("today") || qLower.includes("classes")) {
+        extractedAction = { type: "VIEW_SCHEDULE" };
+      } else if (qLower.includes("student") || qLower.includes("roll")) {
+        extractedAction = { type: "NAVIGATE_TAB", data: { tab: "students" } };
+      }
+
+      if (process.env.GEMINI_API_KEY && (!extractedAction || extractedAction.type === "VIEW_SCHEDULE")) {
+        const formattedHistory = (chatHistory || []).map((msg: any) => ({
+          role: msg.role === 'model' ? 'model' : 'user',
+          parts: [{ text: msg.text }]
+        }));
+
+        const generated = await generateGeminiContentWithFallback({
+          contents: [
+            ...formattedHistory,
+            { role: 'user', parts: [{ text: message }] }
+          ],
+          systemInstruction: systemInstructionTrainer,
+        });
+
+        if (generated) {
+          replyText = generated;
+        }
+      }
+
+      return res.json({
+        text: replyText,
+        action: extractedAction,
+        suggestedActions: ["🚗 Start Pickup Route", "📅 Show Today's Schedule", "👥 Assigned Students", "📞 Contact Student"]
+      });
+    }
+
+    // ==========================================
+    // 2. STUDENT ROLE AI PROCESSING
+    // ==========================================
+    let studentData = null;
+    let resStudentId = studentId || "";
+
+    if (resStudentId) {
+      try {
+        const studentDocRef = doc(db, "students", resStudentId);
+        const studentDocSnap = await getDoc(studentDocRef);
+        if (studentDocSnap.exists()) {
+          studentData = studentDocSnap.data();
+        }
+      } catch (err) {
+        console.error("Error fetching student profile:", err);
+      }
+    }
+
+    if (!studentData && studentName) {
+      try {
+        const studentsCol = collection(db, "students");
+        const q = query(studentsCol, where("name", "==", studentName));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          studentData = snap.docs[0].data();
+          resStudentId = snap.docs[0].id;
+        }
+      } catch (err) {
+        console.error("Error querying student by name:", err);
+      }
+    }
+
+    if (!studentData) {
+      studentData = {
+        id: resStudentId || "student_guest",
+        name: studentName || "Guest Student",
+        email: "guest@goldenhands.com",
+        phone: "0000000000",
+        location: "Rasulgarh, Bhubaneswar",
+        llStatus: "Applied",
+        referralCode: "GUEST001",
+        courseName: "Premium Package (20 Sessions)",
+        courseSyllabus: ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"]
+      };
+      resStudentId = studentData.id;
+    }
+
+    // Fetch skill progress
+    let actualProgress = skillProgress || {};
+    try {
+      const progressDocRef = doc(db, "progress", resStudentId);
+      const progressDocSnap = await getDoc(progressDocRef);
+      if (progressDocSnap.exists()) {
+        actualProgress = progressDocSnap.data();
+      }
+    } catch (err) {
+      console.error("Error fetching progress document:", err);
+    }
+
+    // Fetch bookings
+    let studentBookings: any[] = [];
+    try {
+      const bookingsCol = collection(db, "bookings");
+      const qBookings = query(bookingsCol, where("studentId", "==", resStudentId));
+      const bookingsSnap = await getDocs(qBookings);
+      studentBookings = bookingsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    } catch (err) {
+      console.error("Error fetching bookings:", err);
+    }
+
+    // Fetch documents
+    let studentDocs: any[] = [];
+    try {
+      const docsCol = collection(db, "documents");
+      const qDocs = query(docsCol, where("studentId", "==", resStudentId));
+      const docsSnap = await getDocs(qDocs);
+      studentDocs = docsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    } catch (err) {
+      console.error("Error fetching documents:", err);
+    }
+
+    // Fetch payments
+    let studentPayments: any[] = [];
+    try {
+      const paymentsCol = collection(db, "payments");
+      const qPayments = query(paymentsCol, where("studentId", "==", resStudentId));
+      const paymentsSnap = await getDocs(qPayments);
+      studentPayments = paymentsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    } catch (err) {
+      console.error("Error fetching payments:", err);
+    }
+
+    // Fetch slots
+    let allSlots: any[] = [];
+    try {
+      const slotsCol = collection(db, "slots");
+      const slotsSnap = await getDocs(slotsCol);
+      allSlots = slotsSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    } catch (err) {
+      console.error("Error fetching slots:", err);
+    }
+
+    // Fetch trainers
+    let allTrainers: any[] = [];
+    try {
+      const trainersCol = collection(db, "trainers");
+      const trainersSnap = await getDocs(trainersCol);
+      allTrainers = trainersSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    } catch (err) {
+      console.error("Error fetching trainers:", err);
+    }
+
+    const defaultTrainer = allTrainers[0] || {
+      id: "trainer_1",
+      name: "Rajesh Kumar",
+      phone: "+91 98765 43210",
+      carName: "Maruti Suzuki Swift",
+      carPlate: "OD 02 AB 1234",
+      rating: 4.9,
+      reviewsCount: 48
+    };
+
+    // Calculate Rajesh's live tracking details dynamically
+    const todayBooking = studentBookings.find(b => b.date === todayStr && b.status !== "cancelled");
     
-    const randomAnswer = mockResponses[Math.floor(Math.random() * mockResponses.length)];
-    
+    const targetLat = 20.2965;
+    const targetLng = 85.8682;
+    const latDiff = targetLat - driverLatitude;
+    const lngDiff = targetLng - driverLongitude;
+    const distanceDegree = Math.sqrt(Math.pow(latDiff, 2) + Math.pow(lngDiff, 2));
+    const eta = Math.max(1, Math.ceil(distanceDegree * 1200));
+    const distanceKm = (distanceDegree * 111).toFixed(1);
+
+    const hasClassTodayWithRajesh = todayBooking && (todayBooking.trainerId === "trainer_1" || (todayBooking.trainerName || "").toLowerCase().includes("rajesh"));
+
+    // Format skill progress list
+    const progressSummary = Object.entries(actualProgress)
+      .filter(([key]) => key !== "id")
+      .map(([skill, val]) => `- ${skill}: ${val}%`)
+      .join("\n");
+
+    // Format student bookings
+    const bookingsSummary = studentBookings.length > 0
+      ? studentBookings.map(b => `- Date: ${b.date}, Slot: ${b.timeSlot}, Trainer: ${b.trainerName}, Car: ${b.carName} (${b.carPlate}), Status: ${b.status}, Pickup: ${b.pickupStatus || 'idle'}, Class: ${b.classStatus || 'not_started'}`).join("\n")
+      : "No bookings found.";
+
+    // Format student documents
+    const docsSummary = studentDocs.length > 0
+      ? studentDocs.map(d => `- Document: ${d.name}, Type: ${d.type}, Status: ${d.status}, Uploaded: ${d.uploadedAt}`).join("\n")
+      : "No documents uploaded.";
+
+    // Format student payments
+    const paymentsSummary = studentPayments.length > 0
+      ? studentPayments.map(p => `- Date: ${p.date}, Amount: ₹${p.amount}, Purpose: ${p.purpose}, Method: ${p.paymentMethod}, Status: ${p.status}`).join("\n")
+      : "No payments recorded.";
+
+    // Format trainers
+    const trainersSummary = allTrainers.length > 0
+      ? allTrainers.map(t => `- Trainer: ${t.name}, Phone: ${t.phone}, Rating: ${t.rating} (${t.reviewsCount} reviews), Vehicle: ${t.carName} (${t.carPlate}), Status: ${t.isAvailable ? 'Available' : 'Unavailable'}`).join("\n")
+      : "Trainers list unavailable.";
+
+    // Format slots & remaining availability
+    const slotsSummary = allSlots.length > 0
+      ? allSlots.map(s => {
+          const morningBookedReal = studentBookings.filter(b => b.date === s.date && b.timeSlot === "Morning" && b.status !== "cancelled").length;
+          const lunchBookedReal = studentBookings.filter(b => b.date === s.date && b.timeSlot === "Lunch" && b.status !== "cancelled").length;
+          const rushHourBookedReal = studentBookings.filter(b => b.date === s.date && b.timeSlot === "Rush Hour" && b.status !== "cancelled").length;
+          const eveningBookedReal = studentBookings.filter(b => b.date === s.date && b.timeSlot === "Evening" && b.status !== "cancelled").length;
+
+          return `- Date: ${s.date}${s.isClosed ? ' (CLOSED)' : ''}:
+  * Morning: ${s.morningEnabled ? `Enabled, Limit: ${s.morningMax}, Booked count: ${morningBookedReal} (Remaining: ${Math.max(0, s.morningMax - morningBookedReal)})` : 'Closed'}
+  * Lunch: ${s.lunchEnabled ? `Enabled, Limit: ${s.lunchMax}, Booked count: ${lunchBookedReal} (Remaining: ${Math.max(0, s.lunchMax - lunchBookedReal)})` : 'Closed'}
+  * Rush Hour: ${s.rushHourEnabled ? `Enabled, Limit: ${s.rushHourMax}, Booked count: ${rushHourBookedReal} (Remaining: ${Math.max(0, s.rushHourMax - rushHourBookedReal)})` : 'Closed'}
+  * Evening: ${s.eveningEnabled ? `Enabled, Limit: ${s.eveningMax}, Booked count: ${eveningBookedReal} (Remaining: ${Math.max(0, s.eveningMax - eveningBookedReal)})` : 'Closed'}`;
+        }).join("\n")
+      : "No slots data configured.";
+
+    const aadharDoc = studentDocs.find(d => (d.name || "").toLowerCase().includes("aadhar") || (d.name || "").toLowerCase().includes("aadhaar"));
+    const isAadharVerified = (aadharDoc && aadharDoc.status === "Verified") || studentData.adminManualUnlock;
+    const completedClassesCount = studentBookings.filter(b => b.status?.toLowerCase() === "completed").length;
+
+    // Extract Intent & Action for students
+    const qLower = (message || "").toLowerCase();
+    let extractedAction: any = undefined;
+
+    const isCreatorStudentQuery = qLower.includes("creator") || 
+      qLower.includes("who created") || 
+      qLower.includes("who made") || 
+      qLower.includes("who makes you") || 
+      qLower.includes("who makes u") ||
+      qLower.includes("who built") || 
+      qLower.includes("who developed") || 
+      qLower.includes("who programmed") ||
+      qLower.includes("who designed you") ||
+      qLower.includes("who is your developer") ||
+      qLower.includes("who is your maker") ||
+      qLower.includes("who is binayak") ||
+      qLower.includes("bnp tech");
+
+    if (isCreatorStudentQuery) {
+      // Direct instant match for creator query
+    } else if (qLower.includes("where is") || qLower.includes("how far") || qLower.includes("track trainer") || qLower.includes("trainer location") || qLower.includes("eta")) {
+      extractedAction = {
+        type: "TRACK_TRAINER",
+        data: {
+          trainerName: todayBooking?.trainerName || defaultTrainer.name,
+          distanceKm: parseFloat(distanceKm),
+          etaMinutes: eta,
+          pickupStatus: todayBooking?.pickupStatus || (hasClassTodayWithRajesh ? "on_the_way" : "idle"),
+          location: studentData.location || "Rasulgarh, Bhubaneswar"
+        }
+      };
+    } else if (qLower.includes("call") || qLower.includes("phone") || qLower.includes("contact trainer")) {
+      extractedAction = {
+        type: "CALL_TRAINER",
+        data: {
+          name: defaultTrainer.name,
+          phone: defaultTrainer.phone || "+91 98765 43210",
+          vehicle: `${defaultTrainer.carName} (${defaultTrainer.carPlate})`
+        }
+      };
+    } else if (qLower.includes("book") || qLower.includes("schedule a class") || qLower.includes("reserve")) {
+      let targetSlot = "Morning";
+      if (qLower.includes("evening") || qLower.includes("night")) targetSlot = "Evening";
+      else if (qLower.includes("lunch") || qLower.includes("afternoon")) targetSlot = "Lunch";
+      else if (qLower.includes("rush") || qLower.includes("4:30")) targetSlot = "Rush Hour";
+
+      let targetDate = tomorrowStr;
+      if (qLower.includes("saturday")) {
+        const d = new Date();
+        d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7));
+        targetDate = d.toISOString().split("T")[0];
+      }
+
+      extractedAction = {
+        type: "BOOK_CLASS",
+        requiresConfirmation: true,
+        confirmationPrompt: `Confirm booking for ${targetDate} (${targetSlot}) with ${defaultTrainer.name}?`,
+        data: {
+          date: targetDate,
+          timeSlot: targetSlot,
+          trainerId: defaultTrainer.id,
+          trainerName: defaultTrainer.name,
+          carName: defaultTrainer.carName,
+          carPlate: defaultTrainer.carPlate
+        }
+      };
+    } else if (qLower.includes("next available") || qLower.includes("available slot")) {
+      const availableSlot = allSlots.find(s => !s.isClosed && s.date > todayStr);
+      const nextDate = availableSlot ? availableSlot.date : tomorrowStr;
+      extractedAction = {
+        type: "FIND_NEXT_SLOT",
+        data: { date: nextDate, timeSlot: "Morning" }
+      };
+    } else if (qLower.includes("progress") || qLower.includes("weak")) {
+      extractedAction = { type: "VIEW_PROGRESS" };
+    } else if (qLower.includes("reschedule")) {
+      const upcomingBooking = studentBookings.find(b => b.date >= todayStr && b.status !== "cancelled");
+      if (upcomingBooking) {
+        const nextSat = new Date();
+        nextSat.setDate(nextSat.getDate() + ((6 - nextSat.getDay() + 7) % 7 || 7));
+        const newDate = nextSat.toISOString().split("T")[0];
+
+        extractedAction = {
+          type: "RESCHEDULE_CLASS",
+          requiresConfirmation: true,
+          data: {
+            bookingId: upcomingBooking.id,
+            oldDate: upcomingBooking.date,
+            newDate: newDate,
+            newTimeSlot: upcomingBooking.timeSlot
+          }
+        };
+      }
+    } else if (qLower.includes("cancel")) {
+      const upcomingBooking = studentBookings.find(b => b.date >= todayStr && b.status !== "cancelled");
+      if (upcomingBooking) {
+        extractedAction = {
+          type: "CANCEL_CLASS",
+          requiresConfirmation: true,
+          data: { bookingId: upcomingBooking.id, date: upcomingBooking.date }
+        };
+      }
+    }
+
+    // Build system instruction
+    const systemInstruction = `You are ODNEX, the central super AI assistant for Golden Hands Driving School in Bhubaneswar, Odisha.
+Your purpose is to assist students accurately, professionally, and warmly.
+TODAY'S DATE: ${todayStr} (use this to check future dates, same-day is today, past is before today).
+
+CREATOR & IDENTITY MANDATE:
+If anyone asks ODNEX who was your creator, who created you, who makes/made you, who built you, or who developed you, you MUST state clearly:
+"BNP Tech Binayak Sir created me specially as a driving school assistant."
+
+==================================================
+STUDENT PROFILE:
+- Name: ${studentData.name}
+- Email: ${studentData.email}
+- Phone: ${studentData.phone}
+- Course Package: ${studentData.courseName}
+- Syllabus: ${studentData.courseSyllabus ? studentData.courseSyllabus.join(", ") : "None"}
+- Learner's Licence (LL) Status: ${studentData.llStatus || "Not Set"}
+- Referral Code: ${studentData.referralCode || "None"}
+- Aadhaar Verified?: ${isAadharVerified ? 'YES' : 'NO'} (Mandatory for booking driving classes)
+- Admin Manual Unlock?: ${studentData.adminManualUnlock ? 'YES' : 'NO'}
+- Booking Locked by Admin?: ${studentData.bookingLocked ? 'YES (Reason: ' + (studentData.lockedReason || "Payment Required") + ')' : 'NO'}
+- Amount Paid: ₹${studentData.amountPaid || 0}
+- Completed Classes Count: ${completedClassesCount}
+- Course Ended: ${studentData.courseEnded ? 'YES' : 'NO'}
+- Plan Extended: ${studentData.planExtended ? 'YES' : 'NO'}
+
+==================================================
+SKILL PROGRESS:
+${progressSummary}
+
+==================================================
+STUDENT BOOKINGS HISTORY & UPCOMING:
+${bookingsSummary}
+
+==================================================
+TRAINERS IN SCHOOL:
+${trainersSummary}
+
+==================================================
+CLASS SLOTS & REAL-TIME AVAILABILITY:
+${slotsSummary}
+
+==================================================
+TRAINER LIVE TRACKING DETAILS (FOR TODAY):
+- Chief Trainer: Rajesh Kumar
+- Booking today with Rajesh Kumar?: ${hasClassTodayWithRajesh ? 'YES' : 'NO'}
+- Trainer coordinates: Lat ${driverLatitude}, Lng ${driverLongitude}
+- Trainer distance from student's spot (Rasulgarh): ${distanceKm} km
+- Trainer estimated arrival time (ETA): ${eta} minutes
+- Today's Class Pickup status: ${todayBooking ? (todayBooking.pickupStatus || "idle") : "idle"}
+- Today's Class status: ${todayBooking ? (todayBooking.classStatus || "not_started") : "not_started"}
+
+RULES:
+1. If asked who created/made/developed you, always answer: "BNP Tech Binayak Sir created me specially as a driving school assistant."
+2. If the user asks about booking, verify if Aadhaar is verified. If verified, propose the booking with clear details (Date, Slot, Instructor, Vehicle).
+3. If the user asks where the trainer is, state Rajesh Kumar's live distance (${distanceKm} km) and ETA (${eta} mins).
+4. If the user asks to call their trainer, provide chief trainer contact number (+91 98765 43210).
+5. Keep answers conversational, crisp, and formatted with clean Markdown.`;
+
+    let replyText = "I am processing your driving school request.";
+
+    if (isCreatorStudentQuery) {
+      replyText = "BNP Tech Binayak Sir created me specially as a driving school assistant.";
+    } else if (!process.env.GEMINI_API_KEY) {
+      if (extractedAction?.type === "BOOK_CLASS") {
+        replyText = `I have organized a driving class booking proposal for you:\n\n- **Date**: ${extractedAction.data.date}\n- **Session**: ${extractedAction.data.timeSlot}\n- **Trainer**: ${extractedAction.data.trainerName}\n- **Vehicle**: ${extractedAction.data.carName}\n\nPlease click **Confirm & Book Now** below to finalize this reservation into your timetable.`;
+      } else if (extractedAction?.type === "TRACK_TRAINER") {
+        replyText = `Trainer **${defaultTrainer.name}** is on the way to your pickup location at **${studentData.location || "Rasulgarh, Bhubaneswar"}**!\n\n- **Live Distance**: ${distanceKm} km\n- **ETA**: ~${eta} minutes\n- **Car**: ${defaultTrainer.carName} (${defaultTrainer.carPlate})`;
+      } else if (extractedAction?.type === "CALL_TRAINER") {
+        replyText = `Here is the contact details for your instructor **${defaultTrainer.name}** (${defaultTrainer.phone}). You can call directly below!`;
+      } else {
+        replyText = `Hello ${studentData.name}! I am ODNEX, your central AI driving assistant. Your completed sessions count is **${completedClassesCount} / 20**. How can I help you today?`;
+      }
+    } else {
+      const formattedHistory = (chatHistory || []).map((msg: any) => ({
+        role: msg.role === 'model' ? 'model' : 'user',
+        parts: [{ text: msg.text }]
+      }));
+
+      const generated = await generateGeminiContentWithFallback({
+        contents: [
+          ...formattedHistory,
+          { role: 'user', parts: [{ text: message }] }
+        ],
+        systemInstruction: systemInstruction,
+      });
+
+      if (generated) {
+        replyText = generated;
+      } else {
+        // Graceful contextual fallback if all models are experiencing temporary spikes
+        if (extractedAction?.type === "BOOK_CLASS") {
+          replyText = `I have organized a driving class booking proposal for you:\n\n- **Date**: ${extractedAction.data.date}\n- **Session**: ${extractedAction.data.timeSlot}\n- **Trainer**: ${extractedAction.data.trainerName}\n\nPlease click **Confirm & Book Now** below.`;
+        } else if (extractedAction?.type === "TRACK_TRAINER") {
+          replyText = `Trainer **${defaultTrainer.name}** is active for today's pickup at **${studentData.location || "Rasulgarh, Bhubaneswar"}** (${distanceKm} km away, ETA ~${eta} mins).`;
+        } else if (extractedAction?.type === "CALL_TRAINER") {
+          replyText = `Here is the contact details for your instructor **${defaultTrainer.name}** (${defaultTrainer.phone}). You can call directly below!`;
+        } else {
+          replyText = `Hello ${studentData.name}! I am ODNEX. How can I assist you with class schedules, trainer tracking, or theory practice?`;
+        }
+      }
+    }
+
+    const weakSkills = Object.entries(actualProgress)
+      .filter(([key, val]) => key !== "id" && typeof val === "number" && (val as number) < 75)
+      .map(([k]) => k);
+
+    let suggestedActions = ["📅 Book Tomorrow Morning", "📍 Where is My Trainer?", "📞 Call Instructor", "⏱️ Next Available Slot"];
+    if (extractedAction?.type === "BOOK_CLASS") {
+      suggestedActions = ["✅ Confirm & Book Now", "📅 View My Bookings", "👥 Check Instructor Profile"];
+    } else if (extractedAction?.type === "TRACK_TRAINER") {
+      suggestedActions = ["📞 Call Trainer Rajesh", "🗺️ Open Full Screen GPS Map", "🏠 Change Pickup Location"];
+    }
+
     return res.json({
-      text: `🎓 *[Mock AI Coach Mode]*\n\n${randomAnswer}`,
-      suggestedSkills: Object.entries(skillProgress || {})
-        .filter(([_, val]) => (val as number) < 75)
-        .map(([skill]) => skill)
+      text: replyText,
+      action: extractedAction,
+      suggestedSkills: weakSkills,
+      suggestedActions: suggestedActions
     });
 
   } catch (error: any) {
@@ -492,10 +1074,6 @@ app.post("/api/ai/coach", async (req, res) => {
     res.status(500).json({ error: error.message || "Failed to generate response" });
   }
 });
-
-// API Route: Simulated GPS Coordinates
-let driverLatitude = 20.2925;
-let driverLongitude = 85.8650;
 
 app.get("/api/tracker/location", (req, res) => {
   const targetLat = 20.2965;
