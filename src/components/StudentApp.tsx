@@ -4633,8 +4633,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         <p className="text-[9px] text-slate-400">{p.date} • {p.paymentMethod} • Ref: {p.transactionId}</p>
                         <button
                           type="button"
-                          onClick={() => {
-                            downloadPaymentReceipt({
+                          onClick={async () => {
+                            await downloadPaymentReceipt({
                               id: p.id,
                               transactionId: p.transactionId,
                               amount: p.amount,

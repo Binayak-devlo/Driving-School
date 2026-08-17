@@ -1100,4 +1100,57 @@ app.get("/api/tracker/location", (req, res) => {
   });
 });
 
+// ==========================================
+// UNIVERSAL REAL HTTP/HTTPS EXPORT & DOWNLOAD ENDPOINTS
+// Fixes Android WebView/Capacitor "Can only download HTTP/HTTPS URIs: blob:..." error
+// ==========================================
+const serverlessExportStore = new Map<string, { filename: string; content: string; contentType: string; createdAt: number }>();
+
+app.post("/api/export/prepare", (req, res) => {
+  try {
+    const { filename, content, contentType = "text/csv; charset=utf-8" } = req.body;
+    if (!content) {
+      return res.status(400).json({ error: "File content is required." });
+    }
+    const safeFilename = (filename || "export.csv").replace(/[^a-zA-Z0-9._-]/g, "_");
+    const downloadId = "dl_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
+    
+    serverlessExportStore.set(downloadId, {
+      filename: safeFilename,
+      content,
+      contentType,
+      createdAt: Date.now()
+    });
+
+    res.json({
+      success: true,
+      downloadId,
+      downloadUrl: `/api/export/download/${downloadId}`
+    });
+  } catch (err: any) {
+    console.error("Export prepare error:", err);
+    res.status(500).json({ error: err.message || "Failed to prepare download" });
+  }
+});
+
+app.get("/api/export/download/:id", (req, res) => {
+  const { id } = req.params;
+  const fileData = serverlessExportStore.get(id);
+
+  if (!fileData) {
+    return res.status(404).send("Export file expired or not found. Please click export again from the app.");
+  }
+
+  res.setHeader("Content-Type", fileData.contentType);
+  res.setHeader("Content-Disposition", `attachment; filename="${fileData.filename}"`);
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  
+  // Add UTF-8 BOM for CSV files if not already present
+  if (fileData.filename.endsWith(".csv") && !fileData.content.startsWith("\uFEFF")) {
+    res.send("\uFEFF" + fileData.content);
+  } else {
+    res.send(fileData.content);
+  }
+});
+
 export default app;

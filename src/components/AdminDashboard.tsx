@@ -836,8 +836,8 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     showToast(`Class booking status updated to ${status}.`);
   };
 
-  // Universal Real CSV Export Handler
-  const handleExportCSV = (dataset: string) => {
+  // Universal Real CSV Export Handler (Optimized for Android & Web)
+  const handleExportCSV = async (dataset: string) => {
     let filename = `GoldenHands_${dataset}_Export.csv`;
     let content = "";
 
@@ -904,11 +904,11 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       content = `Dataset,${dataset}\nExportDate,${new Date().toISOString()}\n`;
     }
 
-    const success = downloadCSV(filename, content);
+    const success = await downloadCSV(filename, content);
     if (success) {
       showToast(`Exported ${dataset.toUpperCase()} records to CSV format successfully.`);
     } else {
-      showToast(`Failed to export ${dataset}. Please check browser permissions.`);
+      showToast(`Failed to export ${dataset}. Please check app storage permissions.`);
     }
   };
 
@@ -4561,12 +4561,12 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       const csvHeader = "Student Name,Roll No,Session,Date,Time,Trainer,Vehicle,Photo Verification,Status,GPS Location\n";
                       const csvRows = attendanceRowsList.map(a => 
                         `"${a.name}","${a.roll}","${a.session}","${a.date}","${a.time}","${a.trainer}","${a.car}","${a.hasPhotoProof ? 'Verified (Geo-tagged)' : 'Scheduled'}","${a.status}","${a.location}"`
                       ).join("\n");
-                      const success = downloadCSV("GoldenHands_Attendance_Audit_Log.csv", csvHeader + csvRows);
+                      const success = await downloadCSV("GoldenHands_Attendance_Audit_Log.csv", csvHeader + csvRows);
                       if (success) {
                         showToast("Attendance Ledger exported to CSV successfully.");
                       }
@@ -5050,9 +5050,9 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                       </div>
 
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const csvRaw = exportItem.getData();
-                          const success = downloadCSV(exportItem.filename, csvRaw);
+                          const success = await downloadCSV(exportItem.filename, csvRaw);
                           if (success) {
                             showToast(`Exported ${exportItem.title} to CSV successfully.`);
                           }
