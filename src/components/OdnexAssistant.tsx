@@ -50,6 +50,68 @@ interface OdnexAssistantProps {
   initialMessage?: string;
 }
 
+// In-memory fallback map for restricted Android WebView environments where DOM storage is sandboxed
+const memoryStore = new Map<string, string>();
+
+const safeStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        const val = window.localStorage.getItem(key);
+        if (val !== null) return val;
+      }
+    } catch {
+      // DOM Storage may throw SecurityError in restricted WebView
+    }
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        const val = window.sessionStorage.getItem(key);
+        if (val !== null) return val;
+      }
+    } catch {}
+    return memoryStore.get(key) || null;
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem(key, value);
+        return;
+      }
+    } catch {}
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.setItem(key, value);
+        return;
+      }
+    } catch {}
+    memoryStore.set(key, value);
+  },
+  removeItem: (key: string): void => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.removeItem(key);
+      }
+    } catch {}
+    try {
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        window.sessionStorage.removeItem(key);
+      }
+    } catch {}
+    memoryStore.delete(key);
+  }
+};
+
+const getApiEndpointUrl = (path: string): string => {
+  try {
+    if (typeof window !== "undefined" && window.location) {
+      if (window.location.protocol === "file:") {
+        return path;
+      }
+    }
+  } catch {}
+  return path;
+};
+
 export default function OdnexAssistant({
   role,
   currentStudent,
@@ -60,10 +122,14 @@ export default function OdnexAssistant({
   initialMessage
 }: OdnexAssistantProps) {
   const [messages, setMessages] = useState<OdnexMessage[]>(() => {
-    const saved = sessionStorage.getItem(`odnex_chat_${role}_${currentStudent?.id || currentTrainer?.id || 'guest'}`);
+    const storageKey = `odnex_chat_history_${role}_${currentStudent?.id || currentTrainer?.id || 'guest'}`;
+    const saved = safeStorage.getItem(storageKey);
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
       } catch (e) {
         console.error("Failed to parse saved ODNEX history:", e);
       }
@@ -149,10 +215,10 @@ export default function OdnexAssistant({
     return () => clearTimeout(timer);
   }, []);
 
-  // Persist session messages
+  // Persist messages reliably across refresh, navigation, login, and app restarts
   useEffect(() => {
-    const key = `odnex_chat_${role}_${currentStudent?.id || currentTrainer?.id || 'guest'}`;
-    sessionStorage.setItem(key, JSON.stringify(messages));
+    const storageKey = `odnex_chat_history_${role}_${currentStudent?.id || currentTrainer?.id || 'guest'}`;
+    safeStorage.setItem(storageKey, JSON.stringify(messages));
   }, [messages, role, currentStudent?.id, currentTrainer?.id]);
 
   // Handle initial message if passed from external button
@@ -176,6 +242,9 @@ export default function OdnexAssistant({
     setInputQuery("");
     setLoading(true);
 
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 12000);
+
     try {
       // Gather latest client-side state
       const progress = currentStudent ? MockDatabase.getProgress(currentStudent.id) : null;
@@ -191,11 +260,18 @@ export default function OdnexAssistant({
         chatHistory: messages.slice(-10).map(m => ({ role: m.role, text: m.text }))
       };
 
-      const response = await fetch("/api/ai/coach", {
+      const endpoint = getApiEndpointUrl("/api/ai/coach");
+      const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify(payload),
+        signal: abortController.signal
       });
+
+      clearTimeout(timeoutId);
 
       const contentType = response.headers.get("content-type") || "";
 
@@ -215,11 +291,12 @@ export default function OdnexAssistant({
 
         setMessages(prev => [...prev, assistantMessage]);
       } else {
-        throw new Error("Invalid or non-JSON response from server endpoint");
+        throw new Error("Server returned non-OK or non-JSON response");
       }
     } catch (err) {
-      console.warn("Using local ODNEX fallback engine:", err);
-      // Intelligent Local Engine Fallback
+      clearTimeout(timeoutId);
+      console.warn("Using local ODNEX engine response fallback:", err);
+      // Intelligent Local Engine Fallback for Android WebView / Offline / Vercel Cold Starts
       const localResult = executeLocalOdnexEngine(queryText, role, currentStudent, currentTrainer);
       
       const fallbackMessage: OdnexMessage = {
@@ -232,6 +309,7 @@ export default function OdnexAssistant({
       };
       setMessages(prev => [...prev, fallbackMessage]);
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };
@@ -434,7 +512,7 @@ export default function OdnexAssistant({
       if (q.includes("progress") || q.includes("skill") || q.includes("weak")) {
         const prog = MockDatabase.getProgress(st.id);
         return {
-          text: `### Your Driving Skill Progress\n- **Steering Control**: ${prog.steering}% 🎯\n- **Clutch & Friction**: ${prog.clutch}% ⚙️\n- **Braking Precision**: ${prog.brake}% 🛑\n- **Hill Start Maneuvers**: ${prog.hillStart}% ⛰️\n- **Parking Maneuvers**: ${prog.parking}% 🅿️\n\n*Completed Sessions*: **${completedCount} / 20**`,
+          text: `### Your Driving Skill Progress\n- **Steering Control**: ${prog.steering}% 🎯\n- **Clutch & Friction**: ${prog.clutch}% ⚙️\n- **Braking Precision**: ${prog.brake}% 🛑\n- **Hill Start Maneuvers**: ${prog.hillStart}% ⛰️\n- **Parking Maneuvers**: ${prog.parking}% 🅿️\n\n*Completed Sessions*: **${completedCount} / ${st.totalSessions || 15}**`,
           action: { type: "VIEW_PROGRESS" as const },
           suggestedActions: ["🚦 Practice Mock Test", "📅 Book Class for Clutch Practice", "📞 Ask Trainer Advice"]
         };

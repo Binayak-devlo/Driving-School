@@ -30,6 +30,7 @@ export interface Student {
 
   // Payment & Booking Workflow States
   totalCourseFee?: number;
+  totalSessions?: number;
   amountPaid?: number;
   remainingAmount?: number;
   paymentStatus?: 'Unpaid' | 'Partial' | 'Paid';

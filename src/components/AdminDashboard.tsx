@@ -969,7 +969,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     setStudentLocation("Rasulgarh, Bhubaneswar");
     setStudentLlStatus("Applied");
     setStudentReferralCode("GOLDEN" + Math.floor(100 + Math.random() * 900));
-    setStudentCourseName("Premium Package (20 Sessions)");
+    setStudentCourseName("Basic Package (15 Sessions)");
     setStudentCourseNotes("");
     setStudentCourseSyllabus("Steering Controls, Clutch & Friction Point, Traffic Navigation, Parallel Reversal Parking, Uphill Start Navigation");
     setStudentPassword("student123");
@@ -1072,6 +1072,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
 
       // Save custom workflow properties
       totalCourseFee: studentTotalCourseFee,
+      totalSessions: studentTotalCourseFee === 1750 ? 7 : studentTotalCourseFee === 5250 ? 23 : 15,
       amountPaid: studentAmountPaid,
       remainingAmount: studentRemainingAmount,
       paymentStatus: studentPaymentStatus,
@@ -3528,7 +3529,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                                     <span className="text-[9px] bg-slate-200 text-slate-700 font-extrabold px-2 py-0.5 rounded uppercase tracking-wider">
                                       Current Active Plan
                                     </span>
-                                    <h5 className="font-black text-sm text-[#161623] mt-2">{stud.courseName || "Premium Package (20 Sessions)"}</h5>
+                                    <h5 className="font-black text-sm text-[#161623] mt-2">{stud.courseName || "Basic Package (15 Sessions)"}</h5>
                                     <p className="text-[11px] text-slate-500 mt-1 italic">"{stud.courseNotes || 'No custom notes.'}"</p>
                                     
                                     {stud.courseSyllabus && stud.courseSyllabus.length > 0 && (
@@ -4015,7 +4016,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                             <span className="text-[9px] bg-slate-200 text-slate-700 font-extrabold px-2 py-0.5 rounded uppercase tracking-wider">
                               Current Active Plan
                             </span>
-                            <h5 className="font-black text-sm text-[#161623] mt-2">{student.courseName || "Premium Package (20 Sessions)"}</h5>
+                            <h5 className="font-black text-sm text-[#161623] mt-2">{student.courseName || "Basic Package (15 Sessions)"}</h5>
                             <p className="text-[11px] text-slate-500 mt-1 italic">"{student.courseNotes || 'No custom notes.'}"</p>
                             
                             {student.courseSyllabus && student.courseSyllabus.length > 0 && (
@@ -5723,7 +5724,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                     <label className="text-[10px] font-bold text-slate-500 uppercase">Package / Course Name</label>
                     <input 
                       type="text"
-                      placeholder="e.g. Premium Package (20 Sessions)"
+                      placeholder="e.g. Basic Package (15 Sessions)"
                       value={studentCourseName}
                       onChange={(e) => setStudentCourseName(e.target.value)}
                       className="border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#6D3BFF] font-semibold text-slate-800"

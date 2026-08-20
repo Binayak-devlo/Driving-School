@@ -98,6 +98,25 @@ const dbApp = initializeApp(appletConfig);
 const db = getFirestore(dbApp, appletConfig.firestoreDatabaseId);
 
 const app = express();
+
+// Universal CORS & Header Middleware for Direct Web, Vercel Serverless, and Android Studio WebView
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control");
+  res.header("Access-Control-Allow-Credentials", "true");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  // Normalize path if Vercel serverless functions strip or mutate the /api prefix
+  if (req.url && !req.url.startsWith("/api") && req.url !== "/" && !req.url.startsWith("/?")) {
+    req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
+  }
+  next();
+});
+
 app.use(express.json());
 
 // Helper to query student by email or phone
@@ -188,7 +207,7 @@ app.post("/api/auth/register", async (req, res) => {
       llStatus: "Applied",
       referralCode,
       joinedDate: new Date().toISOString().split("T")[0],
-      courseName: courseName || "Premium Package (20 Sessions)",
+      courseName: courseName || "Basic Package (15 Sessions)",
       courseSyllabus: defaultSyllabus,
       password: password,
       emailVerified: false // Required status: Email Not Verified
@@ -704,7 +723,7 @@ INSTRUCTIONS:
         location: "Rasulgarh, Bhubaneswar",
         llStatus: "Applied",
         referralCode: "GUEST001",
-        courseName: "Premium Package (20 Sessions)",
+        courseName: "Basic Package (15 Sessions)",
         courseSyllabus: ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"]
       };
       resStudentId = studentData.id;
@@ -1019,7 +1038,7 @@ RULES:
       } else if (extractedAction?.type === "CALL_TRAINER") {
         replyText = `Here is the contact details for your instructor **${defaultTrainer.name}** (${defaultTrainer.phone}). You can call directly below!`;
       } else {
-        replyText = `Hello ${studentData.name}! I am ODNEX, your central AI driving assistant. Your completed sessions count is **${completedClassesCount} / 20**. How can I help you today?`;
+        replyText = `Hello ${studentData.name}! I am ODNEX, your central AI driving assistant. Your completed sessions count is **${completedClassesCount} / 15**. How can I help you today?`;
       }
     } else {
       const formattedHistory = (chatHistory || []).map((msg: any) => ({

@@ -13,6 +13,8 @@ const INITIAL_STUDENT: Student = {
   referralCode: "GUEST001",
   joinedDate: "2026-07-01",
   courseName: "Basic Package (15 Sessions)",
+  totalCourseFee: 3500,
+  totalSessions: 15,
   courseNotes: "",
   courseSyllabus: ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"],
   password: "",
@@ -391,7 +393,19 @@ export class MockDatabase {
       existingStudent.name = name || existingStudent.name;
       if (phone) existingStudent.phone = phone.trim();
       if (email) existingStudent.email = email.trim();
-      if (courseName) existingStudent.courseName = courseName;
+      if (courseName) {
+        existingStudent.courseName = courseName;
+        if (courseName.includes("1750") || courseName.toLowerCase().includes("refresher") || courseName.includes("7 ")) {
+          existingStudent.totalSessions = 7;
+          existingStudent.totalCourseFee = 1750;
+        } else if (courseName.includes("5250") || courseName.toLowerCase().includes("extended") || courseName.includes("23")) {
+          existingStudent.totalSessions = 23;
+          existingStudent.totalCourseFee = 5250;
+        } else {
+          existingStudent.totalSessions = 15;
+          existingStudent.totalCourseFee = 3500;
+        }
+      }
       if (password) existingStudent.password = password;
       if (uid && existingStudent.id !== uid) {
         // Migrate student ID to match Firebase UID
@@ -407,6 +421,19 @@ export class MockDatabase {
     const referralCode = "GOLDEN" + id.substring(id.length - 4).toUpperCase();
     const defaultSyllabus = ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"];
 
+    let totalSessions = 15;
+    let totalCourseFee = 3500;
+    if (courseName && (courseName.includes("1750") || courseName.toLowerCase().includes("refresher") || courseName.includes("7 "))) {
+      totalSessions = 7;
+      totalCourseFee = 1750;
+    } else if (courseName && (courseName.includes("5250") || courseName.toLowerCase().includes("extended") || courseName.includes("23"))) {
+      totalSessions = 23;
+      totalCourseFee = 5250;
+    } else {
+      totalSessions = 15;
+      totalCourseFee = 3500;
+    }
+
     const newStudent: Student = {
       id,
       name,
@@ -418,6 +445,8 @@ export class MockDatabase {
       referralCode,
       joinedDate: new Date().toISOString().split("T")[0],
       courseName,
+      totalCourseFee,
+      totalSessions,
       courseSyllabus: defaultSyllabus,
       password: password || "golden123"
     };
@@ -498,6 +527,8 @@ export class MockDatabase {
         referralCode: "GUEST001",
         joinedDate: new Date().toISOString().split("T")[0],
         courseName: "Basic Package (15 Sessions)",
+        totalCourseFee: 3500,
+        totalSessions: 15,
         courseSyllabus: ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"]
       };
     }
@@ -516,6 +547,8 @@ export class MockDatabase {
       referralCode: "GOLDEN" + (id.length >= 4 ? id.substring(id.length - 4).toUpperCase() : "TEMP"),
       joinedDate: new Date().toISOString().split("T")[0],
       courseName: "Basic Package (15 Sessions)",
+      totalCourseFee: 3500,
+      totalSessions: 15,
       courseSyllabus: ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"]
     });
   }

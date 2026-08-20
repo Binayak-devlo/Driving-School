@@ -510,7 +510,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   // Sync course edits when student loads or updates in database
   useEffect(() => {
     if (student) {
-      const dbName = student.courseName || "Premium Package (20 Sessions)";
+      const dbName = student.courseName || "Basic Package (15 Sessions)";
       const dbNotes = student.courseNotes || "";
       const dbSyllabus = student.courseSyllabus || [];
 

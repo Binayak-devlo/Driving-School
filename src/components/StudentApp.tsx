@@ -1114,7 +1114,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     setAttempts(MockDatabase.getMockAttempts());
     setTrackingSession(MockDatabase.getTrackingSessionByStudent(currentStud.id));
 
-    setStudentEditCourseName(currentStud.proposedCourseName || currentStud.courseName || "Premium Package (20 Sessions)");
+    setStudentEditCourseName(currentStud.proposedCourseName || currentStud.courseName || "Basic Package (15 Sessions)");
     setStudentEditCourseNotes(currentStud.proposedCourseNotes || currentStud.courseNotes || "");
     setStudentEditSyllabus(currentStud.proposedCourseSyllabus || currentStud.courseSyllabus || []);
   };
@@ -1450,7 +1450,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         setDoc(userDocRef, {
           displayName: firebaseUser.displayName || student.name || "Student User",
           email: firebaseUser.email || "",
-          plan: student.courseName || "Premium Package (20 Sessions)",
+          plan: student.courseName || "Basic Package (15 Sessions)",
           createdAt: new Date().toISOString()
         }).catch(err => console.error("Error creating user profile in Firestore:", err));
       }
@@ -1970,7 +1970,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
               fbUser.displayName || email.split('@')[0] || "Student",
               "",
               email,
-              "Premium Package (20 Sessions)",
+              "Basic Package (15 Sessions)",
               loginPassword,
               fbUser.uid
             );
@@ -3029,51 +3029,60 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     setCoachChat(prev => [...prev, { role: 'user', text: userMsg }]);
     setCoachLoading(true);
 
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 12000);
+
     try {
       const response = await fetch(getApiUrl("/api/ai/coach"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
         body: JSON.stringify({
           studentId: student.id,
           studentName: student.name,
           skillProgress: progress,
           message: userMsg,
           chatHistory: coachChat
-        })
+        }),
+        signal: abortController.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         const data = await response.json();
         setCoachChat(prev => [...prev, { role: 'model', text: data.text }]);
       } else {
-        throw new Error();
+        throw new Error("Server error");
       }
     } catch {
-      // Offline / fallback mock advice
-      setTimeout(() => {
-        const qLower = (userMsg || "").toLowerCase();
-        let fallbackReply = `Thanks for asking! I am ODNEX, your AI Driving Coach. Regarding **${userMsg}**, safety is paramount. Keep your hands at 10-and-2 or 9-and-3 on the steering wheel for optimal control. At high speeds on Cuttack-Puri highway, ensure you mirror check every 8 seconds. Let's work on this in your next class with ${assignedTrainer ? assignedTrainer.name : "your assigned instructor"}!`;
-        
-        if (
-          qLower.includes("creator") || 
-          qLower.includes("who created") || 
-          qLower.includes("who made") || 
-          qLower.includes("who makes you") || 
-          qLower.includes("who makes u") ||
-          qLower.includes("who built") || 
-          qLower.includes("who developed") || 
-          qLower.includes("bnp tech") || 
-          qLower.includes("binayak")
-        ) {
-          fallbackReply = "BNP Tech Binayak Sir created me specially as a driving school assistant.";
-        }
+      clearTimeout(timeoutId);
+      // Offline / fallback response
+      const qLower = (userMsg || "").toLowerCase();
+      let fallbackReply = `Thanks for asking! I am ODNEX, your AI Driving Coach. Regarding **${userMsg}**, safety is paramount. Keep your hands at 10-and-2 or 9-and-3 on the steering wheel for optimal control. At high speeds on Cuttack-Puri highway, ensure you mirror check every 8 seconds. Let's work on this in your next class with ${assignedTrainer ? assignedTrainer.name : "your assigned instructor"}!`;
+      
+      if (
+        qLower.includes("creator") || 
+        qLower.includes("who created") || 
+        qLower.includes("who made") || 
+        qLower.includes("who makes you") || 
+        qLower.includes("who makes u") ||
+        qLower.includes("who built") || 
+        qLower.includes("who developed") || 
+        qLower.includes("bnp tech") || 
+        qLower.includes("binayak")
+      ) {
+        fallbackReply = "BNP Tech Binayak Sir created me specially as a driving school assistant.";
+      }
 
-        setCoachChat(prev => [...prev, { 
-          role: 'model', 
-          text: fallbackReply 
-        }]);
-      }, 1000);
+      setCoachChat(prev => [...prev, { 
+        role: 'model', 
+        text: fallbackReply 
+      }]);
     } finally {
+      clearTimeout(timeoutId);
       setCoachLoading(false);
     }
   };
@@ -3574,12 +3583,14 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     (aadharDoc && aadharDoc.status === "Verified")
   );
   const completedClassesCount = bookings.filter(b => b.status === 'Completed' || b.status === 'completed').length;
-  const isCourseEnded = (student.courseEnded || completedClassesCount >= 15) && !student.planExtended;
+  const maxCourseClasses = student.totalSessions || 15;
+  const isCourseEnded = (student.courseEnded || completedClassesCount >= maxCourseClasses) && !student.planExtended;
 
   // Golden Hands Driving School workflows:
   const totalBookingsCount = bookings.filter(b => b.studentId === student.id).length;
   const firstInstallmentPaid = (student.amountPaid || 0) >= 2000;
-  const courseFullyPaid = (student.amountPaid || 0) >= 3500;
+  const totalPackageFee = student.totalCourseFee || 3500;
+  const courseFullyPaid = (student.amountPaid || 0) >= totalPackageFee;
 
   const localWorkflowLock = 
     (completedClassesCount >= 1 && !firstInstallmentPaid) || 
