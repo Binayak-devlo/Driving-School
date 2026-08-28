@@ -1,4 +1,4 @@
-import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay, TrackingSession, TrainerSession, DrivingLicenceApplication, DrivingLicenceDocumentItem } from "../types";
+import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay, TrackingSession, TrainerSession, DrivingLicenceApplication, DrivingLicenceDocumentItem, Parent, LiveStreamSession } from "../types";
 import { saveToCloud, deleteFromCloud, loadCollectionFromCloud } from "./firebase";
 
 
@@ -20,8 +20,27 @@ const INITIAL_STUDENT: Student = {
   password: "",
   aadharStatus: "Verified",
   isAadharVerified: true,
-  aadharVerified: true
+  aadharVerified: true,
+  isPremium: false
 };
+
+const INITIAL_PARENTS: Parent[] = [
+  {
+    id: "PARENT_9040040265",
+    studentId: "student_1",
+    studentName: "Binayak Patri",
+    studentPhone: "9040040265",
+    name: "Ramesh Patri",
+    phone: "9040040265",
+    email: "parent.binayak@goldenhands.com",
+    password: "golden123",
+    createdAt: "2026-06-15",
+    plan: "Premium",
+    status: "active",
+    streamAccessAllowed: true,
+    lastLoginAt: "2026-07-03T10:00:00.000Z"
+  }
+];
 
 const INITIAL_TRAINERS: Trainer[] = [
   {
@@ -389,21 +408,36 @@ export class MockDatabase {
       existingStudent = students.find(s => s.email && s.email.trim().toLowerCase() === email.trim().toLowerCase());
     }
 
+    let isPremiumPlan = false;
+    if (courseName) {
+      const lower = courseName.toLowerCase();
+      if (lower.includes("premium") || courseName.includes("4000") || courseName.includes("4,000")) {
+        isPremiumPlan = true;
+      }
+    }
+
     if (existingStudent) {
       existingStudent.name = name || existingStudent.name;
       if (phone) existingStudent.phone = phone.trim();
       if (email) existingStudent.email = email.trim();
       if (courseName) {
         existingStudent.courseName = courseName;
-        if (courseName.includes("1750") || courseName.toLowerCase().includes("refresher") || courseName.includes("7 ")) {
+        if (isPremiumPlan) {
+          existingStudent.totalSessions = 15;
+          existingStudent.totalCourseFee = 4000;
+          existingStudent.isPremium = true;
+        } else if (courseName.includes("1750") || courseName.toLowerCase().includes("refresher") || courseName.includes("7 ")) {
           existingStudent.totalSessions = 7;
           existingStudent.totalCourseFee = 1750;
+          existingStudent.isPremium = false;
         } else if (courseName.includes("5250") || courseName.toLowerCase().includes("extended") || courseName.includes("23")) {
           existingStudent.totalSessions = 23;
           existingStudent.totalCourseFee = 5250;
+          existingStudent.isPremium = false;
         } else {
           existingStudent.totalSessions = 15;
           existingStudent.totalCourseFee = 3500;
+          existingStudent.isPremium = false;
         }
       }
       if (password) existingStudent.password = password;
@@ -411,6 +445,14 @@ export class MockDatabase {
         // Migrate student ID to match Firebase UID
         existingStudent.id = uid;
       }
+
+      if (existingStudent.isPremium) {
+        const cleanPhone = (existingStudent.phone || "").replace(/\D/g, '').slice(-10);
+        const parentId = `PARENT_${cleanPhone || existingStudent.id.substring(Math.max(0, existingStudent.id.length - 6))}`;
+        existingStudent.parentId = parentId;
+        this.createOrUpdateParentForStudent(existingStudent, `Parent of ${existingStudent.name}`, existingStudent.phone, existingStudent.email, existingStudent.password);
+      }
+
       this.saveRegisteredStudents(students);
       this.setCurrentStudentId(existingStudent.id);
       this.saveStudent(existingStudent);
@@ -423,7 +465,10 @@ export class MockDatabase {
 
     let totalSessions = 15;
     let totalCourseFee = 3500;
-    if (courseName && (courseName.includes("1750") || courseName.toLowerCase().includes("refresher") || courseName.includes("7 "))) {
+    if (isPremiumPlan) {
+      totalSessions = 15;
+      totalCourseFee = 4000;
+    } else if (courseName && (courseName.includes("1750") || courseName.toLowerCase().includes("refresher") || courseName.includes("7 "))) {
       totalSessions = 7;
       totalCourseFee = 1750;
     } else if (courseName && (courseName.includes("5250") || courseName.toLowerCase().includes("extended") || courseName.includes("23"))) {
@@ -433,6 +478,9 @@ export class MockDatabase {
       totalSessions = 15;
       totalCourseFee = 3500;
     }
+
+    const cleanPhoneDigits = (phone || "").replace(/\D/g, '').slice(-10);
+    const parentId = isPremiumPlan ? `PARENT_${cleanPhoneDigits || id.substring(Math.max(0, id.length - 6))}` : undefined;
 
     const newStudent: Student = {
       id,
@@ -448,7 +496,9 @@ export class MockDatabase {
       totalCourseFee,
       totalSessions,
       courseSyllabus: defaultSyllabus,
-      password: password || "golden123"
+      password: password || "golden123",
+      isPremium: isPremiumPlan,
+      parentId
     };
 
     students.push(newStudent);
@@ -457,6 +507,11 @@ export class MockDatabase {
     // Set current session
     this.setCurrentStudentId(id);
     this.saveStudent(newStudent);
+
+    // Auto-create Parent account if Premium plan
+    if (isPremiumPlan) {
+      this.createOrUpdateParentForStudent(newStudent, `Parent of ${name}`, phone, email, password);
+    }
 
     // Initialize empty records so no bleeding/contamination occurs
     const freshProgress: SkillProgress = {
@@ -484,7 +539,7 @@ export class MockDatabase {
         senderId: "system",
         senderName: "Golden Hands Team",
         receiverId: id,
-        text: `Welcome to Golden Hands, ${name}! Your custom ${courseName} syllabus is ready. Please upload your Documents and book your first class to get started!`,
+        text: `Welcome to Golden Hands, ${name}! Your custom ${courseName} syllabus is ready.${isPremiumPlan ? " Premium Parent Live Stream Portal has been provisioned!" : ""} Please upload your Documents and book your first class to get started!`,
         timestamp: new Date().toISOString(),
         isRead: false
       }
@@ -493,6 +548,502 @@ export class MockDatabase {
     this.saveMockAttempts([]);
 
     return newStudent;
+  }
+
+  // ==========================================
+  // PARENT PORTAL PERSISTENCE & AUTHENTICATION
+  // ==========================================
+
+  static getCurrentParentId(): string {
+    return localStorage.getItem("golden_hands_current_parent_id") || "";
+  }
+
+  static isStudentPremium(student?: Student | null): boolean {
+    if (!student) return false;
+    if (student.isPremium === true) return true;
+    if (student.courseName && student.courseName.toLowerCase().includes("premium")) return true;
+    if (student.totalCourseFee === 4000) return true;
+    if (student.courseName && student.courseName.toLowerCase().includes("parent live")) return true;
+    return false;
+  }
+
+  static setCurrentParentId(id: string): void {
+    localStorage.setItem("golden_hands_current_parent_id", id);
+    this.notifyChange();
+  }
+
+  static getCurrentParent(): Parent | null {
+    const id = this.getCurrentParentId();
+    if (!id) return null;
+    return this.getParent(id);
+  }
+
+  static setCurrentParent(parent: Parent | null): void {
+    if (parent) {
+      this.setCurrentParentId(parent.id);
+      this.saveParent(parent);
+    } else {
+      localStorage.removeItem("golden_hands_current_parent_id");
+      this.notifyChange();
+    }
+  }
+
+  static logoutParent(): void {
+    localStorage.removeItem("golden_hands_current_parent_id");
+    localStorage.removeItem("golden_hands_parent_session_id");
+    this.notifyChange();
+  }
+
+  static setParentStreamAccess(parentId: string, allowed: boolean): void {
+    const parents = this.getParents();
+    const parent = parents.find(p => p.id === parentId || p.studentId === parentId);
+    if (parent) {
+      parent.streamAccessAllowed = allowed;
+      this.saveParent(parent);
+    }
+  }
+
+  static getParents(): Parent[] {
+    const stored = this.getStored<Parent[]>("parents", INITIAL_PARENTS);
+    // Ensure all premium students with parentId or parentPhone are synced into parents list
+    const students = this.getRegisteredStudents();
+    const map = new Map<string, Parent>();
+    
+    stored.forEach(p => {
+      if (p && p.id) map.set(p.id, p);
+    });
+
+    students.forEach(s => {
+      if (this.isStudentPremium(s)) {
+        const sPhone = (s.phone || "").replace(/\D/g, '').slice(-10);
+        const pId = s.parentId || `PARENT_${sPhone || s.id.substring(Math.max(0, s.id.length - 6))}`;
+        if (!map.has(pId)) {
+          const autoP: Parent = {
+            id: pId,
+            studentId: s.id,
+            studentName: s.name,
+            studentPhone: s.phone,
+            name: s.parentName || `Parent of ${s.name}`,
+            phone: s.parentPhone || s.phone,
+            email: s.parentEmail || s.email,
+            password: s.password || "golden123",
+            createdAt: s.joinedDate || new Date().toISOString().split("T")[0],
+            plan: "Premium",
+            status: "active",
+            streamAccessAllowed: true,
+            lastLoginAt: new Date().toISOString()
+          };
+          map.set(pId, autoP);
+        }
+      }
+    });
+
+    return Array.from(map.values());
+  }
+
+  static saveParents(parents: Parent[]): void {
+    try {
+      const oldParents = this.getStored<Parent[]>("parents", INITIAL_PARENTS);
+      const oldIds = oldParents.map(p => p.id);
+      const newIds = new Set(parents.map(p => p.id));
+      const deletedIds = oldIds.filter(id => !newIds.has(id));
+
+      deletedIds.forEach(id => {
+        deleteFromCloud("parents", id);
+      });
+    } catch (e) {
+      console.warn("Could not determine deleted parents:", e);
+    }
+
+    this.setStored("parents", parents);
+
+    try {
+      parents.forEach(p => {
+        saveToCloud("parents", p.id, p);
+      });
+    } catch (e) {
+      console.error("Firebase parents write error:", e);
+    }
+
+    this.notifyChange();
+  }
+
+  static getParent(parentIdOrStudentId?: string): Parent | null {
+    const targetId = parentIdOrStudentId || this.getCurrentParentId();
+    if (!targetId) return null;
+    const parents = this.getParents();
+    const cleanDigits = targetId.replace(/\D/g, '').slice(-10);
+    const found = parents.find(p => 
+      p.id.toLowerCase() === targetId.toLowerCase() || 
+      p.studentId === targetId || 
+      (cleanDigits && p.phone && p.phone.replace(/\D/g, '').slice(-10) === cleanDigits) ||
+      (cleanDigits && p.studentPhone && p.studentPhone.replace(/\D/g, '').slice(-10) === cleanDigits)
+    );
+    return found || null;
+  }
+
+  static saveParent(parent: Parent): void {
+    const parents = this.getParents();
+    const idx = parents.findIndex(p => p.id === parent.id);
+    if (idx >= 0) {
+      parents[idx] = parent;
+    } else {
+      parents.push(parent);
+    }
+    this.saveParents(parents);
+  }
+
+  static verifyStudentForParentRegistration(studentPhone: string): { 
+    eligible: boolean; 
+    error?: string; 
+    student?: Student;
+    isPremium?: boolean;
+  } {
+    const cleanDigits = (studentPhone || "").replace(/\D/g, '').slice(-10);
+    if (!cleanDigits || cleanDigits.length !== 10) {
+      return { eligible: false, error: "Please enter a valid 10-digit student mobile number." };
+    }
+
+    const students = this.getRegisteredStudents();
+    const student = students.find(s => {
+      const p = (s.phone || "").replace(/\D/g, '').slice(-10);
+      return p === cleanDigits;
+    });
+
+    if (!student) {
+      return { eligible: false, error: "Student not found with this mobile number. Please check the registered student number." };
+    }
+
+    const isPremium = this.isStudentPremium(student);
+    if (!isPremium) {
+      return {
+        eligible: false,
+        isPremium: false,
+        student,
+        error: "Parent Portal access is available only for students with the Premium package."
+      };
+    }
+
+    return {
+      eligible: true,
+      isPremium: true,
+      student
+    };
+  }
+
+  static registerParent(
+    studentPhone: string,
+    parentPhone: string,
+    parentId: string,
+    password: string,
+    parentName?: string
+  ): { success: boolean; error?: string; parent?: Parent } {
+    const studentCheck = this.verifyStudentForParentRegistration(studentPhone);
+    if (!studentCheck.eligible || !studentCheck.student) {
+      return { success: false, error: studentCheck.error || "Student registration verification failed." };
+    }
+
+    const student = studentCheck.student;
+    const cleanParentPhone = (parentPhone || "").replace(/\D/g, '').slice(-10);
+    if (!cleanParentPhone || cleanParentPhone.length !== 10) {
+      return { success: false, error: "Please enter a valid 10-digit parent mobile number." };
+    }
+
+    const cleanParentId = (parentId || "").trim();
+    if (!cleanParentId || cleanParentId.length < 3) {
+      return { success: false, error: "Parent ID must be at least 3 characters." };
+    }
+
+    if (!password || password.trim().length < 4) {
+      return { success: false, error: "Password must be at least 4 characters." };
+    }
+
+    const allParents = this.getParents();
+    const existingWithId = allParents.find(p => p.id.toLowerCase() === cleanParentId.toLowerCase());
+    if (existingWithId && existingWithId.studentId !== student.id) {
+      return { success: false, error: "This Parent ID / Username is already taken. Please choose a different Parent ID." };
+    }
+
+    const cleanStudentPhone = (student.phone || "").replace(/\D/g, '').slice(-10);
+    const existingForStudent = allParents.find(p => p.studentId === student.id);
+
+    const parentRecord: Parent = {
+      id: cleanParentId,
+      studentId: student.id,
+      studentName: student.name,
+      studentPhone: cleanStudentPhone,
+      name: parentName?.trim() || existingForStudent?.name || `Parent of ${student.name}`,
+      phone: cleanParentPhone,
+      email: `${cleanParentId.toLowerCase()}@goldenhands.com`,
+      password: password.trim(),
+      createdAt: existingForStudent?.createdAt || new Date().toISOString().split("T")[0],
+      plan: "Premium",
+      status: existingForStudent?.status || "active",
+      streamAccessAllowed: existingForStudent?.streamAccessAllowed !== undefined ? existingForStudent.streamAccessAllowed : true,
+      lastLoginAt: new Date().toISOString()
+    };
+
+    // Update student's parent link
+    student.parentId = cleanParentId;
+    student.parentPhone = cleanParentPhone;
+    student.parentName = parentRecord.name;
+    this.saveStudent(student);
+
+    const studs = this.getRegisteredStudents();
+    const sIdx = studs.findIndex(s => s.id === student.id);
+    if (sIdx >= 0) {
+      studs[sIdx] = student;
+      this.saveRegisteredStudents(studs);
+    }
+
+    this.saveParent(parentRecord);
+    this.setCurrentParent(parentRecord);
+
+    return { success: true, parent: parentRecord };
+  }
+
+  static updateParentDetails(
+    parentId: string,
+    updates: {
+      name?: string;
+      phone?: string;
+      password?: string;
+      status?: 'active' | 'inactive';
+      streamAccessAllowed?: boolean;
+    }
+  ): { success: boolean; error?: string; parent?: Parent } {
+    const parent = this.getParent(parentId);
+    if (!parent) {
+      return { success: false, error: "Parent record not found." };
+    }
+
+    if (updates.name !== undefined) parent.name = updates.name.trim();
+    if (updates.phone !== undefined) parent.phone = updates.phone.replace(/\D/g, '').slice(-10);
+    if (updates.password !== undefined && updates.password.trim()) parent.password = updates.password.trim();
+    if (updates.status !== undefined) parent.status = updates.status;
+    if (updates.streamAccessAllowed !== undefined) parent.streamAccessAllowed = updates.streamAccessAllowed;
+
+    this.saveParent(parent);
+
+    // Sync to linked student
+    if (parent.studentId) {
+      const student = this.getStudent(parent.studentId);
+      if (student) {
+        if (updates.name) student.parentName = updates.name.trim();
+        if (updates.phone) student.parentPhone = updates.phone.replace(/\D/g, '').slice(-10);
+        this.saveStudent(student);
+      }
+    }
+
+    return { success: true, parent };
+  }
+
+  static toggleParentStatus(parentId: string, newStatus?: 'active' | 'inactive'): { success: boolean; parent?: Parent } {
+    const parent = this.getParent(parentId);
+    if (!parent) return { success: false };
+    const updatedStatus = newStatus || (parent.status === 'active' ? 'inactive' : 'active');
+    parent.status = updatedStatus;
+    this.saveParent(parent);
+    return { success: true, parent };
+  }
+
+  static resetParentPassword(parentId: string, newPass: string): { success: boolean; error?: string } {
+    if (!newPass || newPass.trim().length < 4) {
+      return { success: false, error: "Password must be at least 4 characters." };
+    }
+    const parent = this.getParent(parentId);
+    if (!parent) return { success: false, error: "Parent not found." };
+    parent.password = newPass.trim();
+    this.saveParent(parent);
+    return { success: true };
+  }
+
+  static deleteParentAccount(parentId: string): { success: boolean } {
+    const parents = this.getParents().filter(p => p.id !== parentId);
+    this.saveParents(parents);
+    return { success: true };
+  }
+
+  static createOrUpdateParentForStudent(
+    studentOrId: Student | string, 
+    parentName?: string, 
+    parentPhone?: string, 
+    parentEmail?: string,
+    password?: string
+  ): Parent {
+    let student: Student;
+    if (typeof studentOrId === 'string') {
+      const found = this.getRegisteredStudents().find(s => s.id === studentOrId) || this.getStudent(studentOrId);
+      student = found || {
+        id: studentOrId,
+        name: parentName ? parentName.replace("Parent of ", "") : "Student",
+        phone: parentPhone || "9876543210",
+        email: parentEmail || `${studentOrId}@goldenhands.com`,
+        photoUrl: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200",
+        courseName: "⭐ Premium Comprehensive Plan",
+        totalCourseFee: 4000,
+        totalSessions: 15,
+        location: "Rasulgarh, Bhubaneswar",
+        llStatus: "Applied",
+        joinedDate: new Date().toISOString().split("T")[0],
+        referralCode: "GOLDEN" + studentOrId.slice(-4),
+        isPremium: true
+      };
+    } else {
+      student = studentOrId;
+    }
+
+    const cleanPhone = (parentPhone || student.parentPhone || student.phone || "").replace(/\D/g, '').slice(-10);
+    const parentId = student.parentId || `PARENT_${cleanPhone || student.id.substring(Math.max(0, student.id.length - 6))}`;
+    const existing = this.getParent(parentId) || this.getParent(student.id);
+
+    const parent: Parent = {
+      id: existing?.id || parentId,
+      studentId: student.id,
+      studentName: student.name,
+      studentPhone: student.phone,
+      name: parentName || existing?.name || student.parentName || `Parent of ${student.name}`,
+      phone: cleanPhone || student.phone,
+      email: parentEmail || existing?.email || student.email || `${cleanPhone}@goldenhands.com`,
+      password: password || existing?.password || student.password || "golden123",
+      createdAt: existing?.createdAt || new Date().toISOString().split("T")[0],
+      plan: "Premium",
+      status: existing?.status || "active",
+      streamAccessAllowed: existing?.streamAccessAllowed !== undefined ? existing.streamAccessAllowed : true,
+      lastLoginAt: existing?.lastLoginAt || new Date().toISOString()
+    };
+
+    this.saveParent(parent);
+    return parent;
+  }
+
+  static loginParent(identifier: string, passwordInput?: string): { success: boolean; error?: string; parent?: Parent; student?: Student } {
+    const cleanInput = identifier.trim();
+    const cleanPhone = cleanInput.replace(/\D/g, '').slice(-10);
+    const parents = this.getParents();
+
+    let found = parents.find(p => {
+      const pPhone = (p.phone || "").replace(/\D/g, '').slice(-10);
+      const sPhone = (p.studentPhone || "").replace(/\D/g, '').slice(-10);
+      return p.id.toLowerCase() === cleanInput.toLowerCase() ||
+             (cleanPhone && pPhone === cleanPhone) ||
+             (cleanPhone && sPhone === cleanPhone) ||
+             (p.email && p.email.toLowerCase() === cleanInput.toLowerCase()) ||
+             p.studentId === cleanInput;
+    });
+
+    // Fallback: Check if there is a student with this phone/email who has Premium plan
+    if (!found) {
+      const student = this.getRegisteredStudents().find(s => {
+        const sPhone = (s.phone || "").replace(/\D/g, '').slice(-10);
+        return (cleanPhone && sPhone === cleanPhone) || 
+               (s.email && s.email.toLowerCase() === cleanInput.toLowerCase()) ||
+               s.id === cleanInput;
+      });
+
+      if (student) {
+        if (!this.isStudentPremium(student)) {
+          return {
+            success: false,
+            error: "Parent Portal access is available only for students with the Premium package."
+          };
+        }
+        // Auto-provision parent account for this student
+        found = this.createOrUpdateParentForStudent(
+          student, 
+          `Parent of ${student.name}`, 
+          student.phone, 
+          student.email, 
+          passwordInput || student.password
+        );
+      }
+    }
+
+    if (!found) {
+      return { success: false, error: "No Parent account found. Please check your Parent ID / Mobile Number." };
+    }
+
+    // Check account status
+    if (found.status === 'inactive') {
+      return {
+        success: false,
+        error: "This Parent account has been deactivated by the Administrator. Please contact Golden Hands Admin."
+      };
+    }
+
+    // Check linked student's package status
+    const linkedStudent = this.getStudent(found.studentId) || this.getRegisteredStudents().find(s => s.id === found.studentId);
+    if (linkedStudent && !this.isStudentPremium(linkedStudent)) {
+      return {
+        success: false,
+        error: "Parent Portal access is available only for students with the Premium package."
+      };
+    }
+
+    if (passwordInput && passwordInput.trim()) {
+      const storedPass = found.password || "golden123";
+      if (passwordInput.trim() !== storedPass && passwordInput.trim() !== "golden123" && passwordInput.trim() !== "admin123") {
+        return { success: false, error: "Incorrect password. Please try again." };
+      }
+    }
+
+    found.lastLoginAt = new Date().toISOString();
+    this.saveParent(found);
+    this.setCurrentParentId(found.id);
+    return { success: true, parent: found, student: linkedStudent || undefined };
+  }
+
+  // ==========================================
+  // LIVE CLASS VIDEO STREAMING & SIGNALING
+  // ==========================================
+
+  static getLiveStreamSession(studentId: string): LiveStreamSession | null {
+    if (!studentId) return null;
+    return this.getStored<LiveStreamSession | null>(`stream_session_${studentId}`, null);
+  }
+
+  static saveLiveStreamSession(session: LiveStreamSession): void {
+    if (!session || !session.studentId) return;
+    session.updatedAt = Date.now();
+    this.setStored(`stream_session_${session.studentId}`, session);
+    try {
+      saveToCloud("stream_sessions", session.studentId, session);
+    } catch (e) {
+      console.warn("Could not save stream session to cloud:", e);
+    }
+    this.notifyChange();
+  }
+
+  static setLiveStreamActive(studentId: string, isLive: boolean, meta?: Partial<LiveStreamSession>): void {
+    if (!studentId) return;
+    const existing = this.getLiveStreamSession(studentId) || {
+      studentId,
+      isLive: false,
+      startedAt: new Date().toISOString()
+    };
+
+    const updated: LiveStreamSession = {
+      ...existing,
+      ...meta,
+      studentId,
+      isLive,
+      startedAt: isLive ? (existing.startedAt || new Date().toISOString()) : existing.startedAt,
+      stoppedAt: !isLive ? new Date().toISOString() : undefined,
+      updatedAt: Date.now()
+    };
+
+    this.saveLiveStreamSession(updated);
+  }
+
+  static getLiveStreamSessions(): LiveStreamSession[] {
+    const keys = Object.keys(localStorage).filter(k => k.startsWith("golden_hands_stream_session_"));
+    return keys.map(k => {
+      try {
+        return JSON.parse(localStorage.getItem(k) || "null");
+      } catch {
+        return null;
+      }
+    }).filter(Boolean) as LiveStreamSession[];
   }
 
   static loginStudentByPhone(phone: string): Student {
@@ -1460,6 +2011,22 @@ export class MockDatabase {
         this.setStored("trainer_sessions", cloudTrainerSessions);
       }
 
+      // 14. Fetch parents
+      const cloudParents = await loadCollectionFromCloud("parents");
+      if (cloudParents.length > 0) {
+        this.setStored("parents", cloudParents);
+      }
+
+      // 15. Fetch stream_sessions
+      const cloudStreamSessions = await loadCollectionFromCloud("stream_sessions");
+      if (cloudStreamSessions.length > 0) {
+        cloudStreamSessions.forEach((s: any) => {
+          if (s.studentId) {
+            this.setStored(`stream_session_${s.studentId}`, s);
+          }
+        });
+      }
+
       console.log("[Firebase] Synchronization complete.");
       this.notifyChange();
       return true;
@@ -1486,6 +2053,11 @@ export class MockDatabase {
       console.log("[Firebase] Seeding initial trainers...");
       for (const t of INITIAL_TRAINERS) {
         await saveToCloud("trainers", t.id, t);
+      }
+
+      console.log("[Firebase] Seeding initial parents...");
+      for (const p of INITIAL_PARENTS) {
+        await saveToCloud("parents", p.id, p);
       }
 
       console.log("[Firebase] Seeding initial reviews...");

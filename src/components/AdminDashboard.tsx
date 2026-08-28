@@ -22,6 +22,7 @@ export type AdminTabType =
   | 'analytics' 
   | 'dl_applications' 
   | 'students' 
+  | 'parent_management'
   | 'trainers' 
   | 'bookings' 
   | 'slots' 
@@ -388,6 +389,15 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
   const [eveningEnabled, setEveningEnabled] = useState(true);
   const [isClosed, setIsClosed] = useState(false);
 
+  // Parent Management States
+  const [parentAccounts, setParentAccounts] = useState(() => MockDatabase.getParents());
+  const [parentSearchQuery, setParentSearchQuery] = useState("");
+  const [parentStatusFilter, setParentStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [selectedParentForDetail, setSelectedParentForDetail] = useState<any | null>(null);
+  const [editingParentAccount, setEditingParentAccount] = useState<any | null>(null);
+  const [resettingPasswordParent, setResettingPasswordParent] = useState<any | null>(null);
+  const [newParentPasswordInput, setNewParentPasswordInput] = useState("");
+
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 4000);
@@ -406,6 +416,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       setReviews(MockDatabase.getReviews());
       setSlots(MockDatabase.getSlotDays());
       setDlApplications(MockDatabase.getLicenceApplications());
+      setParentAccounts(MockDatabase.getParents());
     };
     const interval = setInterval(handleStorageChange, 2000);
     return () => clearInterval(interval);
@@ -424,6 +435,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       setReviews(MockDatabase.getReviews());
       setSlots(MockDatabase.getSlotDays());
       setDlApplications(MockDatabase.getLicenceApplications());
+      setParentAccounts(MockDatabase.getParents());
     };
     window.addEventListener("db-updated", handleDbUpdated);
     window.addEventListener("storage", handleDbUpdated);
@@ -448,6 +460,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       setReviews(MockDatabase.getReviews());
       setSlots(MockDatabase.getSlotDays());
       setDlApplications(MockDatabase.getLicenceApplications());
+      setParentAccounts(MockDatabase.getParents());
       if (onStateChange) onStateChange();
       showToast("Admin Dashboard synchronized with cloud database!");
     } catch (err) {
@@ -473,6 +486,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
           setReviews(MockDatabase.getReviews());
           setSlots(MockDatabase.getSlotDays());
           setDlApplications(MockDatabase.getLicenceApplications());
+          setParentAccounts(MockDatabase.getParents());
         }
       } catch (err) {
         console.warn("Periodic cloud sync failed in admin dashboard:", err);
@@ -1598,6 +1612,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                 { id: 'analytics', label: 'Analytics Dashboard' },
                 { id: 'dl_applications', label: 'Licence Applications' },
                 { id: 'students', label: 'Student Directory' },
+                { id: 'parent_management', label: 'Parent Management' },
                 { id: 'trainers', label: 'Trainer Management' },
                 { id: 'bookings', label: 'Class & Bookings' },
                 { id: 'slots', label: 'Slot Capacity' },
@@ -1621,7 +1636,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
           onClick={() => setMobileMenuOpen(true)}
           className="text-[11px] font-black text-[#6D3BFF] hover:text-[#8F52FF] flex items-center gap-1 shrink-0 cursor-pointer bg-[#F8F9FF] px-2.5 py-1 rounded-lg border border-[#6D3BFF]/20"
         >
-          <span>All 16 Sections</span>
+          <span>All 17 Sections</span>
           <ChevronRight className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -1639,6 +1654,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                   { id: 'analytics', label: 'Analytics Dashboard', icon: <BarChart2 className="w-4 h-4 text-[#6D3BFF]" /> },
                   { id: 'dl_applications', label: 'Driving Licence Applications', icon: <FileCheck className="w-4 h-4 text-[#D4AF37]" />, badgeKey: 'dl_apps' },
                   { id: 'students', label: 'Student Directory', icon: <Users className="w-4 h-4 text-blue-500" /> },
+                  { id: 'parent_management', label: 'Parent Portal Management', icon: <ShieldCheck className="w-4 h-4 text-amber-500" />, badgeKey: 'parents' },
                   { id: 'trainers', label: 'Trainer Management', icon: <Car className="w-4 h-4 text-emerald-500" /> },
                   { id: 'bookings', label: 'Class & Booking Management', icon: <Calendar className="w-4 h-4 text-indigo-500" /> },
                   { id: 'slots', label: 'Slot Capacity & Hours', icon: <Clock className="w-4 h-4 text-teal-500" /> },
@@ -1805,7 +1821,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                   <span className="flex items-center gap-1.5 text-emerald-600 font-extrabold">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Desk Active
                   </span>
-                  <span>16 Control Modules</span>
+                  <span>17 Control Modules</span>
                 </div>
 
                 {/* Drawer Menu List */}
@@ -1817,6 +1833,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                         { id: 'analytics', label: 'Analytics Dashboard', subtitle: 'Overview, KPIs & charts', icon: <BarChart2 className="w-4 h-4 text-[#6D3BFF]" /> },
                         { id: 'dl_applications', label: 'Driving Licence Applications', subtitle: 'Odisha RTO OD-02 LL & DL desk', icon: <FileCheck className="w-4 h-4 text-[#D4AF37]" />, badgeKey: 'dl_apps' },
                         { id: 'students', label: 'Student Directory', subtitle: 'Learners roster & profiles', icon: <Users className="w-4 h-4 text-blue-500" /> },
+                        { id: 'parent_management', label: 'Parent Portal Management', subtitle: 'Guardian IDs & live streams', icon: <ShieldCheck className="w-4 h-4 text-amber-500" />, badgeKey: 'parents' },
                         { id: 'trainers', label: 'Trainer Management', subtitle: 'Instructors & vehicles', icon: <Car className="w-4 h-4 text-emerald-500" /> },
                         { id: 'bookings', label: 'Class & Booking Management', subtitle: 'Sessions & photo logs', icon: <Calendar className="w-4 h-4 text-indigo-500" /> },
                         { id: 'slots', label: 'Slot Capacity & Hours', subtitle: 'Daily capacity limits', icon: <Clock className="w-4 h-4 text-teal-500" /> },
@@ -2613,8 +2630,18 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                                 />
                               </div>
                               <div>
-                                <p className="font-extrabold text-[#161623]">{stud.name}</p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="font-extrabold text-[#161623]">{stud.name}</p>
+                                  {(stud.isPremium || stud.courseName?.toLowerCase().includes("premium") || stud.totalCourseFee === 4000) && (
+                                    <span className="bg-amber-500/10 text-amber-800 border border-amber-500/30 text-[9px] font-black px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                                      ⭐ Premium
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-[10px] text-slate-400">ID: {stud.id} • Joined {stud.joinedDate || "June 2026"}</p>
+                                {stud.parentId && (
+                                  <p className="text-[9px] text-amber-700 font-mono font-bold">Parent: {stud.parentId}</p>
+                                )}
                               </div>
                             </td>
                             <td className="py-4 px-2">
@@ -2681,6 +2708,556 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                   </tbody>
                 </table>
               </div>
+
+              {/* ========================================================================= */}
+              {/* PREMIUM PARENT GUARDIAN ACCOUNTS & LIVE STREAM PERMISSIONS                */}
+              {/* ========================================================================= */}
+              <div className="mt-8 pt-6 border-t border-slate-100">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-amber-500 font-black text-sm">⭐</span>
+                      <h3 className="text-sm font-black text-[#161623]">
+                        Premium Parent Guardian Accounts & Live Stream Permissions
+                      </h3>
+                      <span className="bg-amber-100 text-amber-800 font-extrabold text-[10px] px-2 py-0.5 rounded-full">
+                        {MockDatabase.getParents().length} Registered
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Parents receive 1:1 remote in-car video stream access and GPS telemetry for enrolled student classes.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const allStuds = MockDatabase.getRegisteredStudents();
+                      allStuds.forEach(s => {
+                        if (s.isPremium || s.totalCourseFee === 4000) {
+                          MockDatabase.createOrUpdateParentForStudent(s.id, s.name, s.phone, s.email, s.password);
+                        }
+                      });
+                      showToast("Synchronized parent accounts with registered students.");
+                    }}
+                    className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-500/30 text-xs font-bold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Sync Parent Accounts</span>
+                  </button>
+                </div>
+
+                {MockDatabase.getParents().length === 0 ? (
+                  <div className="bg-amber-50/50 border border-amber-200/60 rounded-2xl p-6 text-center text-xs text-amber-900">
+                    <p className="font-bold">No Premium Parent accounts registered yet.</p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      When students register under the ⭐ Premium Plan (₹4,000), a linked Parent Account is auto-provisioned with 1:1 stream access.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {MockDatabase.getParents().map((parent) => {
+                      const linkedStudent = MockDatabase.getRegisteredStudents().find(s => s.id === parent.studentId) || MockDatabase.getStudent();
+                      const isAccessOn = parent.streamAccessAllowed !== false;
+
+                      return (
+                        <div 
+                          key={parent.id} 
+                          className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 flex flex-col justify-between gap-3 shadow-xs hover:bg-white transition-all"
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-800 flex items-center justify-center font-black text-xs shrink-0">
+                                👨‍👩‍👧
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <h4 className="font-extrabold text-xs text-[#161623]">{parent.name || `Parent of ${parent.studentName}`}</h4>
+                                  <span className="bg-emerald-100 text-emerald-700 text-[9px] font-black px-1.5 py-0.2 rounded-full uppercase">
+                                    {parent.plan || "Premium"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-500 font-mono">ID: {parent.id}</p>
+                                <p className="text-[10px] text-slate-600 font-semibold mt-0.5">
+                                  Student: <span className="font-bold text-[#161623]">{parent.studentName || linkedStudent.name}</span> (ID: {parent.studentId})
+                                </p>
+                              </div>
+                            </div>
+
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                              isAccessOn ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                            }`}>
+                              {isAccessOn ? "Stream Enabled" : "Stream Suspended"}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-200/60 text-[11px]">
+                            <div className="text-slate-500">
+                              Mobile: <span className="font-bold text-slate-700">+91 {parent.phone}</span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  MockDatabase.setParentStreamAccess(parent.id, !isAccessOn);
+                                  showToast(`Live Stream access ${!isAccessOn ? 'Enabled' : 'Suspended'} for ${parent.name}`);
+                                }}
+                                className={`text-[10px] font-extrabold px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                                  isAccessOn
+                                    ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200'
+                                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                                }`}
+                              >
+                                {isAccessOn ? "Suspend Stream" : "Enable Stream"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: PARENT PORTAL MANAGEMENT */}
+          {activeTab === 'parent_management' && (
+            <div className="flex flex-col gap-6 animate-fadeIn">
+              {/* Header Banner */}
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 sm:p-6 rounded-3xl border border-slate-100 shadow-sm">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-500 font-black text-lg">👨‍👩‍👧</span>
+                    <h2 className="text-lg font-black text-[#161623]">Parent Portal & Guardian Management</h2>
+                    <span className="bg-amber-100 text-amber-900 font-extrabold text-[10px] px-2.5 py-0.5 rounded-full uppercase">
+                      Premium Access
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Manage registered guardian accounts, verify 2-mobile student links, control in-car video stream access, and reset credentials.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                  <button
+                    onClick={() => {
+                      const allStuds = MockDatabase.getRegisteredStudents();
+                      allStuds.forEach(s => {
+                        if (MockDatabase.isStudentPremium(s)) {
+                          MockDatabase.createOrUpdateParentForStudent(s, s.parentName || `Parent of ${s.name}`, s.parentPhone || s.phone, s.email, s.password);
+                        }
+                      });
+                      setParentAccounts(MockDatabase.getParents());
+                      showToast("Synchronized parent accounts with registered Premium students.");
+                    }}
+                    className="flex-1 sm:flex-none bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-amber-500/20 cursor-pointer min-h-[44px]"
+                  >
+                    <RefreshCw className="w-4 h-4 shrink-0" />
+                    <span>Sync Parent Accounts</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const data = parentAccounts.map(p => ({
+                        "Parent ID": p.id,
+                        "Parent Name": p.name || "",
+                        "Parent Mobile": p.phone || "",
+                        "Student Name": p.studentName || "",
+                        "Student Phone": p.studentPhone || "",
+                        "Student ID": p.studentId || "",
+                        "Plan": p.plan || "Premium",
+                        "Account Status": p.status || "active",
+                        "Stream Access": p.streamAccessAllowed !== false ? "Enabled" : "Suspended",
+                        "Registered Date": p.createdAt || ""
+                      }));
+                      downloadCSV(data, "GoldenHands_Parent_Accounts.csv");
+                      showToast("Parent accounts roster exported to CSV.");
+                    }}
+                    className="flex-1 sm:flex-none bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer min-h-[44px]"
+                  >
+                    <Download className="w-4 h-4 shrink-0" />
+                    <span>Export CSV</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* KPI Stat Cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs flex flex-col justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total Parents</span>
+                  <div className="flex items-baseline justify-between mt-2">
+                    <span className="text-2xl font-black text-[#161623]">{parentAccounts.length}</span>
+                    <span className="text-[10px] font-extrabold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md">Guardians</span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs flex flex-col justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Active Accounts</span>
+                  <div className="flex items-baseline justify-between mt-2">
+                    <span className="text-2xl font-black text-emerald-600">
+                      {parentAccounts.filter(p => p.status !== 'inactive').length}
+                    </span>
+                    <span className="text-[10px] font-extrabold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">Verified</span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs flex flex-col justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Stream Enabled</span>
+                  <div className="flex items-baseline justify-between mt-2">
+                    <span className="text-2xl font-black text-[#6D3BFF]">
+                      {parentAccounts.filter(p => p.streamAccessAllowed !== false).length}
+                    </span>
+                    <span className="text-[10px] font-extrabold text-purple-600 bg-purple-50 px-2 py-0.5 rounded-md">1:1 Video</span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs flex flex-col justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Premium Linked</span>
+                  <div className="flex items-baseline justify-between mt-2">
+                    <span className="text-2xl font-black text-amber-500">
+                      {parentAccounts.length}
+                    </span>
+                    <span className="text-[10px] font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">₹4,000 Plan</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Search & Filter Toolbar */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={parentSearchQuery}
+                    onChange={(e) => setParentSearchQuery(e.target.value)}
+                    placeholder="Search by Parent Name, ID, Mobile, or Student Name..."
+                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:bg-white focus:border-[#6D3BFF] focus:outline-none transition-all"
+                  />
+                  {parentSearchQuery && (
+                    <button
+                      onClick={() => setParentSearchQuery("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] font-bold text-slate-500">Status:</span>
+                  <div className="flex bg-slate-100 p-1 rounded-xl gap-1">
+                    {(['all', 'active', 'inactive'] as const).map((filterVal) => (
+                      <button
+                        key={filterVal}
+                        onClick={() => setParentStatusFilter(filterVal)}
+                        className={`text-[10px] font-extrabold px-3 py-1 rounded-lg capitalize transition-all cursor-pointer ${
+                          parentStatusFilter === filterVal
+                            ? 'bg-white text-[#161623] shadow-xs'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        {filterVal}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Parents Roster Content */}
+              {(() => {
+                const filteredParents = parentAccounts.filter(p => {
+                  if (parentStatusFilter === 'active' && p.status === 'inactive') return false;
+                  if (parentStatusFilter === 'inactive' && p.status !== 'inactive') return false;
+
+                  if (parentSearchQuery.trim()) {
+                    const q = parentSearchQuery.toLowerCase().trim();
+                    const nameMatch = (p.name || "").toLowerCase().includes(q);
+                    const idMatch = (p.id || "").toLowerCase().includes(q);
+                    const phoneMatch = (p.phone || "").includes(q);
+                    const studentNameMatch = (p.studentName || "").toLowerCase().includes(q);
+                    const studentPhoneMatch = (p.studentPhone || "").includes(q);
+                    return nameMatch || idMatch || phoneMatch || studentNameMatch || studentPhoneMatch;
+                  }
+                  return true;
+                });
+
+                if (filteredParents.length === 0) {
+                  return (
+                    <div className="bg-white border border-slate-100 rounded-3xl p-10 text-center flex flex-col items-center justify-center gap-3 shadow-xs">
+                      <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center text-2xl">
+                        👨‍👩‍👧
+                      </div>
+                      <h3 className="text-sm font-black text-[#161623]">No Parent Accounts Found</h3>
+                      <p className="text-xs text-slate-500 max-w-md">
+                        {parentSearchQuery 
+                          ? "No parent records match your search criteria. Try a different search term or clear the filter."
+                          : "No Premium parent accounts registered yet. Parent accounts are created during registration when students enroll in the Premium Package (₹4,000)."}
+                      </p>
+                      {parentSearchQuery && (
+                        <button
+                          onClick={() => { setParentSearchQuery(""); setParentStatusFilter('all'); }}
+                          className="mt-2 text-xs font-black text-[#6D3BFF] hover:underline"
+                        >
+                          Clear Search Filters
+                        </button>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-4">
+                    {/* Desktop Table View */}
+                    <div className="hidden lg:block bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50/80 border-b border-slate-100 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                              <th className="py-3.5 px-4">Guardian Profile</th>
+                              <th className="py-3.5 px-4">Parent Mobile</th>
+                              <th className="py-3.5 px-4">Linked Student</th>
+                              <th className="py-3.5 px-4">Package</th>
+                              <th className="py-3.5 px-4">Account Status</th>
+                              <th className="py-3.5 px-4">Live Stream</th>
+                              <th className="py-3.5 px-4 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 text-xs">
+                            {filteredParents.map((parent) => {
+                              const linkedStudent = MockDatabase.getRegisteredStudents().find(s => s.id === parent.studentId) || MockDatabase.getStudent();
+                              const isAccessOn = parent.streamAccessAllowed !== false;
+                              const isActive = parent.status !== 'inactive';
+
+                              return (
+                                <tr key={parent.id} className="hover:bg-slate-50/60 transition-colors">
+                                  <td className="py-3 px-4">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-9 h-9 rounded-xl bg-amber-100/70 border border-amber-200 text-amber-900 flex items-center justify-center font-black text-sm shrink-0">
+                                        👨‍👩‍👧
+                                      </div>
+                                      <div>
+                                        <div className="font-extrabold text-[#161623]">{parent.name || `Parent of ${parent.studentName}`}</div>
+                                        <div className="text-[10px] font-mono text-slate-400">ID: {parent.id}</div>
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  <td className="py-3 px-4 font-semibold text-slate-700">
+                                    <div className="flex items-center gap-1.5">
+                                      <Smartphone className="w-3.5 h-3.5 text-slate-400" />
+                                      <span>+91 {parent.phone}</span>
+                                    </div>
+                                  </td>
+
+                                  <td className="py-3 px-4">
+                                    <div>
+                                      <div className="font-bold text-[#161623]">{parent.studentName || linkedStudent.name}</div>
+                                      <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                                        <span>Student: +91 {parent.studentPhone || linkedStudent.phone}</span>
+                                        <span>•</span>
+                                        <span>ID: {parent.studentId}</span>
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  <td className="py-3 px-4">
+                                    <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200/60 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full">
+                                      <span>⭐</span> {parent.plan || "Premium"} (₹4k)
+                                    </span>
+                                  </td>
+
+                                  <td className="py-3 px-4">
+                                    <button
+                                      onClick={() => {
+                                        const res = MockDatabase.toggleParentStatus(parent.id);
+                                        if (res.success) {
+                                          setParentAccounts(MockDatabase.getParents());
+                                          showToast(`Account status set to ${parent.status === 'active' ? 'Inactive' : 'Active'} for ${parent.name}`);
+                                        }
+                                      }}
+                                      className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold px-2.5 py-1 rounded-full cursor-pointer transition-all ${
+                                        isActive
+                                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                          : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+                                      }`}
+                                      title="Click to toggle account active/inactive"
+                                    >
+                                      <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                      {isActive ? "Active" : "Deactivated"}
+                                    </button>
+                                  </td>
+
+                                  <td className="py-3 px-4">
+                                    <button
+                                      onClick={() => {
+                                        MockDatabase.setParentStreamAccess(parent.id, !isAccessOn);
+                                        setParentAccounts(MockDatabase.getParents());
+                                        showToast(`Stream access ${!isAccessOn ? 'Enabled' : 'Suspended'} for ${parent.name}`);
+                                      }}
+                                      className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2.5 py-1 rounded-xl cursor-pointer transition-all ${
+                                        isAccessOn
+                                          ? 'bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100'
+                                          : 'bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200'
+                                      }`}
+                                    >
+                                      <Radio className={`w-3 h-3 ${isAccessOn ? 'text-purple-600 animate-pulse' : 'text-slate-400'}`} />
+                                      {isAccessOn ? "Stream On" : "Suspended"}
+                                    </button>
+                                  </td>
+
+                                  <td className="py-3 px-4 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        onClick={() => setSelectedParentForDetail(parent)}
+                                        className="p-1.5 rounded-lg text-slate-500 hover:text-[#6D3BFF] hover:bg-[#6D3BFF]/10 transition-colors cursor-pointer"
+                                        title="View Profile Details"
+                                      >
+                                        <Eye className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => setEditingParentAccount({ ...parent })}
+                                        className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer"
+                                        title="Edit Parent Details"
+                                      >
+                                        <Edit className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setResettingPasswordParent(parent);
+                                          setNewParentPasswordInput("");
+                                        }}
+                                        className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                                        title="Reset Password"
+                                      >
+                                        <KeyRound className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Mobile & Tablet Card Grid View */}
+                    <div className="lg:hidden grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {filteredParents.map((parent) => {
+                        const linkedStudent = MockDatabase.getRegisteredStudents().find(s => s.id === parent.studentId) || MockDatabase.getStudent();
+                        const isAccessOn = parent.streamAccessAllowed !== false;
+                        const isActive = parent.status !== 'inactive';
+
+                        return (
+                          <div
+                            key={parent.id}
+                            className="bg-white border border-slate-100 rounded-3xl p-4 sm:p-5 shadow-xs flex flex-col justify-between gap-4"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <div className="w-11 h-11 rounded-2xl bg-amber-100/70 border border-amber-200 text-amber-900 flex items-center justify-center font-black text-base shrink-0">
+                                  👨‍👩‍👧
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-1.5">
+                                    <h4 className="font-extrabold text-sm text-[#161623]">{parent.name || `Parent of ${parent.studentName}`}</h4>
+                                    <span className="bg-amber-100 text-amber-900 text-[9px] font-black px-1.5 py-0.2 rounded-full uppercase">
+                                      ⭐ {parent.plan || "Premium"}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-400 font-mono">ID: {parent.id}</p>
+                                </div>
+                              </div>
+
+                              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {isActive ? "Active" : "Inactive"}
+                              </span>
+                            </div>
+
+                            <div className="bg-slate-50 rounded-2xl p-3 space-y-2 text-xs">
+                              <div className="flex items-center justify-between text-slate-600">
+                                <span className="text-[11px] font-semibold text-slate-400">Parent Mobile:</span>
+                                <span className="font-bold text-slate-800">+91 {parent.phone}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-slate-600">
+                                <span className="text-[11px] font-semibold text-slate-400">Linked Student:</span>
+                                <span className="font-bold text-[#161623]">{parent.studentName || linkedStudent.name}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-slate-600">
+                                <span className="text-[11px] font-semibold text-slate-400">Student Phone:</span>
+                                <span className="font-semibold text-slate-700">+91 {parent.studentPhone || linkedStudent.phone}</span>
+                              </div>
+                              <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
+                                <span className="text-[11px] font-semibold text-slate-400">Live Video Stream:</span>
+                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                                  isAccessOn ? 'bg-purple-100 text-purple-700' : 'bg-slate-200 text-slate-600'
+                                }`}>
+                                  {isAccessOn ? "Enabled" : "Suspended"}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => {
+                                    MockDatabase.setParentStreamAccess(parent.id, !isAccessOn);
+                                    setParentAccounts(MockDatabase.getParents());
+                                    showToast(`Stream access ${!isAccessOn ? 'Enabled' : 'Suspended'} for ${parent.name}`);
+                                  }}
+                                  className={`text-[10px] font-extrabold px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                                    isAccessOn
+                                      ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                                      : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                                  }`}
+                                >
+                                  {isAccessOn ? "Suspend Stream" : "Enable Stream"}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    MockDatabase.toggleParentStatus(parent.id);
+                                    setParentAccounts(MockDatabase.getParents());
+                                    showToast(`Account set to ${parent.status === 'active' ? 'Inactive' : 'Active'}`);
+                                  }}
+                                  className="text-[10px] font-extrabold px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+                                >
+                                  {isActive ? "Deactivate" : "Activate"}
+                                </button>
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => setSelectedParentForDetail(parent)}
+                                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                                  title="View Details"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setEditingParentAccount({ ...parent })}
+                                  className="p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 cursor-pointer"
+                                  title="Edit"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setResettingPasswordParent(parent);
+                                    setNewParentPasswordInput("");
+                                  }}
+                                  className="p-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 cursor-pointer"
+                                  title="Reset Password"
+                                >
+                                  <KeyRound className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -6128,6 +6705,337 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                 </>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: PARENT ACCOUNT DETAILS */}
+      {selectedParentForDetail && (
+        <div className="fixed inset-0 bg-[#161623]/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fadeIn">
+          <div className="bg-white rounded-[32px] w-full max-w-xl shadow-2xl border border-slate-100 p-6 flex flex-col gap-5 animate-scaleUp relative max-h-[90vh] overflow-y-auto">
+            <button 
+              onClick={() => setSelectedParentForDetail(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-50 transition-colors cursor-pointer"
+              title="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-200 text-amber-900 flex items-center justify-center font-black text-xl shrink-0">
+                👨‍👩‍👧
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-black text-[#161623]">{selectedParentForDetail.name || "Guardian Account"}</h3>
+                  <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
+                    ⭐ {selectedParentForDetail.plan || "Premium"}
+                  </span>
+                </div>
+                <p className="text-xs font-mono text-slate-400">Parent ID / Username: {selectedParentForDetail.id}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Guardian Info Card */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Parent / Guardian Info</span>
+                <div className="text-xs space-y-1.5 pt-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Mobile:</span>
+                    <span className="font-bold text-slate-800">+91 {selectedParentForDetail.phone}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Email:</span>
+                    <span className="font-medium text-slate-800 truncate max-w-[160px]">{selectedParentForDetail.email || "N/A"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Status:</span>
+                    <span className={`font-bold ${selectedParentForDetail.status !== 'inactive' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {selectedParentForDetail.status !== 'inactive' ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Registered:</span>
+                    <span className="font-semibold text-slate-700">{selectedParentForDetail.createdAt || "N/A"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Linked Student Card */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Linked Student</span>
+                <div className="text-xs space-y-1.5 pt-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Student Name:</span>
+                    <span className="font-bold text-[#161623]">{selectedParentForDetail.studentName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Student Mobile:</span>
+                    <span className="font-bold text-slate-800">+91 {selectedParentForDetail.studentPhone}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Student ID:</span>
+                    <span className="font-mono text-slate-700">{selectedParentForDetail.studentId}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Package:</span>
+                    <span className="font-bold text-amber-600">⭐ Premium (₹4,000)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Live Stream Status Banner */}
+            <div className="p-4 rounded-2xl bg-purple-50/60 border border-purple-100 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                  <Radio className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-[#161623]">In-Car HD Live Stream Access</h4>
+                  <p className="text-[11px] text-slate-500">1:1 encrypted remote video broadcast and live GPS track.</p>
+                </div>
+              </div>
+              <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase shrink-0 ${
+                selectedParentForDetail.streamAccessAllowed !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+              }`}>
+                {selectedParentForDetail.streamAccessAllowed !== false ? "Stream Enabled" : "Stream Suspended"}
+              </span>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  const target = selectedParentForDetail;
+                  setSelectedParentForDetail(null);
+                  setEditingParentAccount({ ...target });
+                }}
+                className="bg-amber-50 hover:bg-amber-100 text-amber-800 font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <Edit className="w-3.5 h-3.5" />
+                <span>Edit Details</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const target = selectedParentForDetail;
+                  setSelectedParentForDetail(null);
+                  setResettingPasswordParent(target);
+                  setNewParentPasswordInput("");
+                }}
+                className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>Reset Password</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedParentForDetail(null)}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT PARENT ACCOUNT */}
+      {editingParentAccount && (
+        <div className="fixed inset-0 bg-[#161623]/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fadeIn">
+          <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl border border-slate-100 p-6 flex flex-col gap-4 animate-scaleUp relative">
+            <button 
+              onClick={() => setEditingParentAccount(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-50 transition-colors cursor-pointer"
+              title="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <h3 className="text-base font-black text-[#161623]">Edit Parent / Guardian Details</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Parent ID: {editingParentAccount.id}</p>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const res = MockDatabase.updateParentDetails(editingParentAccount.id, {
+                  name: editingParentAccount.name,
+                  phone: editingParentAccount.phone,
+                  status: editingParentAccount.status,
+                  streamAccessAllowed: editingParentAccount.streamAccessAllowed
+                });
+                if (res.success) {
+                  setParentAccounts(MockDatabase.getParents());
+                  showToast(`Updated details for ${editingParentAccount.name}`);
+                  setEditingParentAccount(null);
+                } else {
+                  showToast(res.error || "Update failed.");
+                }
+              }}
+              className="space-y-3.5"
+            >
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">Guardian Full Name</label>
+                <input
+                  type="text"
+                  required
+                  value={editingParentAccount.name || ""}
+                  onChange={(e) => setEditingParentAccount({ ...editingParentAccount, name: e.target.value })}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:border-[#6D3BFF] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">Parent Mobile Number (10 Digits)</label>
+                <div className="flex">
+                  <span className="inline-flex items-center px-3 text-xs font-bold text-slate-500 bg-slate-100 border border-r-0 border-slate-200 rounded-l-xl">
+                    +91
+                  </span>
+                  <input
+                    type="tel"
+                    required
+                    maxLength={10}
+                    value={editingParentAccount.phone || ""}
+                    onChange={(e) => setEditingParentAccount({ ...editingParentAccount, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-r-xl text-xs font-semibold text-slate-800 focus:bg-white focus:border-[#6D3BFF] focus:outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">Account Status</label>
+                <select
+                  value={editingParentAccount.status || "active"}
+                  onChange={(e) => setEditingParentAccount({ ...editingParentAccount, status: e.target.value as any })}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:border-[#6D3BFF] focus:outline-none"
+                >
+                  <option value="active">Active (Access Granted)</option>
+                  <option value="inactive">Inactive / Suspended</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <span className="text-xs font-bold text-slate-700">In-Car HD Live Stream</span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editingParentAccount.streamAccessAllowed !== false}
+                    onChange={(e) => setEditingParentAccount({ ...editingParentAccount, streamAccessAllowed: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#6D3BFF]"></div>
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingParentAccount(null)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold text-xs px-4 py-2.5 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white font-extrabold text-xs px-5 py-2.5 rounded-xl shadow-md shadow-[#6D3BFF]/20 cursor-pointer"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: RESET PARENT PASSWORD */}
+      {resettingPasswordParent && (
+        <div className="fixed inset-0 bg-[#161623]/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fadeIn">
+          <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl border border-slate-100 p-6 flex flex-col gap-4 animate-scaleUp relative">
+            <button 
+              onClick={() => setResettingPasswordParent(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-50 transition-colors cursor-pointer"
+              title="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <KeyRound className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-[#161623]">Reset Guardian Password</h3>
+                <p className="text-xs text-slate-400">Account: {resettingPasswordParent.name || resettingPasswordParent.id}</p>
+              </div>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newParentPasswordInput.trim() || newParentPasswordInput.trim().length < 4) {
+                  showToast("Password must be at least 4 characters.");
+                  return;
+                }
+                const res = MockDatabase.resetParentPassword(resettingPasswordParent.id, newParentPasswordInput);
+                if (res.success) {
+                  setParentAccounts(MockDatabase.getParents());
+                  showToast(`Password successfully reset for ${resettingPasswordParent.name || resettingPasswordParent.id}!`);
+                  setResettingPasswordParent(null);
+                  setNewParentPasswordInput("");
+                } else {
+                  showToast(res.error || "Password reset failed.");
+                }
+              }}
+              className="space-y-3.5"
+            >
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-[11px] font-bold text-slate-700">New Password</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const randomPass = "GH" + Math.floor(100000 + Math.random() * 900000);
+                      setNewParentPasswordInput(randomPass);
+                    }}
+                    className="text-[10px] font-extrabold text-[#6D3BFF] hover:underline cursor-pointer"
+                  >
+                    Generate Random
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="Enter new password (min. 4 chars)"
+                  value={newParentPasswordInput}
+                  onChange={(e) => setNewParentPasswordInput(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:border-[#6D3BFF] focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="p-3 bg-amber-50/70 border border-amber-200/60 rounded-xl text-[11px] text-amber-900 leading-relaxed">
+                ℹ️ The parent will be able to log in with their Parent ID (<span className="font-bold">{resettingPasswordParent.id}</span>) and this new password immediately across all portals.
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setResettingPasswordParent(null)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold text-xs px-4 py-2.5 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white font-extrabold text-xs px-5 py-2.5 rounded-xl shadow-md shadow-[#6D3BFF]/20 cursor-pointer"
+                >
+                  Update Password
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

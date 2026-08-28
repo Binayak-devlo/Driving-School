@@ -1,6 +1,6 @@
 {
   "name": "Golden Hands Driving School",
-  "description": "Premium multi-portal platform for Golden Hands Driving School featuring Student Mobile App, Trainer Mobile App, Web Admin Dashboard, and the ODNEX Super AI Assistant copilot.",
-  "requestFramePermissions": ["camera"],
+  "description": "Premium multi-portal platform for Golden Hands Driving School featuring Student App, Trainer App, Web Admin Dashboard, Parent Live Tracking & Streaming Portal, and the ODNEX Super AI Assistant copilot.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

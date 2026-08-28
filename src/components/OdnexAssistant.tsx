@@ -243,9 +243,14 @@ export default function OdnexAssistant({
     setLoading(true);
 
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 12000);
+    const timeoutId = setTimeout(() => abortController.abort(), 5000);
 
     try {
+      // If we are running in file:// protocol or offline WebView, execute directly
+      if (typeof window !== "undefined" && (window.location?.protocol === "file:" || navigator?.onLine === false)) {
+        throw new Error("Offline or file protocol mode");
+      }
+
       // Gather latest client-side state
       const progress = currentStudent ? MockDatabase.getProgress(currentStudent.id) : null;
       
@@ -348,6 +353,44 @@ export default function OdnexAssistant({
         suggestedActions: userRole === 'trainer'
           ? ["🚗 Start Pickup Route", "📅 Today's Schedule", "👥 My Students"]
           : ["📅 Book a Driving Class", "📍 Track Trainer Live", "⏱️ Check Available Slots", "📊 View Progress"]
+      };
+    }
+
+    // Courses, Fees, & Premium Plan Queries
+    if (q.includes("fee") || q.includes("price") || q.includes("cost") || q.includes("plan") || q.includes("package") || q.includes("premium")) {
+      return {
+        text: `### Golden Hands Driving School Training Plans:\n\n1. **⭐ Premium Comprehensive Plan** — **₹4,000**\n   - Regular Course: ₹3,500 + Premium Upgrade: ₹500\n   - 15 Full Practical Sessions (Dual-Control Car)\n   - **Parent Live In-Car Stream**: 1:1 Live remote video broadcasting for parents & guardians\n   - Real-time GPS Telemetry, Speed & Route tracking\n   - RTO Licence Assistance & Test Preparation\n\n2. **Regular Comprehensive Plan** — **₹3,500**\n   - 15 Practical Driving Classes\n   - RTO Test Training & Road Safety\n\n3. **Refresher Course** — **₹1,750** (7 Sessions)\n4. **Extended Mastery Course** — **₹5,250** (23 Sessions)`,
+        suggestedActions: ["⭐ Learn More about Premium", "📅 Book Next Class", "📁 Upload Documents"]
+      };
+    }
+
+    // Driving School Location & Contact
+    if (q.includes("address") || q.includes("where are you located") || q.includes("office") || q.includes("contact") || q.includes("number")) {
+      return {
+        text: `### Golden Hands Driving School Details:\n- **Location**: Plot 102, Rasulgarh Square, Bhubaneswar, Odisha 751010\n- **Phone**: +91 94370 12345 / +91 98765 43210\n- **Working Hours**: Monday to Sunday: 06:00 AM – 08:30 PM\n- **Vehicles**: Dual-Control Maruti Suzuki Swift, Hyundai i10, WagonR`,
+        suggestedActions: ["📞 Call Office Now", "📍 View Map", "📅 Book Class"]
+      };
+    }
+
+    // Driving Tips: Clutch, Hill Start, Parallel Parking
+    if (q.includes("clutch") || q.includes("friction point") || q.includes("biting point")) {
+      return {
+        text: `### 🚗 Mastering Clutch Control (Biting Point):\n1. Press clutch fully down and engage 1st gear.\n2. Slowly raise your left foot until you hear the engine note drop slightly and feel the car vibrate gently — this is the **Biting Point**.\n3. Release handbrake smoothly while holding the clutch steady at this point.\n4. Gently press the accelerator as the vehicle rolls forward, then release the clutch smoothly over 2–3 seconds.`,
+        suggestedActions: ["🚦 Practice Mock Test", "📊 View Clutch Progress", "📅 Book Driving Class"]
+      };
+    }
+
+    if (q.includes("hill start") || q.includes("slope") || q.includes("uphill")) {
+      return {
+        text: `### ⛰️ Hill Start Technique (No Rollback):\n1. Apply the **handbrake firmly** and keep your foot brake pressed.\n2. Depress clutch and shift into **1st gear**.\n3. Bring clutch up to the **friction biting point** until the front of the car lifts slightly.\n4. Give gentle accelerator pedal (1,500–2,000 RPM).\n5. Release handbrake smoothly — the car will move uphill without rolling backward!`,
+        suggestedActions: ["📊 View Hill Start Skill", "📅 Book Class for Hill Training"]
+      };
+    }
+
+    if (q.includes("park") || q.includes("parallel parking") || q.includes("reverse")) {
+      return {
+        text: `### 🅿️ Parallel Parking Formula:\n1. Pull up parallel to the front vehicle (2–3 feet gap, rear bumpers aligned).\n2. Turn steering wheel **1 full lock towards the curb** and reverse slowly at a 45-degree angle.\n3. When your wing mirror aligns with the front car's rear bumper, straighten steering.\n4. Turn full lock the opposite way to tuck the front nose in parallel to the curb!`,
+        suggestedActions: ["📊 View Parking Progress", "📅 Book Parking Session"]
       };
     }
 

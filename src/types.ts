@@ -56,6 +56,51 @@ export interface Student {
   aadharStatus?: 'Not Uploaded' | 'Pending' | 'Verified' | 'Rejected';
   isAadharVerified?: boolean;
   aadharVerified?: boolean;
+
+  // Premium Parent Portal Linking
+  isPremium?: boolean;
+  parentId?: string;
+  parentAccessKey?: string;
+  parentPhone?: string;
+  parentEmail?: string;
+  parentName?: string;
+}
+
+export interface Parent {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentPhone: string;
+  name: string;
+  phone: string;
+  email: string;
+  password?: string;
+  createdAt: string;
+  plan: 'Premium' | 'Standard';
+  status: 'active' | 'inactive';
+  streamAccessAllowed: boolean;
+  lastLoginAt?: string;
+}
+
+export interface LiveStreamSession {
+  studentId: string;
+  classId?: string;
+  bookingId?: string;
+  isLive: boolean;
+  startedAt?: string;
+  stoppedAt?: string;
+  viewerCount?: number;
+  sdpOffer?: string;
+  sdpAnswer?: string;
+  candidates?: any[];
+  trainerName?: string;
+  carName?: string;
+  carPlate?: string;
+  location?: string;
+  currentSpeed?: number;
+  streamType?: 'webrtc' | 'frame_stream';
+  latestFrame?: string; // Base64 snapshot fallback for real-time video sync across all network conditions
+  updatedAt?: number;
 }
 
 export interface Trainer {
@@ -259,7 +304,7 @@ export interface TrainerSession {
 }
 
 export interface NavState {
-  activeView: 'portal' | 'student' | 'trainer' | 'admin';
+  activeView: 'portal' | 'student' | 'trainer' | 'admin' | 'parent';
   studentScreen?: 'splash' | 'onboarding' | 'login' | 'register' | 'otp' | 'app' | 'verify';
   studentTab?: 'home' | 'classes' | 'modify' | 'track' | 'learn' | 'profile';
   studentSubPage?: string | null;
@@ -269,6 +314,8 @@ export interface NavState {
   adminLoggedIn?: boolean;
   adminTab?: string;
   adminPreviewDocId?: string | null;
+  parentLoggedIn?: boolean;
+  parentTab?: 'overview' | 'live_stream' | 'performance' | 'tracking' | 'profile';
   isFirst?: boolean;
   seq?: number;
 }

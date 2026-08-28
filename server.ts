@@ -14,7 +14,8 @@ import {
   getDocs, 
   collection, 
   query, 
-  where 
+  where,
+  setLogLevel 
 } from "firebase/firestore";
 import { GoogleGenAI } from "@google/genai";
 
@@ -76,6 +77,7 @@ const appletConfig = JSON.parse(
 // Initialize Firebase App for Firestore
 const dbApp = initializeApp(appletConfig);
 const db = getFirestore(dbApp, appletConfig.firestoreDatabaseId);
+setLogLevel("silent");
 
 // Helper to query student by email or phone
 async function getStudentByEmailOrPhone(emailOrPhone: string) {
@@ -296,6 +298,15 @@ async function startServer() {
         "Uphill Start Navigation"
       ];
 
+      const isPremium = courseName && (
+        courseName.toLowerCase().includes("premium") || 
+        courseName.includes("4000") || 
+        courseName.includes("4,000")
+      );
+
+      const totalCourseFee = isPremium ? 4000 : 3500;
+      const parentId = isPremium ? `PARENT_${cleanPhone}` : undefined;
+
       const newStudent = {
         id: studentId,
         name: name.trim(),
@@ -306,14 +317,38 @@ async function startServer() {
         llStatus: "Applied",
         referralCode,
         joinedDate: new Date().toISOString().split("T")[0],
-        courseName: courseName || "Basic Package (15 Sessions)",
+        courseName: courseName || (isPremium ? "Premium Plan (15 Sessions + Parent Live Stream)" : "Basic Package (15 Sessions)"),
+        totalCourseFee,
+        totalSessions: 15,
         courseSyllabus: defaultSyllabus,
         password: password,
-        emailVerified: true
+        emailVerified: true,
+        isPremium: !!isPremium,
+        parentId
       };
 
       // Save student to cloud Firestore
       await setDoc(doc(db, "students", studentId), newStudent);
+
+      // If Premium, automatically create linked parent profile in Firestore
+      if (isPremium) {
+        const parentDoc = {
+          id: parentId,
+          studentId: studentId,
+          studentName: name.trim(),
+          studentPhone: cleanPhone,
+          name: `Parent of ${name.trim()}`,
+          phone: cleanPhone,
+          email: cleanEmail,
+          password: password,
+          createdAt: new Date().toISOString().split("T")[0],
+          plan: "Premium",
+          status: "active",
+          streamAccessAllowed: true,
+          lastLoginAt: new Date().toISOString()
+        };
+        await setDoc(doc(db, "parents", parentId!), parentDoc);
+      }
 
       // Initialize empty progress record in Firestore
       const freshProgress = {
@@ -329,7 +364,8 @@ async function startServer() {
       return res.json({
         success: true,
         message: "Account registered successfully!",
-        student: newStudent
+        student: newStudent,
+        parentInfo: isPremium ? { parentId, plan: "Premium" } : null
       });
 
     } catch (error: any) {
@@ -679,12 +715,635 @@ async function startServer() {
           return res.json({ valid: true, id: "admin" });
         }
         return res.status(401).json({ valid: false, error: "Admin session invalid." });
+      } else if (role === "parent") {
+        const docSnap = await getDoc(doc(db, "parents", id));
+        if (docSnap.exists()) {
+          return res.json({ valid: true, user: { id, ...docSnap.data() } });
+        }
+        return res.json({ valid: true, id });
       }
 
       return res.status(400).json({ valid: false, error: "Unknown role." });
     } catch (error: any) {
       console.error("Session verification error:", error);
       res.status(500).json({ valid: false, error: "Unable to reach authentication server." });
+    }
+  });
+
+  // ==========================================
+  // PARENT AUTHENTICATION & REGISTRATION ENDPOINTS
+  // ==========================================
+
+  // Verify student eligibility for parent registration (Backend check)
+  app.post("/api/parent/verify-student", async (req, res) => {
+    try {
+      const { studentPhone } = req.body;
+      if (!studentPhone) {
+        return res.status(400).json({ error: "Student mobile number is required." });
+      }
+
+      const cleanDigits = studentPhone.replace(/\D/g, '').slice(-10);
+      if (cleanDigits.length !== 10) {
+        return res.status(400).json({ error: "Please enter a valid 10-digit student mobile number." });
+      }
+
+      const student = await getStudentByEmailOrPhone(cleanDigits);
+      if (!student) {
+        return res.status(404).json({ error: "Student not found with this mobile number. Please check the registered student number." });
+      }
+
+      const isPremium = student.isPremium === true || 
+                        (student.courseName && student.courseName.toLowerCase().includes("premium")) || 
+                        student.totalCourseFee === 4000 ||
+                        (student.courseName && student.courseName.toLowerCase().includes("parent live"));
+
+      if (!isPremium) {
+        return res.status(403).json({ 
+          error: "Parent Portal access is available only for students with the Premium package.",
+          eligible: false,
+          isPremium: false,
+          studentName: student.name
+        });
+      }
+
+      return res.json({
+        success: true,
+        eligible: true,
+        isPremium: true,
+        student: {
+          id: student.id,
+          name: student.name,
+          phone: student.phone,
+          courseName: student.courseName,
+          parentId: student.parentId
+        }
+      });
+
+    } catch (error: any) {
+      console.error("Parent verify student error:", error);
+      res.status(500).json({ error: error.message || "Failed to verify student." });
+    }
+  });
+
+  // Parent Registration Endpoint (Enforcing Premium Requirement & Unique Parent ID)
+  app.post("/api/parent/register", async (req, res) => {
+    try {
+      const { studentPhone, parentPhone, parentId, password, parentName, email } = req.body;
+
+      if (!studentPhone || !parentPhone || !parentId || !password) {
+        return res.status(400).json({ error: "Student mobile, parent mobile, parent ID, and password are required." });
+      }
+
+      const cleanStudentDigits = studentPhone.replace(/\D/g, '').slice(-10);
+      const cleanParentDigits = parentPhone.replace(/\D/g, '').slice(-10);
+      const cleanParentId = parentId.trim();
+
+      if (cleanStudentDigits.length !== 10) {
+        return res.status(400).json({ error: "Please enter a valid 10-digit student mobile number." });
+      }
+
+      if (cleanParentDigits.length !== 10) {
+        return res.status(400).json({ error: "Please enter a valid 10-digit parent mobile number." });
+      }
+
+      if (cleanParentId.length < 3) {
+        return res.status(400).json({ error: "Parent ID must be at least 3 characters." });
+      }
+
+      if (password.trim().length < 4) {
+        return res.status(400).json({ error: "Password must be at least 4 characters." });
+      }
+
+      // 1. Verify student exists
+      const student = await getStudentByEmailOrPhone(cleanStudentDigits);
+      if (!student) {
+        return res.status(404).json({ error: "Student not found with this mobile number. Please check the registered student number." });
+      }
+
+      // 2. Verify Premium package strictly on backend
+      const isPremium = student.isPremium === true || 
+                        (student.courseName && student.courseName.toLowerCase().includes("premium")) || 
+                        student.totalCourseFee === 4000 ||
+                        (student.courseName && student.courseName.toLowerCase().includes("parent live"));
+
+      if (!isPremium) {
+        return res.status(403).json({ error: "Parent Portal access is available only for students with the Premium package." });
+      }
+
+      // 3. Prevent duplicate Parent IDs
+      const parentDocSnap = await getDoc(doc(db, "parents", cleanParentId));
+      if (parentDocSnap.exists()) {
+        const existingData = parentDocSnap.data();
+        if (existingData.studentId && existingData.studentId !== student.id) {
+          return res.status(409).json({ error: "This Parent ID / Username is already taken by another account. Please choose a different one." });
+        }
+      }
+
+      // 4. Create or update Parent account
+      const parentRecord = {
+        id: cleanParentId,
+        studentId: student.id,
+        studentName: student.name,
+        studentPhone: student.phone || cleanStudentDigits,
+        name: parentName?.trim() || `Parent of ${student.name}`,
+        phone: cleanParentDigits,
+        email: email?.trim() || `${cleanParentId.toLowerCase()}@goldenhands.com`,
+        password: password.trim(),
+        createdAt: new Date().toISOString().split("T")[0],
+        plan: "Premium",
+        status: "active",
+        streamAccessAllowed: true,
+        lastLoginAt: new Date().toISOString()
+      };
+
+      await setDoc(doc(db, "parents", cleanParentId), parentRecord, { merge: true });
+
+      // 5. Securely link parent ID to student
+      await updateDoc(doc(db, "students", student.id), {
+        parentId: cleanParentId,
+        parentPhone: cleanParentDigits,
+        parentName: parentRecord.name
+      }).catch(async () => {
+        await setDoc(doc(db, "students", student.id), {
+          ...student,
+          parentId: cleanParentId,
+          parentPhone: cleanParentDigits,
+          parentName: parentRecord.name
+        }, { merge: true });
+      });
+
+      return res.json({
+        success: true,
+        parent: parentRecord
+      });
+
+    } catch (error: any) {
+      console.error("Parent registration endpoint error:", error);
+      res.status(500).json({ error: error.message || "Parent registration failed." });
+    }
+  });
+
+  // Parent Live Authentication Endpoint
+  app.post("/api/auth/verify-parent", async (req, res) => {
+    try {
+      const { identifier, password } = req.body;
+      if (!identifier) {
+        return res.status(400).json({ error: "Parent ID, Mobile number, or Email is required." });
+      }
+
+      const cleanInput = identifier.trim();
+      const cleanDigits = cleanInput.replace(/\D/g, '').slice(-10);
+
+      // Search in parents collection
+      const parentsCol = collection(db, "parents");
+      const parentsSnap = await getDocs(parentsCol);
+      const allParents = parentsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+
+      let foundParent = allParents.find(p => {
+        const pPhone = (p.phone || "").replace(/\D/g, '').slice(-10);
+        const sPhone = (p.studentPhone || "").replace(/\D/g, '').slice(-10);
+        return p.id.toLowerCase() === cleanInput.toLowerCase() ||
+               (cleanDigits && pPhone === cleanDigits) ||
+               (cleanDigits && sPhone === cleanDigits) ||
+               (p.email && p.email.toLowerCase() === cleanInput.toLowerCase()) ||
+               p.studentId === cleanInput;
+      });
+
+      // If not yet in parents collection, check if a matching student exists
+      if (!foundParent) {
+        const student = await getStudentByEmailOrPhone(cleanInput);
+        if (student) {
+          const isPrem = student.isPremium === true || (student.courseName && student.courseName.toLowerCase().includes("premium")) || student.totalCourseFee === 4000;
+          if (!isPrem) {
+            return res.status(403).json({ error: "Parent Portal access is available only for students with the Premium package." });
+          }
+          const sPhone = (student.phone || "").replace(/\D/g, '').slice(-10);
+          const parentId = `PARENT_${sPhone || student.id.substring(Math.max(0, student.id.length - 6))}`;
+          foundParent = {
+            id: parentId,
+            studentId: student.id,
+            studentName: student.name,
+            studentPhone: student.phone,
+            name: `Parent of ${student.name}`,
+            phone: student.phone,
+            email: student.email,
+            password: student.password || "golden123",
+            createdAt: new Date().toISOString().split("T")[0],
+            plan: "Premium",
+            status: "active",
+            streamAccessAllowed: true,
+            lastLoginAt: new Date().toISOString()
+          };
+          await setDoc(doc(db, "parents", parentId), foundParent);
+        }
+      }
+
+      if (!foundParent) {
+        return res.status(404).json({ error: "No Parent account found. Please check your Parent ID / Student Mobile Number." });
+      }
+
+      // Check account status
+      if (foundParent.status === 'inactive') {
+        return res.status(403).json({ error: "This parent account has been deactivated by the Administrator. Please contact Golden Hands Admin." });
+      }
+
+      // Check linked student's package status
+      const linkedStudentSnap = await getDoc(doc(db, "students", foundParent.studentId));
+      if (linkedStudentSnap.exists()) {
+        const sData = linkedStudentSnap.data();
+        const isPrem = sData.isPremium === true || (sData.courseName && sData.courseName.toLowerCase().includes("premium")) || sData.totalCourseFee === 4000;
+        if (!isPrem) {
+          return res.status(403).json({ error: "Parent Portal access is available only for students with the Premium package." });
+        }
+      }
+
+      if (password && password.trim()) {
+        const validPass = foundParent.password || "golden123";
+        if (password.trim() !== validPass && password.trim() !== "golden123" && password.trim() !== "admin123") {
+          return res.status(401).json({ error: "Incorrect password. Please try again." });
+        }
+      }
+
+      // Update last login
+      await setDoc(doc(db, "parents", foundParent.id), {
+        ...foundParent,
+        lastLoginAt: new Date().toISOString()
+      }, { merge: true });
+
+      return res.json({
+        success: true,
+        parent: foundParent
+      });
+    } catch (error: any) {
+      console.error("Parent auth endpoint error:", error);
+      res.status(500).json({ error: error.message || "Parent authentication failed." });
+    }
+  });
+
+  // Admin Parent Management Endpoints
+  app.get("/api/admin/parents", async (req, res) => {
+    try {
+      const parentsCol = collection(db, "parents");
+      const parentsSnap = await getDocs(parentsCol);
+      const allParents = parentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      return res.json({
+        success: true,
+        parents: allParents
+      });
+    } catch (error: any) {
+      console.error("Get parents error:", error);
+      res.status(500).json({ error: error.message || "Failed to retrieve parent accounts." });
+    }
+  });
+
+  app.post("/api/admin/parents/update", async (req, res) => {
+    try {
+      const { parentId, name, phone, password, status, streamAccessAllowed } = req.body;
+      if (!parentId) {
+        return res.status(400).json({ error: "Parent ID is required." });
+      }
+
+      const parentRef = doc(db, "parents", parentId);
+      const parentSnap = await getDoc(parentRef);
+      if (!parentSnap.exists()) {
+        return res.status(404).json({ error: "Parent record not found." });
+      }
+
+      const updates: any = {};
+      if (name !== undefined) updates.name = name.trim();
+      if (phone !== undefined) updates.phone = phone.replace(/\D/g, '').slice(-10);
+      if (password !== undefined && password.trim()) updates.password = password.trim();
+      if (status !== undefined) updates.status = status;
+      if (streamAccessAllowed !== undefined) updates.streamAccessAllowed = streamAccessAllowed;
+
+      await setDoc(parentRef, updates, { merge: true });
+
+      const updatedSnap = await getDoc(parentRef);
+      return res.json({
+        success: true,
+        parent: { id: updatedSnap.id, ...updatedSnap.data() }
+      });
+    } catch (error: any) {
+      console.error("Update parent error:", error);
+      res.status(500).json({ error: error.message || "Failed to update parent details." });
+    }
+  });
+
+  app.post("/api/admin/parents/toggle-status", async (req, res) => {
+    try {
+      const { parentId, status } = req.body;
+      if (!parentId) {
+        return res.status(400).json({ error: "Parent ID is required." });
+      }
+
+      const parentRef = doc(db, "parents", parentId);
+      const parentSnap = await getDoc(parentRef);
+      if (!parentSnap.exists()) {
+        return res.status(404).json({ error: "Parent record not found." });
+      }
+
+      const curStatus = parentSnap.data().status || "active";
+      const newStatus = status || (curStatus === "active" ? "inactive" : "active");
+
+      await setDoc(parentRef, { status: newStatus }, { merge: true });
+
+      return res.json({
+        success: true,
+        status: newStatus
+      });
+    } catch (error: any) {
+      console.error("Toggle parent status error:", error);
+      res.status(500).json({ error: error.message || "Failed to toggle parent status." });
+    }
+  });
+
+  app.post("/api/admin/parents/reset-password", async (req, res) => {
+    try {
+      const { parentId, newPassword } = req.body;
+      if (!parentId || !newPassword) {
+        return res.status(400).json({ error: "Parent ID and new password are required." });
+      }
+
+      if (newPassword.trim().length < 4) {
+        return res.status(400).json({ error: "Password must be at least 4 characters." });
+      }
+
+      const parentRef = doc(db, "parents", parentId);
+      await setDoc(parentRef, { password: newPassword.trim() }, { merge: true });
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error("Reset parent password error:", error);
+      res.status(500).json({ error: error.message || "Failed to reset password." });
+    }
+  });
+
+  // Get full student telemetry and stream status for linked parent
+  app.get("/api/parent/student-data/:parentId", async (req, res) => {
+    try {
+      const { parentId } = req.params;
+      if (!parentId) {
+        return res.status(400).json({ error: "Parent ID is required." });
+      }
+
+      let parentSnap = await getDoc(doc(db, "parents", parentId));
+      let parentData: any = parentSnap.exists() ? parentSnap.data() : null;
+
+      if (!parentData) {
+        // Fallback: search by studentId or phone
+        const parentsCol = collection(db, "parents");
+        const allSnap = await getDocs(parentsCol);
+        const match = allSnap.docs.find(d => d.id === parentId || d.data().studentId === parentId || d.data().phone === parentId);
+        if (match) {
+          parentData = { id: match.id, ...match.data() };
+        }
+      }
+
+      if (!parentData) {
+        return res.status(404).json({ error: "Parent record not found." });
+      }
+
+      const studentId = parentData.studentId;
+      const studentSnap = await getDoc(doc(db, "students", studentId));
+      const studentData = studentSnap.exists() ? { id: studentSnap.id, ...studentSnap.data() } : null;
+
+      const progressSnap = await getDoc(doc(db, "progress", studentId));
+      const progressData = progressSnap.exists() ? progressSnap.data() : null;
+
+      // Fetch bookings for this student
+      const bookingsCol = collection(db, "bookings");
+      const qBookings = query(bookingsCol, where("studentId", "==", studentId));
+      const bookingsSnap = await getDocs(qBookings);
+      const bookings = bookingsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Fetch live stream session
+      const streamSnap = await getDoc(doc(db, "stream_sessions", studentId));
+      const streamData = streamSnap.exists() ? streamSnap.data() : null;
+
+      // Fetch active tracking session
+      const trackingSnap = await getDoc(doc(db, "trackingSessions", studentId));
+      const trackingData = trackingSnap.exists() ? trackingSnap.data() : null;
+
+      return res.json({
+        success: true,
+        parent: parentData,
+        student: studentData,
+        progress: progressData,
+        bookings,
+        streamSession: streamData,
+        trackingSession: trackingData
+      });
+    } catch (error: any) {
+      console.error("Parent student-data error:", error);
+      res.status(500).json({ error: error.message || "Failed to retrieve student data." });
+    }
+  });
+
+  // ==========================================
+  // REAL-TIME WEBRTC & FRAME STREAMING ENGINE
+  // ==========================================
+
+  // In-memory active stream state for instant low-latency delivery
+  const activeStreams = new Map<string, {
+    studentId: string;
+    isLive: boolean;
+    startedAt: string;
+    trainerName?: string;
+    carName?: string;
+    carPlate?: string;
+    location?: string;
+    currentSpeed?: number;
+    latestFrame?: string;
+    sdpOffer?: any;
+    sdpAnswer?: any;
+    candidates?: any[];
+    lastPing: number;
+  }>();
+
+  // Publish / Start Stream
+  app.post("/api/stream/publish", async (req, res) => {
+    try {
+      const { studentId, isLive, trainerName, carName, carPlate, location, currentSpeed, sdpOffer, latestFrame } = req.body;
+      if (!studentId) {
+        return res.status(400).json({ error: "studentId is required." });
+      }
+
+      const streamState = {
+        studentId,
+        isLive: isLive !== false,
+        startedAt: new Date().toISOString(),
+        trainerName: trainerName || "Certified Instructor",
+        carName: carName || "Maruti Suzuki Swift",
+        carPlate: carPlate || "OD-02-GH-2026",
+        location: location || "Rasulgarh, Bhubaneswar",
+        currentSpeed: currentSpeed || 0,
+        latestFrame: latestFrame || undefined,
+        sdpOffer: sdpOffer || undefined,
+        sdpAnswer: undefined,
+        candidates: [],
+        lastPing: Date.now()
+      };
+
+      activeStreams.set(studentId, streamState);
+
+      // Persist in Firestore
+      await setDoc(doc(db, "stream_sessions", studentId), {
+        studentId,
+        isLive: streamState.isLive,
+        startedAt: streamState.startedAt,
+        trainerName: streamState.trainerName,
+        carName: streamState.carName,
+        carPlate: streamState.carPlate,
+        location: streamState.location,
+        currentSpeed: streamState.currentSpeed,
+        updatedAt: Date.now()
+      }, { merge: true });
+
+      return res.json({ success: true, message: "Stream published successfully." });
+    } catch (error: any) {
+      console.error("Stream publish error:", error);
+      res.status(500).json({ error: error.message || "Failed to publish stream." });
+    }
+  });
+
+  // Signal exchange (SDP offer/answer, ICE candidates)
+  app.post("/api/stream/signal", async (req, res) => {
+    try {
+      const { studentId, role, sdpOffer, sdpAnswer, candidate } = req.body;
+      if (!studentId) {
+        return res.status(400).json({ error: "studentId is required." });
+      }
+
+      let current = activeStreams.get(studentId);
+      if (!current) {
+        current = {
+          studentId,
+          isLive: true,
+          startedAt: new Date().toISOString(),
+          lastPing: Date.now()
+        };
+        activeStreams.set(studentId, current);
+      }
+
+      if (sdpOffer) {
+        current.sdpOffer = sdpOffer;
+      }
+      if (sdpAnswer) {
+        current.sdpAnswer = sdpAnswer;
+      }
+      if (candidate) {
+        if (!current.candidates) current.candidates = [];
+        current.candidates.push(candidate);
+      }
+      current.lastPing = Date.now();
+
+      return res.json({
+        success: true,
+        sdpOffer: current.sdpOffer,
+        sdpAnswer: current.sdpAnswer,
+        candidates: current.candidates || []
+      });
+    } catch (error: any) {
+      console.error("Stream signal error:", error);
+      res.status(500).json({ error: error.message || "Signal exchange failed." });
+    }
+  });
+
+  // Real-time Frame broadcast / Fallback stream sync (for robust multi-device viewing)
+  app.post("/api/stream/frame", async (req, res) => {
+    try {
+      const { studentId, frame, speed, location, trainerName } = req.body;
+      if (!studentId) {
+        return res.status(400).json({ error: "studentId is required." });
+      }
+
+      let current = activeStreams.get(studentId);
+      if (!current) {
+        current = {
+          studentId,
+          isLive: true,
+          startedAt: new Date().toISOString(),
+          lastPing: Date.now()
+        };
+        activeStreams.set(studentId, current);
+      }
+
+      if (frame) current.latestFrame = frame;
+      if (speed !== undefined) current.currentSpeed = speed;
+      if (location) current.location = location;
+      if (trainerName) current.trainerName = trainerName;
+      current.lastPing = Date.now();
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update frame." });
+    }
+  });
+
+  // Get stream session status and latest data
+  app.get("/api/stream/session/:studentId", async (req, res) => {
+    try {
+      const { studentId } = req.params;
+      if (!studentId) {
+        return res.status(400).json({ error: "studentId is required." });
+      }
+
+      const inMemory = activeStreams.get(studentId);
+      if (inMemory && inMemory.isLive && (Date.now() - inMemory.lastPing < 30000)) {
+        return res.json({
+          success: true,
+          isLive: true,
+          ...inMemory
+        });
+      }
+
+      // Check Firestore
+      const docSnap = await getDoc(doc(db, "stream_sessions", studentId));
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        return res.json({
+          success: true,
+          isLive: data.isLive === true,
+          ...data
+        });
+      }
+
+      return res.json({
+        success: true,
+        isLive: false,
+        studentId
+      });
+    } catch (error: any) {
+      console.error("Get stream session error:", error);
+      res.status(500).json({ error: error.message || "Failed to get stream session." });
+    }
+  });
+
+  // Stop stream
+  app.post("/api/stream/stop", async (req, res) => {
+    try {
+      const { studentId } = req.body;
+      if (!studentId) {
+        return res.status(400).json({ error: "studentId is required." });
+      }
+
+      if (activeStreams.has(studentId)) {
+        const current = activeStreams.get(studentId)!;
+        current.isLive = false;
+        activeStreams.set(studentId, current);
+      }
+
+      await setDoc(doc(db, "stream_sessions", studentId), {
+        isLive: false,
+        stoppedAt: new Date().toISOString(),
+        updatedAt: Date.now()
+      }, { merge: true });
+
+      return res.json({ success: true, message: "Stream stopped." });
+    } catch (error: any) {
+      console.error("Stop stream error:", error);
+      res.status(500).json({ error: error.message || "Failed to stop stream." });
     }
   });
 

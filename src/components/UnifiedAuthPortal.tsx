@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   GraduationCap, Car, ShieldCheck, Mail, Phone, Lock, Eye, EyeOff, 
   RefreshCw, CheckCircle2, ArrowLeft, KeyRound, Sparkles, AlertCircle, 
-  ChevronRight, UserCheck, Check, AlertTriangle, Shield, HelpCircle
+  ChevronRight, ChevronDown, UserCheck, Check, AlertTriangle, Shield, HelpCircle
 } from "lucide-react";
 import { 
   RecaptchaVerifier, 
@@ -21,7 +21,7 @@ declare global {
   }
 }
 
-export type AuthRole = 'student' | 'trainer' | 'admin';
+export type AuthRole = 'student' | 'trainer' | 'admin' | 'parent';
 
 interface UnifiedAuthPortalProps {
   initialRole?: AuthRole;
@@ -39,8 +39,8 @@ export default function UnifiedAuthPortal({
   // Active selected role
   const [selectedRole, setSelectedRole] = useState<AuthRole>(initialRole);
   
-  // View Modes: 'login' | 'register' | 'verify_registration' | 'forgot_password' | 'verify_forgot_password'
-  const [authView, setAuthView] = useState<'login' | 'register' | 'verify_registration' | 'forgot_password' | 'verify_forgot_password'>('login');
+  // View Modes: 'login' | 'register' | 'verify_registration' | 'forgot_password' | 'verify_forgot_password' | 'parent_register'
+  const [authView, setAuthView] = useState<'login' | 'register' | 'verify_registration' | 'forgot_password' | 'verify_forgot_password' | 'parent_register'>('login');
 
   // Login Form State
   const [identifier, setIdentifier] = useState(""); // Email or Phone
@@ -57,6 +57,37 @@ export default function UnifiedAuthPortal({
   const [regConfirmPassword, setRegConfirmPassword] = useState("");
   const [regPackage, setRegPackage] = useState("Basic - ₹3,500 (15 practical + 2 theory classes, 30 mins each)");
   const [regShowPassword, setRegShowPassword] = useState(false);
+
+  // Parent Registration Form State
+  const [parentRegStudentPhone, setParentRegStudentPhone] = useState("");
+  const [parentRegParentPhone, setParentRegParentPhone] = useState("");
+  const [parentRegName, setParentRegName] = useState("");
+  const [parentRegParentId, setParentRegParentId] = useState("");
+  const [parentRegPassword, setParentRegPassword] = useState("");
+  const [parentRegConfirmPassword, setParentRegConfirmPassword] = useState("");
+  const [parentRegShowPassword, setParentRegShowPassword] = useState(false);
+  const [parentRegVerifiedStudent, setParentRegVerifiedStudent] = useState<any | null>(null);
+  const [isVerifyingParentEligibility, setIsVerifyingParentEligibility] = useState(false);
+  const [parentRegStep, setParentRegStep] = useState<1 | 2>(1);
+
+  // Single Portal Selector Dropdown State
+  const [isPortalDropdownOpen, setIsPortalDropdownOpen] = useState(false);
+  const portalDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close portal dropdown when clicked outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (portalDropdownRef.current && !portalDropdownRef.current.contains(event.target as Node)) {
+        setIsPortalDropdownOpen(false);
+      }
+    };
+    if (isPortalDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isPortalDropdownOpen]);
 
   // Firebase Phone Auth ConfirmationResult
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
@@ -214,6 +245,7 @@ export default function UnifiedAuthPortal({
     setErrorMessage(null);
     setSuccessMessage(null);
     setPassword("");
+    setIsPortalDropdownOpen(false);
   };
 
   // Helper to start rate limit lockout
@@ -487,10 +519,248 @@ export default function UnifiedAuthPortal({
         setIsLoading(false);
         setSuccessMessage("Admin authentication verified!");
         onLoginSuccess('admin', { role: 'admin' });
+
+      } else if (selectedRole === 'parent') {
+        let foundParent: any = null;
+        let is401Unauthenticated = false;
+        let authErrorMessage = "";
+
+        try {
+          const res = await fetch('/api/auth/verify-parent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              identifier: rawId,
+              password: rawPass
+            })
+          });
+
+          const data = await res.json().catch(() => null);
+
+          if (res.status === 403 && data?.error) {
+            setIsLoading(false);
+            setErrorMessage(data.error);
+            return;
+          } else if (res.status === 401) {
+            is401Unauthenticated = true;
+            authErrorMessage = data?.error || "Incorrect password. Please try again.";
+          } else if (res.ok && data?.success && data?.parent) {
+            foundParent = data.parent;
+          }
+        } catch (apiErr) {
+          console.warn("[Parent Auth Fallback] Direct parent verification...", apiErr);
+        }
+
+        if (!foundParent && !is401Unauthenticated) {
+          const localCheck = MockDatabase.loginParent(rawId, rawPass);
+          if (localCheck.success && localCheck.parent) {
+            foundParent = localCheck.parent;
+          } else {
+            authErrorMessage = localCheck.error || "No Parent account found. Please check your credentials or register.";
+            if (localCheck.error?.includes("Premium") || localCheck.error?.includes("deactivated")) {
+              setIsLoading(false);
+              setErrorMessage(localCheck.error);
+              return;
+            }
+          }
+        }
+
+        if (is401Unauthenticated || !foundParent) {
+          setIsLoading(false);
+          setErrorMessage(authErrorMessage || "Invalid Parent ID, mobile number, or password.");
+          triggerFailedAttempt();
+          return;
+        }
+
+        // Sync live cloud data
+        try {
+          await MockDatabase.syncFromCloud();
+        } catch (syncErr) {
+          console.warn("Cloud sync warning on parent login:", syncErr);
+        }
+
+        // Successful parent login
+        MockDatabase.setCurrentParent(foundParent);
+        localStorage.setItem("golden_hands_current_role", "parent");
+        if (rememberMe) {
+          localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "parent", id: foundParent.id }));
+        }
+
+        setIsLoading(false);
+        setSuccessMessage(`Welcome, ${foundParent.name || "Parent"}!`);
+        onLoginSuccess('parent', foundParent);
       }
     } catch (err: any) {
       setIsLoading(false);
       setErrorMessage("Unable to connect to the authentication server. Please check your internet connection and try again.");
+    }
+  };
+
+  // --- PARENT REGISTRATION: STEP 1 (STUDENT & PARENT MOBILE VERIFICATION) ---
+  const handleVerifyParentEligibility = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const sDigits = parentRegStudentPhone.replace(/\D/g, '').slice(-10);
+    const pDigits = parentRegParentPhone.replace(/\D/g, '').slice(-10);
+
+    if (!sDigits || sDigits.length !== 10) {
+      setErrorMessage("Please enter a valid 10-digit student mobile number.");
+      return;
+    }
+
+    if (!pDigits || pDigits.length !== 10) {
+      setErrorMessage("Please enter a valid 10-digit parent mobile number.");
+      return;
+    }
+
+    setIsVerifyingParentEligibility(true);
+
+    try {
+      let verifiedStudent: any = null;
+
+      // 1. Try server-side validation first
+      try {
+        const res = await fetch("/api/parent/verify-student", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ studentPhone: sDigits })
+        });
+        const data = await res.json().catch(() => null);
+
+        if (res.status === 403) {
+          setIsVerifyingParentEligibility(false);
+          setErrorMessage("Parent Portal access is available only for students with the Premium package.");
+          return;
+        } else if (res.status === 404) {
+          setIsVerifyingParentEligibility(false);
+          setErrorMessage("Student not found with this mobile number. Please check the registered student number.");
+          return;
+        } else if (res.ok && data?.success && data?.student) {
+          verifiedStudent = data.student;
+        }
+      } catch (apiErr) {
+        console.warn("API verify-student error, checking local DB:", apiErr);
+      }
+
+      // 2. Local fallback check
+      if (!verifiedStudent) {
+        const localCheck = MockDatabase.verifyStudentForParentRegistration(sDigits);
+        if (!localCheck.eligible || !localCheck.student) {
+          setIsVerifyingParentEligibility(false);
+          setErrorMessage(localCheck.error || "Parent Portal access is available only for students with the Premium package.");
+          return;
+        }
+        verifiedStudent = localCheck.student;
+      }
+
+      setParentRegVerifiedStudent(verifiedStudent);
+      const suggestedId = verifiedStudent.parentId || `PARENT_${pDigits}`;
+      setParentRegParentId(suggestedId);
+      setParentRegName(verifiedStudent.parentName || `Parent of ${verifiedStudent.name}`);
+      setParentRegStep(2);
+      setSuccessMessage(`✅ Verified: Linked Student ${verifiedStudent.name} (Premium Package active). Please set your Parent ID and Password.`);
+      
+    } catch (err: any) {
+      setErrorMessage(err?.message || "Verification failed. Please check the mobile numbers.");
+    } finally {
+      setIsVerifyingParentEligibility(false);
+    }
+  };
+
+  // --- PARENT REGISTRATION: STEP 2 (ACCOUNT CREATION & CREDENTIALS SETUP) ---
+  const handleParentRegistrationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const sDigits = parentRegStudentPhone.replace(/\D/g, '').slice(-10);
+    const pDigits = parentRegParentPhone.replace(/\D/g, '').slice(-10);
+    const pId = parentRegParentId.trim();
+    const pass = parentRegPassword.trim();
+    const confirm = parentRegConfirmPassword.trim();
+    const name = parentRegName.trim() || (parentRegVerifiedStudent ? `Parent of ${parentRegVerifiedStudent.name}` : "Parent");
+
+    if (!pId || pId.length < 3) {
+      setErrorMessage("Parent ID must be at least 3 characters.");
+      return;
+    }
+
+    if (!pass || pass.length < 4) {
+      setErrorMessage("Password must be at least 4 characters.");
+      return;
+    }
+
+    if (pass !== confirm) {
+      setErrorMessage("Passwords do not match.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      let registeredParent: any = null;
+
+      // 1. Try server registration endpoint
+      try {
+        const res = await fetch("/api/parent/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            studentPhone: sDigits,
+            parentPhone: pDigits,
+            parentId: pId,
+            password: pass,
+            parentName: name
+          })
+        });
+        const data = await res.json().catch(() => null);
+
+        if (res.status === 403) {
+          setIsLoading(false);
+          setErrorMessage(data?.error || "Parent Portal access is available only for students with the Premium package.");
+          return;
+        } else if (res.status === 409) {
+          setIsLoading(false);
+          setErrorMessage(data?.error || "This Parent ID / Username is already taken. Please choose a different one.");
+          return;
+        } else if (res.ok && data?.success && data?.parent) {
+          registeredParent = data.parent;
+        }
+      } catch (apiErr) {
+        console.warn("API register parent failed, falling back to local DB:", apiErr);
+      }
+
+      // 2. Local fallback registration
+      if (!registeredParent) {
+        const localRes = MockDatabase.registerParent(sDigits, pDigits, pId, pass, name);
+        if (!localRes.success || !localRes.parent) {
+          setIsLoading(false);
+          setErrorMessage(localRes.error || "Registration failed. Please check inputs.");
+          return;
+        }
+        registeredParent = localRes.parent;
+      }
+
+      // Sync cloud
+      try {
+        await MockDatabase.syncFromCloud();
+      } catch (e) {}
+
+      MockDatabase.setCurrentParent(registeredParent);
+      localStorage.setItem("golden_hands_current_role", "parent");
+      if (rememberMe) {
+        localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "parent", id: registeredParent.id }));
+      }
+
+      setIsLoading(false);
+      setSuccessMessage(`Parent Account Created Successfully! Welcome, ${registeredParent.name}!`);
+      onLoginSuccess('parent', registeredParent);
+
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage(err?.message || "Registration failed.");
     }
   };
 
@@ -654,6 +924,8 @@ export default function UnifiedAuthPortal({
       }
 
       const cleanEmail = regEmail.trim() || `${phoneDigits}@goldenhands.com`;
+      const isPremium = regPackage.toLowerCase().includes("premium") || regPackage.includes("4,000") || regPackage.includes("4000");
+      const parentId = isPremium ? `PARENT_${phoneDigits}` : undefined;
 
       const newStudentData: Student = {
         id: uid,
@@ -662,13 +934,17 @@ export default function UnifiedAuthPortal({
         email: cleanEmail,
         photoUrl: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200",
         courseName: regPackage,
+        totalCourseFee: isPremium ? 4000 : 3500,
+        totalSessions: 15,
         password: regPassword.trim(),
         llStatus: "Applied",
         referralCode: "GOLDEN" + uid.substring(Math.max(0, uid.length - 4)).toUpperCase(),
         joinedDate: new Date().toISOString().split("T")[0],
         location: "Rasulgarh, Bhubaneswar",
         courseSyllabus: ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"],
-        emailVerified: true
+        emailVerified: true,
+        isPremium: !!isPremium,
+        parentId
       };
 
       const freshProgress = {
@@ -680,6 +956,27 @@ export default function UnifiedAuthPortal({
       // Save user profile directly in Firestore under 'students/{uid}'
       await setDoc(doc(db, "students", uid), newStudentData, { merge: true });
       await setDoc(doc(db, "progress", uid), freshProgress, { merge: true });
+
+      // If Premium Plan, create linked Parent account
+      if (isPremium && parentId) {
+        const parentDoc = {
+          id: parentId,
+          studentId: uid,
+          studentName: regName.trim(),
+          studentPhone: phoneDigits,
+          name: `Parent of ${regName.trim()}`,
+          phone: phoneDigits,
+          email: cleanEmail,
+          password: regPassword.trim() || "golden123",
+          createdAt: new Date().toISOString().split("T")[0],
+          plan: "Premium" as const,
+          status: "active" as const,
+          streamAccessAllowed: true,
+          lastLoginAt: new Date().toISOString()
+        };
+        await setDoc(doc(db, "parents", parentId), parentDoc, { merge: true });
+        MockDatabase.createOrUpdateParentForStudent(uid, regName.trim(), phoneDigits, cleanEmail, regPassword.trim());
+      }
 
       // Save on server database
       fetch('/api/auth/register', {
@@ -986,13 +1283,20 @@ export default function UnifiedAuthPortal({
       badgeBg: "bg-slate-900/10 text-slate-800 border-slate-300",
       accentColor: "#161623",
       desc: "Full command desk to manage student rosters, slot limits & school operations."
+    },
+    parent: {
+      title: "Parent Guardian Portal",
+      badge: "👨‍👩‍👧 Parent",
+      badgeBg: "bg-amber-500/10 text-amber-900 border-amber-300",
+      accentColor: "#D97706",
+      desc: "Live remote in-car video streaming, GPS telemetry & 1:1 student driving skill tracker."
     }
   };
 
   const currentRoleInfo = roleConfig[selectedRole];
 
   return (
-    <div className={`w-full max-w-md sm:max-w-lg mx-auto ${embedded ? '' : 'p-2 sm:p-6'}`}>
+    <div className={`w-full max-w-md sm:max-w-xl mx-auto ${embedded ? '' : 'p-2 sm:p-6'}`}>
       <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-xl overflow-hidden relative transition-all">
         
         {/* Top Header & Branding Banner */}
@@ -1027,6 +1331,7 @@ export default function UnifiedAuthPortal({
             {authView === 'verify_registration' && "Verify Your Account"}
             {authView === 'forgot_password' && "Reset Student Password"}
             {authView === 'verify_forgot_password' && "Create New Password"}
+            {authView === 'parent_register' && "Parent Guardian Registration"}
           </h2>
           <p className="text-[11px] sm:text-xs text-slate-300 mt-0.5 sm:mt-1 leading-snug relative z-10">
             {authView === 'login' && currentRoleInfo.desc}
@@ -1034,55 +1339,176 @@ export default function UnifiedAuthPortal({
             {authView === 'verify_registration' && "Enter the verification code sent to your email/mobile."}
             {authView === 'forgot_password' && "Verify your registered identity to set a new password."}
             {authView === 'verify_forgot_password' && "Enter verification code and choose a new password."}
+            {authView === 'parent_register' && "Verify linked student Premium package to activate live streaming & telemetry access."}
           </p>
         </div>
 
-        {/* TOP ROLE SELECTION TABS (Required: 👨‍🎓 Student, 👨‍🏫 Trainer, 👨‍💼 Admin) */}
+        {/* SINGLE PORTAL SELECTOR (Required: SELECT YOUR ACCESS ROLE - Student, Trainer, Parent, Admin) */}
         {authView === 'login' && (
-          <div className="p-2.5 sm:p-4 bg-slate-50/90 border-b border-slate-100">
-            <label className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-slate-500 block mb-1.5 px-1">
-              Select Your Access Role
+          <div className="p-3 sm:p-5 bg-slate-50/90 border-b border-slate-100 relative z-30">
+            <label className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-500 block mb-2 px-1 flex items-center justify-between">
+              <span>SELECT YOUR ACCESS ROLE</span>
+              <span className="text-[9px] font-bold text-[#6D3BFF] lowercase tracking-normal">
+                {currentRoleInfo.title}
+              </span>
             </label>
             
-            <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-slate-200/70 p-1 rounded-xl sm:rounded-2xl border border-slate-300/50">
+            <div className="relative" ref={portalDropdownRef}>
+              {/* Single Portal Selector Trigger */}
               <button
                 type="button"
-                onClick={() => handleRoleSelect('student')}
-                className={`py-2 px-1.5 sm:py-2.5 sm:px-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                  selectedRole === 'student'
-                    ? 'bg-white text-[#6D3BFF] shadow-sm border border-[#6D3BFF]/30 font-black'
-                    : 'text-slate-700 hover:text-slate-900 hover:bg-white/60'
+                id="portal-selector-trigger"
+                onClick={() => setIsPortalDropdownOpen(prev => !prev)}
+                className={`w-full flex items-center justify-between px-3.5 sm:px-4 py-3 sm:py-3.5 bg-white border-2 rounded-xl sm:rounded-2xl transition-all cursor-pointer shadow-sm text-left ${
+                  isPortalDropdownOpen
+                    ? 'border-[#6D3BFF] ring-4 ring-[#6D3BFF]/10'
+                    : 'border-[#6D3BFF]/40 hover:border-[#6D3BFF] focus:border-[#6D3BFF]'
                 }`}
+                aria-haspopup="listbox"
+                aria-expanded={isPortalDropdownOpen}
               >
-                <span>👨‍🎓</span>
-                <span className="truncate">Student</span>
+                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center text-base sm:text-lg shrink-0 border ${
+                    selectedRole === 'student' ? 'bg-[#6D3BFF]/10 text-[#6D3BFF] border-[#6D3BFF]/20' :
+                    selectedRole === 'trainer' ? 'bg-[#D4AF37]/15 text-[#B89218] border-[#D4AF37]/25' :
+                    selectedRole === 'parent' ? 'bg-amber-500/15 text-amber-800 border-amber-400/30' :
+                    'bg-slate-900/10 text-slate-900 border-slate-300'
+                  }`}>
+                    {selectedRole === 'student' && '👨‍🎓'}
+                    {selectedRole === 'trainer' && '👨‍🏫'}
+                    {selectedRole === 'parent' && '👨‍👩‍👧'}
+                    {selectedRole === 'admin' && '👨‍💼'}
+                  </div>
+                  <div className="truncate">
+                    <span className="text-xs sm:text-sm font-black text-[#161623] block leading-tight">
+                      {selectedRole === 'student' && '👨‍🎓 Student'}
+                      {selectedRole === 'trainer' && '👨‍🏫 Trainer'}
+                      {selectedRole === 'parent' && '👨‍👩‍👧 Parent'}
+                      {selectedRole === 'admin' && '👨‍💼 Admin'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-bold block leading-tight mt-0.5 truncate">
+                      {selectedRole === 'student' && 'Student Portal & Slot Booking'}
+                      {selectedRole === 'trainer' && 'Trainer Portal & Roster Grading'}
+                      {selectedRole === 'parent' && 'Parent Guardian Portal & Live Stream'}
+                      {selectedRole === 'admin' && 'Admin Portal & School Command'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                  <span className="text-[10px] font-extrabold text-[#6D3BFF] bg-[#6D3BFF]/10 px-2 py-0.5 rounded-md hidden sm:inline-block uppercase tracking-wider">
+                    Select
+                  </span>
+                  <div className={`w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 transition-transform duration-200 ${
+                    isPortalDropdownOpen ? 'rotate-180 bg-[#6D3BFF]/10 text-[#6D3BFF]' : ''
+                  }`}>
+                    <ChevronDown className="w-4 h-4" />
+                  </div>
+                </div>
               </button>
 
-              <button
-                type="button"
-                onClick={() => handleRoleSelect('trainer')}
-                className={`py-2 px-1.5 sm:py-2.5 sm:px-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                  selectedRole === 'trainer'
-                    ? 'bg-white text-[#B89218] shadow-sm border border-[#D4AF37]/30 font-black'
-                    : 'text-slate-700 hover:text-slate-900 hover:bg-white/60'
-                }`}
-              >
-                <span>👨‍🏫</span>
-                <span className="truncate">Trainer</span>
-              </button>
+              {/* Custom Portal Dropdown Popover */}
+              {isPortalDropdownOpen && (
+                <div 
+                  id="portal-selector-dropdown"
+                  className="absolute left-0 right-0 top-full mt-2 bg-white rounded-xl sm:rounded-2xl border border-slate-200 shadow-2xl overflow-hidden z-50 p-1.5 animate-fadeIn"
+                  role="listbox"
+                >
+                  <div className="px-3 py-1.5 border-b border-slate-100 flex items-center justify-between text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
+                    <span>Available Access Portals</span>
+                    <span>4 Roles Available</span>
+                  </div>
 
-              <button
-                type="button"
-                onClick={() => handleRoleSelect('admin')}
-                className={`py-2 px-1.5 sm:py-2.5 sm:px-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                  selectedRole === 'admin'
-                    ? 'bg-[#161623] text-white shadow-sm border border-slate-700 font-black'
-                    : 'text-slate-700 hover:text-slate-900 hover:bg-white/60'
-                }`}
-              >
-                <span>👨‍💼</span>
-                <span className="truncate">Admin</span>
-              </button>
+                  <div className="flex flex-col gap-1 mt-1">
+                    {[
+                      {
+                        role: 'student' as AuthRole,
+                        emoji: '👨‍🎓',
+                        label: '👨‍🎓 Student',
+                        sub: 'Access driving classes, schedule slots & theory tests',
+                        color: 'text-[#6D3BFF]',
+                        badge: 'Student Portal',
+                        bg: 'hover:bg-[#6D3BFF]/5 active:bg-[#6D3BFF]/10',
+                        activeBg: 'bg-[#6D3BFF]/10 border-[#6D3BFF]/30'
+                      },
+                      {
+                        role: 'trainer' as AuthRole,
+                        emoji: '👨‍🏫',
+                        label: '👨‍🏫 Trainer',
+                        sub: 'Manage assigned student rosters & grade practical skills',
+                        color: 'text-[#B89218]',
+                        badge: 'Trainer Portal',
+                        bg: 'hover:bg-[#D4AF37]/10 active:bg-[#D4AF37]/15',
+                        activeBg: 'bg-[#D4AF37]/15 border-[#D4AF37]/40'
+                      },
+                      {
+                        role: 'parent' as AuthRole,
+                        emoji: '👨‍👩‍👧',
+                        label: '👨‍👩‍👧 Parent',
+                        sub: 'Live in-car video streaming & driving telemetry',
+                        color: 'text-amber-800',
+                        badge: 'Parent Portal',
+                        bg: 'hover:bg-amber-50 active:bg-amber-100',
+                        activeBg: 'bg-amber-100/70 border-amber-300'
+                      },
+                      {
+                        role: 'admin' as AuthRole,
+                        emoji: '👨‍💼',
+                        label: '👨‍💼 Admin',
+                        sub: 'Full command desk to manage academy operations',
+                        color: 'text-slate-900',
+                        badge: 'Admin Portal',
+                        bg: 'hover:bg-slate-100 active:bg-slate-200',
+                        activeBg: 'bg-slate-200/80 border-slate-400'
+                      }
+                    ].map((opt) => {
+                      const isSelected = selectedRole === opt.role;
+                      return (
+                        <button
+                          key={opt.role}
+                          type="button"
+                          id={`portal-option-${opt.role}`}
+                          onClick={() => handleRoleSelect(opt.role)}
+                          role="option"
+                          aria-selected={isSelected}
+                          className={`w-full flex items-center justify-between p-2.5 sm:p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                            isSelected 
+                              ? `${opt.activeBg} font-black shadow-xs` 
+                              : `border-transparent ${opt.bg} text-slate-700 font-bold`
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                            <span className="text-lg sm:text-xl shrink-0">{opt.emoji}</span>
+                            <div className="truncate">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs sm:text-sm font-black ${isSelected ? opt.color : 'text-slate-800'}`}>
+                                  {opt.label}
+                                </span>
+                                {isSelected && (
+                                  <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md bg-white border border-slate-200 text-slate-600 shadow-xs">
+                                    Selected
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-500 font-medium truncate mt-0.5">
+                                {opt.sub}
+                              </p>
+                            </div>
+                          </div>
+
+                          {isSelected ? (
+                            <div className="w-5 h-5 rounded-full bg-[#6D3BFF] text-white flex items-center justify-center shrink-0 shadow-xs">
+                              <Check className="w-3 h-3 stroke-[3]" />
+                            </div>
+                          ) : (
+                            <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1138,7 +1564,7 @@ export default function UnifiedAuthPortal({
               {/* IDENTIFIER FIELD (Email OR Mobile Number in same field) */}
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
-                  Email Address or Mobile Number
+                  {selectedRole === 'parent' ? 'Parent ID, Mobile Number or Email' : 'Email Address or Mobile Number'}
                 </label>
                 <div className="relative flex items-center">
                   <div className="absolute left-3.5 text-slate-400 pointer-events-none">
@@ -1156,6 +1582,8 @@ export default function UnifiedAuthPortal({
                         ? "Enter registered Email or 10-digit Phone"
                         : selectedRole === 'trainer'
                         ? "Enter Trainer Phone or Name (e.g. 9040040288)"
+                        : selectedRole === 'parent'
+                        ? "Enter Parent ID (e.g. PARENT_9040040265) or Student Mobile"
                         : "Enter Admin Email or Username (e.g. admin)"
                     }
                     className="w-full pl-10 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF] focus:bg-white transition-all placeholder:text-slate-400"
@@ -1268,6 +1696,25 @@ export default function UnifiedAuthPortal({
                 </div>
               )}
 
+              {selectedRole === 'parent' && (
+                <div className="mt-4 text-center text-xs text-slate-500 pt-3 border-t border-slate-100">
+                  <span>New parent/guardian? </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthView('parent_register');
+                      setParentRegStep(1);
+                      setParentRegVerifiedStudent(null);
+                      setErrorMessage(null);
+                      setSuccessMessage(null);
+                    }}
+                    className="font-black text-amber-700 hover:text-amber-800 hover:underline cursor-pointer"
+                  >
+                    Register Parent Portal Account
+                  </button>
+                </div>
+              )}
+
               {selectedRole === 'trainer' && (
                 <div className="mt-4 bg-amber-50/70 border border-amber-200/60 rounded-2xl p-3.5 text-center text-xs text-amber-900 leading-relaxed">
                   <p className="font-semibold">
@@ -1291,6 +1738,269 @@ export default function UnifiedAuthPortal({
               )}
 
             </form>
+          )}
+
+          {/* ========================================================================= */}
+          {/* PARENT REGISTRATION FORM (2-STEP VERIFICATION & ACCOUNT CREATION)         */}
+          {/* ========================================================================= */}
+          {authView === 'parent_register' && (
+            <div className="flex flex-col gap-4">
+              
+              {/* Back to Login Header */}
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthView('login');
+                    setSelectedRole('parent');
+                    setErrorMessage(null);
+                    setSuccessMessage(null);
+                  }}
+                  className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-amber-700 transition-colors cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4" /> Back to Parent Login
+                </button>
+                <span className="text-[10px] font-black uppercase bg-amber-500/10 text-amber-900 border border-amber-300 px-3 py-1 rounded-full">
+                  Step {parentRegStep} of 2: {parentRegStep === 1 ? "Eligibility Check" : "Set Credentials"}
+                </span>
+              </div>
+
+              {/* Notice Banner */}
+              <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-950 flex items-start gap-2.5">
+                <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="leading-relaxed">
+                  <p className="font-bold">Parent Portal Requirements:</p>
+                  <p className="text-[11px] text-amber-900/90 mt-0.5">
+                    Registration requires the student's registered mobile number and is available <strong>only for students enrolled in the Premium package (₹4,000)</strong>.
+                  </p>
+                </div>
+              </div>
+
+              {/* STEP 1: VERIFY STUDENT & PARENT MOBILE NUMBERS */}
+              {parentRegStep === 1 && (
+                <form onSubmit={handleVerifyParentEligibility} className="flex flex-col gap-4">
+                  
+                  {/* Student Registered Mobile Number */}
+                  <div>
+                    <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                      Student's Registered Mobile Number <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <div className="px-3 py-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shrink-0 flex items-center">
+                        🇮🇳 +91
+                      </div>
+                      <input
+                        type="tel"
+                        value={parentRegStudentPhone}
+                        onChange={(e) => {
+                          setParentRegStudentPhone(e.target.value.replace(/\D/g, '').slice(0, 10));
+                          setErrorMessage(null);
+                        }}
+                        placeholder="10-digit student mobile number"
+                        className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                        required
+                        maxLength={10}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Enter the mobile number your student used during admission or registration.
+                    </p>
+                  </div>
+
+                  {/* Parent's Own Mobile Number */}
+                  <div>
+                    <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                      Parent's Own Mobile Number <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <div className="px-3 py-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shrink-0 flex items-center">
+                        🇮🇳 +91
+                      </div>
+                      <input
+                        type="tel"
+                        value={parentRegParentPhone}
+                        onChange={(e) => {
+                          setParentRegParentPhone(e.target.value.replace(/\D/g, '').slice(0, 10));
+                          setErrorMessage(null);
+                        }}
+                        placeholder="10-digit parent mobile number"
+                        className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                        required
+                        maxLength={10}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      This mobile number will be linked to this student for live streaming alerts & communication.
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isVerifyingParentEligibility || parentRegStudentPhone.length !== 10 || parentRegParentPhone.length !== 10}
+                    className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-2 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
+                    {isVerifyingParentEligibility ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Verifying Student & Package Eligibility...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Verify Student & Continue</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                </form>
+              )}
+
+              {/* STEP 2: CREATE PARENT ID & PASSWORD */}
+              {parentRegStep === 2 && parentRegVerifiedStudent && (
+                <form onSubmit={handleParentRegistrationSubmit} className="flex flex-col gap-4">
+                  
+                  {/* Verified Student Details Card */}
+                  <div className="bg-emerald-50/90 border border-emerald-300/80 rounded-2xl p-4 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase text-emerald-900 bg-emerald-200/70 px-2.5 py-0.5 rounded-full">
+                        ✓ Verified Student
+                      </span>
+                      <span className="text-[10px] font-black uppercase text-amber-900 bg-amber-200/80 px-2.5 py-0.5 rounded-full border border-amber-300">
+                        ⭐ Premium Package
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                      <div>
+                        <span className="text-[10px] text-slate-500 block uppercase font-bold">Student Name</span>
+                        <span className="font-extrabold text-[#161623]">{parentRegVerifiedStudent.name}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 block uppercase font-bold">Student Phone</span>
+                        <span className="font-extrabold text-[#161623]">+91 {parentRegStudentPhone}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 block uppercase font-bold">Parent Mobile</span>
+                        <span className="font-extrabold text-emerald-800">+91 {parentRegParentPhone}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 block uppercase font-bold">Portal Feature</span>
+                        <span className="font-bold text-emerald-800">Live Stream & GPS Active</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Parent Full Name */}
+                  <div>
+                    <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                      Parent / Guardian Name <span className="text-slate-400 font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={parentRegName}
+                      onChange={(e) => setParentRegName(e.target.value)}
+                      placeholder={`e.g. Parent of ${parentRegVerifiedStudent.name}`}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  {/* Desired Parent ID / Username */}
+                  <div>
+                    <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                      Parent ID / Username <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="relative flex items-center">
+                      <div className="absolute left-3.5 text-slate-400 pointer-events-none">
+                        <ShieldCheck className="w-4 h-4" />
+                      </div>
+                      <input
+                        type="text"
+                        value={parentRegParentId}
+                        onChange={(e) => setParentRegParentId(e.target.value.replace(/\s+/g, ''))}
+                        placeholder="e.g. PARENT_9040040265"
+                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-[#161623] focus:outline-none focus:border-amber-500 font-mono"
+                        required
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Unique ID used to log in to the Parent Portal.
+                    </p>
+                  </div>
+
+                  {/* Password & Confirm Password */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                        Create Password <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          type={parentRegShowPassword ? "text" : "password"}
+                          value={parentRegPassword}
+                          onChange={(e) => setParentRegPassword(e.target.value)}
+                          placeholder="Min 4 characters"
+                          className="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                        Confirm Password <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          type={parentRegShowPassword ? "text" : "password"}
+                          value={parentRegConfirmPassword}
+                          onChange={(e) => setParentRegConfirmPassword(e.target.value)}
+                          placeholder="Re-enter password"
+                          className="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Show Password Toggle & Back button */}
+                  <div className="flex items-center justify-between text-xs pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-slate-600 select-none">
+                      <input
+                        type="checkbox"
+                        checked={parentRegShowPassword}
+                        onChange={(e) => setParentRegShowPassword(e.target.checked)}
+                        className="rounded text-amber-600"
+                      />
+                      <span>Show Password</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setParentRegStep(1)}
+                      className="text-slate-500 hover:text-slate-800 font-bold underline cursor-pointer"
+                    >
+                      ← Change Mobile Numbers
+                    </button>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-2 flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                  >
+                    {isLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Creating Parent Account...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Complete Parent Registration & Log In</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                </form>
+              )}
+
+            </div>
           )}
 
           {/* ========================================================================= */}
@@ -1369,16 +2079,51 @@ export default function UnifiedAuthPortal({
                   onChange={(e) => setRegPackage(e.target.value)}
                   className="w-full px-3 py-2.5 sm:px-4 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF] leading-snug"
                 >
+                  <option value="Basic - ₹3,500 (15 practical + 2 theory classes, 30 mins each)">
+                    Basic Course - ₹3,500 (15 practical + 2 theory classes, 30 mins each)
+                  </option>
+                  <option value="Premium Plan - ₹4,000 (15 practical classes + Parent Live Stream & Telemetry Portal)">
+                    ⭐ Premium Plan - ₹4,000 (15 classes + Parent Live Stream & Telemetry)
+                  </option>
                   <option value="Refresher - ₹1,750 (7 practical classes on road, 30 mins each)">
                     Refresher - ₹1,750 (7 practical classes on road, 30 mins each)
                   </option>
-                  <option value="Basic - ₹3,500 (15 practical + 2 theory classes, 30 mins each)">
-                    Basic - ₹3,500 (15 practical classes on road + 2 theory classes, 30 mins each)
-                  </option>
                   <option value="Extended - ₹5,250 (15+8 practical classes on road + 5 theory classes, 1 hr each)">
-                    Extended - ₹5,250 (3,500 + 1,750 = ₹5,250) (15+8 practical classes on road + 5 theory classes, 1 hr each)
+                    Extended - ₹5,250 (15+8 practical classes on road + 5 theory classes, 1 hr each)
                   </option>
                 </select>
+
+                {/* Premium Plan Pricing Breakdown Badge */}
+                {regPackage.includes("4,000") || regPackage.toLowerCase().includes("premium") ? (
+                  <div className="mt-2.5 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-900 flex flex-col gap-1">
+                    <div className="flex items-center justify-between font-black text-amber-800">
+                      <span>⭐ Premium Plan Breakdown:</span>
+                      <span className="bg-amber-500/20 px-2 py-0.5 rounded-full text-[10px] uppercase">Auto-generates Parent ID</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 text-[11px] text-slate-700 mt-1">
+                      <div>• Regular Course: <span className="font-bold">₹3,500</span></div>
+                      <div>• Premium Upgrade: <span className="font-bold">₹500</span></div>
+                    </div>
+                    <div className="border-t border-amber-500/20 pt-1 mt-1 font-bold text-[11px] text-amber-900 flex justify-between">
+                      <span>Total Payable: ₹4,000</span>
+                      <span className="text-emerald-700 font-black">15 Practical Driving Classes</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600 mt-0.5">
+                      ✓ Includes Parent Portal access with remote live video streaming, real-time in-car speedometer, and GPS route monitoring.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500 px-1">
+                    <span>Standard package (15 practical driving sessions)</span>
+                    <button
+                      type="button"
+                      onClick={() => setRegPackage("Premium Plan - ₹4,000 (15 practical classes + Parent Live Stream & Telemetry Portal)")}
+                      className="text-[#6D3BFF] font-bold hover:underline cursor-pointer"
+                    >
+                      + Upgrade to Premium (₹500)
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Password & Confirm Password */}

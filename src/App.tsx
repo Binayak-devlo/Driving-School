@@ -12,6 +12,7 @@ import TrainerApp from "./components/TrainerApp";
 import AdminDashboard from "./components/AdminDashboard";
 import SplashScreen from "./components/SplashScreen";
 import UnifiedAuthPortal from "./components/UnifiedAuthPortal";
+import ParentPortal from "./components/ParentPortal";
 import PullToRefresh from "./components/PullToRefresh";
 import { MockDatabase } from "./utils/db";
 import { NavState } from "./types";
@@ -125,12 +126,13 @@ export default function App() {
     setTimeout(() => setAppToast(null), 2000);
   };
 
-  const changeView = (view: 'portal' | 'student' | 'trainer' | 'admin') => {
+  const changeView = (view: 'portal' | 'student' | 'trainer' | 'admin' | 'parent') => {
     if (currentNavState.activeView === view) return;
 
     const isStudentLoggedIn = !!localStorage.getItem("golden_hands_current_student_id");
     const isTrainerLoggedIn = !!localStorage.getItem("golden_hands_current_trainer_id");
     const isAdminLoggedIn = localStorage.getItem("golden_hands_admin_logged_in") === "true";
+    const isParentLoggedIn = !!MockDatabase.getCurrentParent() || !!localStorage.getItem("golden_hands_current_parent_id");
 
     let fresh: NavState = {
       ...currentNavState,
@@ -143,6 +145,8 @@ export default function App() {
       fresh.trainerLoggedIn = isTrainerLoggedIn;
     } else if (view === 'admin') {
       fresh.adminLoggedIn = isAdminLoggedIn;
+    } else if (view === 'parent') {
+      fresh.parentLoggedIn = isParentLoggedIn;
     }
 
     const nextSeq = (currentNavState.seq || 2) + 1;
@@ -729,6 +733,18 @@ export default function App() {
                   setCurrentNavState(fresh);
                   window.history.pushState(fresh, '');
                   handleStateChange();
+                } else if (role === 'parent') {
+                  const fresh: NavState = {
+                    ...currentNavState,
+                    activeView: 'parent',
+                    parentLoggedIn: true,
+                    parentTab: 'overview',
+                    seq: (currentNavState.seq || 2) + 1
+                  };
+                  navStackRef.current.push(fresh);
+                  setCurrentNavState(fresh);
+                  window.history.pushState(fresh, '');
+                  handleStateChange();
                 }
               }}
             />
@@ -790,6 +806,30 @@ export default function App() {
         {activeView === 'admin' && (
           <div className="h-full">
             <AdminDashboard onStateChange={handleStateChange} onLogout={() => changeView('portal')} navState={currentNavState} />
+          </div>
+        )}
+
+        {/* 4. Parent Guardian Mobile / Responsive View */}
+        {activeView === 'parent' && (
+          <div className="h-full flex flex-col overflow-hidden bg-slate-950">
+            <div className="w-full h-full">
+              <ParentPortal 
+                onStateChange={handleStateChange} 
+                onLogout={() => {
+                  MockDatabase.logoutParent();
+                  const fresh: NavState = {
+                    ...currentNavState,
+                    activeView: 'portal',
+                    parentLoggedIn: false,
+                    seq: (currentNavState.seq || 2) + 1
+                  };
+                  navStackRef.current.push(fresh);
+                  setCurrentNavState(fresh);
+                  window.history.pushState(fresh, '');
+                }} 
+                navState={currentNavState} 
+              />
+            </div>
           </div>
         )}
 

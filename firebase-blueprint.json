@@ -202,12 +202,67 @@
         "documents": { "type": "object" }
       },
       "required": ["id", "studentId", "studentName", "status", "appliedAt"]
+    },
+    "Parent": {
+      "title": "Parent",
+      "description": "Parent account profile linked 1:1 to registered student",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentPhone": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "plan": { "type": "string", "enum": ["Premium", "Standard"] },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "streamAccessAllowed": { "type": "boolean" },
+        "lastLoginAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "name", "phone", "plan", "status"]
+    },
+    "LiveStreamSession": {
+      "title": "LiveStreamSession",
+      "description": "Real-time driving class video stream sessions and WebRTC signaling",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "classId": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "isLive": { "type": "boolean" },
+        "startedAt": { "type": "string" },
+        "stoppedAt": { "type": "string" },
+        "viewerCount": { "type": "number" },
+        "sdpOffer": { "type": "string" },
+        "sdpAnswer": { "type": "string" },
+        "candidates": { "type": "array" },
+        "trainerName": { "type": "string" },
+        "carName": { "type": "string" },
+        "carPlate": { "type": "string" },
+        "location": { "type": "string" },
+        "currentSpeed": { "type": "number" },
+        "streamType": { "type": "string" },
+        "latestFrame": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["studentId", "isLive"]
     }
   },
   "firestore": {
     "students/{studentId}": {
       "schema": "Student",
       "description": "Registered students collection"
+    },
+    "parents/{parentId}": {
+      "schema": "Parent",
+      "description": "Registered parent accounts linked to students"
+    },
+    "stream_sessions/{studentId}": {
+      "schema": "LiveStreamSession",
+      "description": "Active WebRTC driving class stream sessions"
     },
     "trainers/{trainerId}": {
       "schema": "Trainer",

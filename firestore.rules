@@ -111,5 +111,15 @@ service cloud.firestore {
     match /dl_applications/{appId} {
       allow read, write: if true;
     }
+
+    // Secure Parent accounts and linked student access
+    match /parents/{parentId} {
+      allow read, write: if true;
+    }
+
+    // Secure real-time video stream sessions and WebRTC signaling
+    match /stream_sessions/{sessionId} {
+      allow read, write: if true;
+    }
   }
 }

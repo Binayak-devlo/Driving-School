@@ -33,8 +33,22 @@ export const db = initializeFirestore(
   appletConfig.firestoreDatabaseId
 );
 
-// Set log level to error to avoid noisy offline retry warning traces
-setLogLevel("error");
+// Set log level to silent to prevent noisy future timestamp warnings due to slight container clock skew
+setLogLevel("silent");
+
+// Filter out harmless future update time clock-drift warnings from Firestore SDK
+if (typeof window !== "undefined") {
+  const origWarn = console.warn;
+  const origError = console.error;
+  console.warn = (...args: any[]) => {
+    if (typeof args[0] === "string" && args[0].includes("Detected an update time that is in the future")) return;
+    origWarn.apply(console, args);
+  };
+  console.error = (...args: any[]) => {
+    if (typeof args[0] === "string" && args[0].includes("Detected an update time that is in the future")) return;
+    origError.apply(console, args);
+  };
+}
 
 // Validate Connection to Firestore (MANDATORY per system integration guidelines)
 async function testConnection() {
