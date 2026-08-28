@@ -352,6 +352,234 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const [chats, setChats] = useState(MockDatabase.getChats());
   const [attempts, setAttempts] = useState(MockDatabase.getMockAttempts());
 
+  // Student Live Stream States (Premium Exclusive Feature)
+  const [isLiveStreamOn, setIsLiveStreamOn] = useState(false);
+  const [streamStarting, setStreamStarting] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [streamFacingMode, setStreamFacingMode] = useState<'user' | 'environment'>('user');
+  const [streamTimer, setStreamTimer] = useState(0);
+
+  const videoStreamRef = useRef<MediaStream | null>(null);
+  const studentVideoRef = useRef<HTMLVideoElement | null>(null);
+  const frameIntervalRef = useRef<any>(null);
+  const streamTimerIntervalRef = useRef<any>(null);
+
+  const formatStreamTimer = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const stopLiveStream = useCallback(async () => {
+    setIsLiveStreamOn(false);
+    setStreamStarting(false);
+
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = null;
+    }
+    if (streamTimerIntervalRef.current) {
+      clearInterval(streamTimerIntervalRef.current);
+      streamTimerIntervalRef.current = null;
+    }
+
+    if (videoStreamRef.current) {
+      videoStreamRef.current.getTracks().forEach(track => {
+        try {
+          track.stop();
+        } catch (e) {}
+      });
+      videoStreamRef.current = null;
+    }
+
+    if (studentVideoRef.current) {
+      studentVideoRef.current.srcObject = null;
+    }
+
+    const currentStud = MockDatabase.getStudent();
+    if (currentStud?.id) {
+      MockDatabase.setLiveStreamActive(currentStud.id, false);
+      try {
+        await fetch("/api/stream/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ studentId: currentStud.id })
+        });
+      } catch (e) {
+        console.warn("Stop stream error:", e);
+      }
+    }
+  }, []);
+
+  const startLiveStream = useCallback(async (facing: 'user' | 'environment' = streamFacingMode) => {
+    const currentStud = MockDatabase.getStudent();
+    const isPremium = MockDatabase.isStudentPremium(currentStud);
+
+    if (!isPremium) {
+      setStreamError("Live Stream is available exclusively with the Premium Package.");
+      return;
+    }
+
+    setStreamStarting(true);
+    setStreamError(null);
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStreamStarting(false);
+      setIsLiveStreamOn(false);
+      setStreamError("Camera API is not supported on this browser or environment.");
+      return;
+    }
+
+    try {
+      if (videoStreamRef.current) {
+        videoStreamRef.current.getTracks().forEach(t => {
+          try { t.stop(); } catch (e) {}
+        });
+        videoStreamRef.current = null;
+      }
+
+      let mediaStream: MediaStream | null = null;
+      try {
+        const constraints: MediaStreamConstraints = {
+          video: {
+            facingMode: facing,
+            width: { ideal: 640 },
+            height: { ideal: 360 }
+          },
+          audio: false
+        };
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (firstErr: any) {
+        console.warn("Specific camera constraints failed, attempting fallback { video: true }:", firstErr);
+        // Fallback to basic video constraint
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
+      if (!mediaStream) {
+        throw new Error("No media stream returned from device camera.");
+      }
+
+      videoStreamRef.current = mediaStream;
+
+      if (studentVideoRef.current) {
+        studentVideoRef.current.srcObject = mediaStream;
+        studentVideoRef.current.play().catch(e => console.warn("Video element play err:", e));
+      }
+
+      setIsLiveStreamOn(true);
+      setStreamStarting(false);
+      setStreamTimer(0);
+
+      // Publish initial state
+      const initialMeta = {
+        studentId: currentStud.id,
+        isLive: true,
+        startedAt: new Date().toISOString(),
+        trainerName: currentStud.assignedTrainerName || "Certified Instructor",
+        carName: "Maruti Suzuki Swift",
+        carPlate: "OD-02-GH-2026",
+        location: currentStud.location || "Rasulgarh, Bhubaneswar",
+        currentSpeed: 24,
+        streamType: 'frame_stream' as const
+      };
+
+      MockDatabase.setLiveStreamActive(currentStud.id, true, initialMeta);
+
+      fetch("/api/stream/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(initialMeta)
+      }).catch(e => console.warn("Stream publish error:", e));
+
+      // Continuous frame broadcast loop (5 frames per second)
+      const canvas = document.createElement("canvas");
+      canvas.width = 480;
+      canvas.height = 270;
+      const ctx = canvas.getContext("2d");
+
+      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = setInterval(() => {
+        if (studentVideoRef.current && studentVideoRef.current.readyState >= 2 && ctx) {
+          try {
+            ctx.drawImage(studentVideoRef.current, 0, 0, 480, 270);
+            const frameData = canvas.toDataURL("image/jpeg", 0.45);
+            const speed = 20 + Math.floor(Math.random() * 12);
+
+            MockDatabase.setLiveStreamActive(currentStud.id, true, {
+              latestFrame: frameData,
+              currentSpeed: speed
+            });
+
+            fetch("/api/stream/frame", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                studentId: currentStud.id,
+                frame: frameData,
+                speed,
+                location: currentStud.location || "Rasulgarh, Bhubaneswar",
+                trainerName: currentStud.assignedTrainerName || "Certified Instructor"
+              })
+            }).catch(() => {});
+          } catch (err) {
+            console.warn("Frame capture err:", err);
+          }
+        }
+      }, 200);
+
+      // Start elapsed timer
+      if (streamTimerIntervalRef.current) clearInterval(streamTimerIntervalRef.current);
+      streamTimerIntervalRef.current = setInterval(() => {
+        setStreamTimer(prev => prev + 1);
+      }, 1000);
+
+    } catch (err: any) {
+      console.warn("Camera access status:", err?.name, err?.message);
+      setStreamStarting(false);
+      setIsLiveStreamOn(false);
+
+      const errName = err?.name || "";
+      const errMsg = err?.message || "";
+      const isDenied = errName === "NotAllowedError" || 
+                       errName === "PermissionDeniedError" || 
+                       errMsg.toLowerCase().includes("permission") ||
+                       errMsg.toLowerCase().includes("denied");
+
+      if (isDenied) {
+        setStreamError("Camera permission was denied. Please allow camera permissions in your browser address bar/settings, or click Retry below.");
+      } else if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
+        setStreamError("No camera hardware detected on this device.");
+      } else if (errName === "NotReadableError" || errName === "TrackStartError") {
+        setStreamError("Camera is currently in use by another application.");
+      } else {
+        setStreamError(`Camera unavailable: ${errMsg || "Unable to access device camera."}`);
+      }
+    }
+  }, [streamFacingMode]);
+
+  const switchCamera = useCallback(async () => {
+    const nextFacing = streamFacingMode === 'user' ? 'environment' : 'user';
+    setStreamFacingMode(nextFacing);
+    if (isLiveStreamOn) {
+      await startLiveStream(nextFacing);
+    }
+  }, [streamFacingMode, isLiveStreamOn, startLiveStream]);
+
+  // Clean up live stream on unmount
+  useEffect(() => {
+    return () => {
+      stopLiveStream();
+    };
+  }, [stopLiveStream]);
+
+  // Attach active video stream when video element becomes available in DOM
+  useEffect(() => {
+    if (isLiveStreamOn && studentVideoRef.current && videoStreamRef.current) {
+      studentVideoRef.current.srcObject = videoStreamRef.current;
+      studentVideoRef.current.play().catch(e => console.warn("Video play err:", e));
+    }
+  }, [isLiveStreamOn]);
+
   // Priority-based Trainer Resolution Logic:
   // 1. Active assigned trainer (student.assignedTrainerId)
   // 2. Completed class trainer (at least 1 completed class with a trainer)
@@ -7010,6 +7238,193 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       {bookings.filter(b => b.status === 'completed').length}
                     </span>
                   </div>
+
+                  {/* LIVE STREAM SECTION (Premium Exclusive Feature) */}
+                  {(() => {
+                    const isPremium = MockDatabase.isStudentPremium(student);
+                    if (!isPremium) {
+                      return (
+                        <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-3.5 mt-3 w-full text-left shadow-xs">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-xl bg-slate-200/80 flex items-center justify-center text-slate-500 shrink-0">
+                                <CameraOff className="w-4 h-4 text-slate-500" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <h4 className="font-extrabold text-xs text-slate-800">
+                                    Parent Live Stream
+                                  </h4>
+                                  <span className="bg-slate-200 text-slate-600 text-[8px] font-black uppercase px-2 py-0.5 rounded-full">
+                                    Standard Plan
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-500 mt-0.5 font-medium">
+                                  Live Stream Available with Premium Package
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('modify')}
+                              className="bg-amber-500 hover:bg-amber-600 text-white text-[9px] font-black px-2.5 py-1.5 rounded-xl shadow-xs transition-all shrink-0 cursor-pointer flex items-center gap-1"
+                            >
+                              <span>Upgrade</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                          </div>
+                          <p className="text-[9px] text-slate-400 mt-2 leading-relaxed border-t border-slate-200/60 pt-2">
+                            Upgrade to our Premium Package to broadcast your in-car driving classes live to your parents in the Parent Guardian Portal.
+                          </p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="bg-gradient-to-br from-white to-[#F8F9FF] border border-[#6D3BFF]/20 rounded-2xl p-3.5 mt-3 w-full text-left shadow-xs">
+                        {/* Header & Toggle */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <div className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+                              isLiveStreamOn ? 'bg-rose-500 text-white shadow-md shadow-rose-500/30 animate-pulse' : 'bg-[#6D3BFF]/10 text-[#6D3BFF]'
+                            }`}>
+                              <Camera className="w-4.5 h-4.5" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <h4 className="font-black text-xs text-[#161623]">
+                                  Parent Live Stream
+                                </h4>
+                                <span className="bg-gradient-to-r from-amber-500 to-amber-600 text-white text-[8px] font-black uppercase px-2 py-0.5 rounded-full shadow-xs">
+                                  PREMIUM
+                                </span>
+                              </div>
+                              <p className="text-[9.5px] text-slate-400 font-medium">
+                                Broadcast driving session to Parent Portal
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Toggle Switch */}
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-black uppercase tracking-wider ${isLiveStreamOn ? 'text-rose-600' : 'text-slate-400'}`}>
+                              {isLiveStreamOn ? 'ON' : 'OFF'}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={streamStarting}
+                              onClick={() => {
+                                if (isLiveStreamOn) {
+                                  stopLiveStream();
+                                } else {
+                                  startLiveStream();
+                                }
+                              }}
+                              className={`w-11 h-6 flex items-center rounded-full p-0.5 transition-colors duration-300 cursor-pointer ${
+                                isLiveStreamOn ? 'bg-rose-500' : 'bg-slate-300'
+                              } ${streamStarting ? 'opacity-60 cursor-wait' : ''}`}
+                              aria-label="Toggle Live Stream"
+                            >
+                              <div
+                                className={`bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-300 flex items-center justify-center ${
+                                  isLiveStreamOn ? 'translate-x-5' : 'translate-x-0'
+                                }`}
+                              >
+                                {streamStarting ? (
+                                  <RefreshCw className="w-2.5 h-2.5 text-slate-600 animate-spin" />
+                                ) : isLiveStreamOn ? (
+                                  <span className="w-2 h-2 rounded-full bg-rose-500" />
+                                ) : null}
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Status Bar */}
+                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`w-2 h-2 rounded-full ${isLiveStreamOn ? 'bg-emerald-500 animate-ping' : 'bg-slate-300'}`} />
+                            <span className={`text-[10px] font-bold ${isLiveStreamOn ? 'text-emerald-600' : 'text-slate-500'}`}>
+                              {isLiveStreamOn ? 'Live Stream Active' : 'Live Stream Inactive'}
+                            </span>
+                          </div>
+                          {isLiveStreamOn && (
+                            <span className="text-[9.5px] font-mono font-bold bg-rose-50 text-rose-600 border border-rose-200 px-2 py-0.5 rounded-lg">
+                              ⏱️ {formatStreamTimer(streamTimer)}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Error Message */}
+                        {streamError && (
+                          <div className="mt-2.5 bg-rose-50 border border-rose-200 rounded-xl p-2.5 text-rose-800 text-[10px] space-y-1.5">
+                            <div className="flex items-start gap-1.5">
+                              <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                              <div className="flex-1">
+                                <p className="font-semibold leading-tight">{streamError}</p>
+                              </div>
+                              <button 
+                                type="button" 
+                                onClick={() => setStreamError(null)}
+                                className="text-rose-400 hover:text-rose-700 font-black cursor-pointer px-1"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-2 pt-1 border-t border-rose-100">
+                              <button
+                                type="button"
+                                onClick={() => startLiveStream()}
+                                className="bg-rose-600 hover:bg-rose-700 text-white font-black px-2.5 py-1 rounded-lg text-[9px] cursor-pointer flex items-center gap-1 transition-all shadow-xs"
+                              >
+                                <RefreshCw className="w-2.5 h-2.5" />
+                                <span>Allow & Retry Camera</span>
+                              </button>
+                              <span className="text-[8.5px] text-rose-500">
+                                Check browser address bar for camera permission
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Live Camera Viewfinder when ON */}
+                        {isLiveStreamOn && (
+                          <div className="mt-2.5 bg-slate-950 rounded-xl overflow-hidden border border-slate-800 shadow-inner relative aspect-video flex items-center justify-center group">
+                            <video
+                              ref={studentVideoRef}
+                              autoPlay
+                              playsInline
+                              muted
+                              className="w-full h-full object-cover"
+                            />
+                            
+                            {/* Live Badge overlay */}
+                            <div className="absolute top-2 left-2 flex items-center gap-1 bg-rose-600/90 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md backdrop-blur-xs shadow-xs">
+                              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                              BROADCASTING
+                            </div>
+
+                            {/* Switch Camera Button */}
+                            <div className="absolute bottom-2 right-2 flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={switchCamera}
+                                className="px-2 py-1 rounded-lg bg-black/70 hover:bg-black/90 text-white text-[9px] font-bold flex items-center gap-1 backdrop-blur-xs border border-white/20 transition-all cursor-pointer"
+                                title="Switch Camera (Front / Rear)"
+                              >
+                                <RefreshCw className="w-2.5 h-2.5" />
+                                <span>{streamFacingMode === 'user' ? 'Front' : 'Rear'}</span>
+                              </button>
+                            </div>
+
+                            <div className="absolute bottom-2 left-2 text-[8px] font-mono text-slate-300 bg-black/60 px-1.5 py-0.5 rounded backdrop-blur-xs">
+                              Parent Portal Feed: Linked
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Payment History Section */}
                   {(() => {

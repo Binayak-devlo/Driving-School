@@ -103,11 +103,19 @@ export default function ParentPortal({
   useEffect(() => {
     if (!student || !parent) return;
 
+    // Verify Premium status
+    const isPremium = MockDatabase.isStudentPremium(student);
+    if (!isPremium) {
+      setStreamSession(null);
+      setConnectionStatus('idle');
+      return;
+    }
+
     let isSubscribed = true;
 
     const pollStream = async () => {
       try {
-        const res = await fetch(`/api/stream/session/${student.id}`);
+        const res = await fetch(`/api/stream/session/${student.id}?parentId=${parent.id}`);
         if (res.ok) {
           const data = await res.json();
           if (isSubscribed && data.success) {
@@ -258,7 +266,21 @@ export default function ParentPortal({
               ref={videoContainerRef}
               className="relative bg-black rounded-2xl sm:rounded-3xl overflow-hidden border border-slate-800 shadow-2xl aspect-video flex items-center justify-center group"
             >
-              {streamSession?.isLive ? (
+              {!MockDatabase.isStudentPremium(student) ? (
+                /* Non-Premium Student Notice */
+                <div className="flex flex-col items-center justify-center p-6 text-center max-w-md">
+                  <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-3">
+                    <ShieldCheck className="w-7 h-7 text-amber-400" />
+                  </div>
+                  <span className="text-[9px] font-black uppercase text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20 mb-2">
+                    PREMIUM EXCLUSIVE
+                  </span>
+                  <h3 className="text-base font-black text-white">Live Stream Available with Premium Package</h3>
+                  <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                    Live in-car video streaming is an exclusive feature of the Golden Hands Premium Package. Your student is currently enrolled in the {student?.courseName || "Standard Plan"}.
+                  </p>
+                </div>
+              ) : streamSession?.isLive ? (
                 <>
                   {/* Real-time Video / Canvas Stream View */}
                   <canvas 
@@ -267,6 +289,16 @@ export default function ParentPortal({
                     height={360} 
                     className="w-full h-full object-cover"
                   />
+
+                  {/* Instant Frame render fallback for ultra-fluid rendering */}
+                  {streamSession.latestFrame && (
+                    <img
+                      src={streamSession.latestFrame}
+                      alt="Student Live In-Car Camera"
+                      className="absolute inset-0 w-full h-full object-cover"
+                      style={{ zIndex: 1 }}
+                    />
+                  )}
 
                   {/* Fallback Simulation Feed in case no hardware video */}
                   {!streamSession.latestFrame && (
@@ -282,14 +314,14 @@ export default function ParentPortal({
                   )}
 
                   {/* TOP OVERLAY HUD: Live Badge + Speedometer + Battery/Signal */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none">
+                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
                     <div className="flex items-center gap-2">
                       <span className="flex items-center gap-1.5 bg-rose-600/90 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-black uppercase text-white shadow-lg">
                         <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
                         LIVE 1080P
                       </span>
                       <span className="bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-300 border border-white/10">
-                        ⏱️ {streamSession.duration || "14:28"}
+                        ⏱️ {streamSession.duration || "Live Class"}
                       </span>
                     </div>
 
@@ -302,7 +334,7 @@ export default function ParentPortal({
                   </div>
 
                   {/* BOTTOM OVERLAY HUD: Controls & Telemetry */}
-                  <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between pointer-events-auto">
+                  <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between pointer-events-auto z-10">
                     <div className="bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 text-xs text-slate-300 flex items-center gap-2">
                       <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                       <span className="truncate max-w-[200px] sm:max-w-xs text-[11px] font-bold text-white">
@@ -339,7 +371,7 @@ export default function ParentPortal({
                   </div>
                   <h3 className="text-base sm:text-lg font-black text-white">No Live Class Broadcasting Now</h3>
                   <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                    Live video stream automatically starts when the trainer commences your student's driving session.
+                    Live video stream automatically starts when the student turns on live streaming during their driving session.
                   </p>
 
                   <div className="mt-4 bg-slate-900/90 border border-slate-800 p-3 rounded-2xl w-full text-left flex items-center justify-between">

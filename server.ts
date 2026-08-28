@@ -1161,12 +1161,38 @@ async function startServer() {
     lastPing: number;
   }>();
 
-  // Publish / Start Stream
+  // Helper to check if student has Premium package in database
+  async function verifyStudentPremiumStatus(studentId: string): Promise<boolean> {
+    if (!studentId) return false;
+    try {
+      const studentDoc = await getDoc(doc(db, "students", studentId));
+      if (studentDoc.exists()) {
+        const s = studentDoc.data();
+        if (s.isPremium === true) return true;
+        if (s.courseName && s.courseName.toLowerCase().includes("premium")) return true;
+        if (s.totalCourseFee === 4000) return true;
+        if (s.courseName && s.courseName.toLowerCase().includes("parent live")) return true;
+      }
+    } catch (err) {
+      console.warn("Error verifying student premium status:", err);
+    }
+    return false;
+  }
+
+  // Publish / Start Stream (Validates Premium Package backend constraint)
   app.post("/api/stream/publish", async (req, res) => {
     try {
       const { studentId, isLive, trainerName, carName, carPlate, location, currentSpeed, sdpOffer, latestFrame } = req.body;
       if (!studentId) {
         return res.status(400).json({ error: "studentId is required." });
+      }
+
+      // Backend Security: Verify Premium package permission
+      const isPremium = await verifyStudentPremiumStatus(studentId);
+      if (!isPremium) {
+        return res.status(403).json({
+          error: "Live Stream is available exclusively with the Premium Package."
+        });
       }
 
       const streamState = {
@@ -1197,6 +1223,7 @@ async function startServer() {
         carPlate: streamState.carPlate,
         location: streamState.location,
         currentSpeed: streamState.currentSpeed,
+        latestFrame: streamState.latestFrame || null,
         updatedAt: Date.now()
       }, { merge: true });
 
@@ -1213,6 +1240,12 @@ async function startServer() {
       const { studentId, role, sdpOffer, sdpAnswer, candidate } = req.body;
       if (!studentId) {
         return res.status(400).json({ error: "studentId is required." });
+      }
+
+      // Backend Security: Verify Premium package permission
+      const isPremium = await verifyStudentPremiumStatus(studentId);
+      if (!isPremium) {
+        return res.status(403).json({ error: "Live Stream is available exclusively with the Premium Package." });
       }
 
       let current = activeStreams.get(studentId);
@@ -1260,6 +1293,12 @@ async function startServer() {
 
       let current = activeStreams.get(studentId);
       if (!current) {
+        // Verify Premium before creating
+        const isPremium = await verifyStudentPremiumStatus(studentId);
+        if (!isPremium) {
+          return res.status(403).json({ error: "Live Stream is available exclusively with the Premium Package." });
+        }
+
         current = {
           studentId,
           isLive: true,
@@ -1275,18 +1314,50 @@ async function startServer() {
       if (trainerName) current.trainerName = trainerName;
       current.lastPing = Date.now();
 
+      // Also sync latestFrame to Firestore occasionally or in memory
       return res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to update frame." });
     }
   });
 
-  // Get stream session status and latest data
+  // Get stream session status and latest data (Validates parent-student relationship and premium package)
   app.get("/api/stream/session/:studentId", async (req, res) => {
     try {
       const { studentId } = req.params;
+      const { parentId } = req.query;
+
       if (!studentId) {
         return res.status(400).json({ error: "studentId is required." });
+      }
+
+      // Backend Security Check 1: Verify Student has Premium package
+      const isPremium = await verifyStudentPremiumStatus(studentId);
+      if (!isPremium) {
+        return res.json({
+          success: true,
+          isLive: false,
+          studentId,
+          isPremium: false,
+          message: "Live Stream Available with Premium Package"
+        });
+      }
+
+      // Backend Security Check 2: If parentId provided, verify parent-student relationship
+      if (parentId && typeof parentId === "string") {
+        try {
+          const parentDoc = await getDoc(doc(db, "parents", parentId));
+          if (parentDoc.exists()) {
+            const pData = parentDoc.data();
+            if (pData.studentId !== studentId) {
+              return res.status(403).json({
+                error: "Unauthorized: You are not authorized to view this student's live stream."
+              });
+            }
+          }
+        } catch (e) {
+          console.warn("Parent link verification error:", e);
+        }
       }
 
       const inMemory = activeStreams.get(studentId);
@@ -1294,6 +1365,7 @@ async function startServer() {
         return res.json({
           success: true,
           isLive: true,
+          isPremium: true,
           ...inMemory
         });
       }
@@ -1305,6 +1377,7 @@ async function startServer() {
         return res.json({
           success: true,
           isLive: data.isLive === true,
+          isPremium: true,
           ...data
         });
       }
@@ -1312,6 +1385,7 @@ async function startServer() {
       return res.json({
         success: true,
         isLive: false,
+        isPremium: true,
         studentId
       });
     } catch (error: any) {
