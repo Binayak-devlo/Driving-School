@@ -54,36 +54,62 @@ export default function ParentPortal({
   // Video canvas and element refs
   const videoContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const isPaintingRef = useRef<boolean>(false);
-  const lastDecodedFrameRef = useRef<string | null>(null);
+  const activeImageRef = useRef<HTMLImageElement>(new Image());
+  const pendingFrameRef = useRef<string | null>(null);
+  const isRenderingRafRef = useRef<boolean>(false);
   const isPollingRef = useRef<boolean>(false);
+  const lastDecodedFrameRef = useRef<string | null>(null);
 
-  // Fast frame painter using HTML5 Canvas & requestAnimationFrame (Zero flickering, zero black screen)
-  const paintFrameToCanvas = (img: HTMLImageElement) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d', { alpha: false });
-    if (!ctx) return;
+  // Fast frame painter using dedicated recycled Image & requestAnimationFrame (Zero lag, zero memory churn, instantaneous auto-refresh)
+  const scheduleCanvasRender = () => {
+    if (isRenderingRafRef.current) return;
+    isRenderingRafRef.current = true;
 
-    try {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'medium';
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      setHasReceivedFrame(true);
-    } catch (e) {
-      console.warn("Canvas draw err:", e);
-    }
+    requestAnimationFrame(() => {
+      isRenderingRafRef.current = false;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const ctx = canvas.getContext('2d', { alpha: false });
+      if (!ctx) return;
+
+      const img = activeImageRef.current;
+      if (img && img.complete && img.naturalWidth > 0) {
+        try {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'low'; // Low/fast bilinear filtering ensures maximum fps & zero dropped frames on mobile/webview
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          setHasReceivedFrame(true);
+        } catch (e) {
+          // ignore transient canvas render errors
+        }
+      }
+
+      // If a newer frame arrived during render, immediately decode and render it
+      if (pendingFrameRef.current && pendingFrameRef.current !== img.src) {
+        const nextSrc = pendingFrameRef.current;
+        pendingFrameRef.current = null;
+        img.onload = () => {
+          scheduleCanvasRender();
+        };
+        img.src = nextSrc;
+      }
+    });
   };
 
   const handleIncomingFrame = (frameDataUri: string) => {
     if (!frameDataUri || frameDataUri === lastDecodedFrameRef.current) return;
     lastDecodedFrameRef.current = frameDataUri;
+    pendingFrameRef.current = frameDataUri;
 
-    const img = new Image();
-    img.onload = () => {
-      requestAnimationFrame(() => paintFrameToCanvas(img));
-    };
-    img.src = frameDataUri;
+    const img = activeImageRef.current;
+    if (!img.src || img.complete) {
+      pendingFrameRef.current = null;
+      img.onload = () => {
+        scheduleCanvasRender();
+      };
+      img.src = frameDataUri;
+    }
   };
 
   // Load and sync parent's student data (with shallow equality checks to eliminate unnecessary UI re-renders)
@@ -181,7 +207,7 @@ export default function ParentPortal({
       }
     };
 
-    const localCheckInterval = setInterval(localStreamSync, 200);
+    const localCheckInterval = setInterval(localStreamSync, 100);
 
     // Fallback polling handler with in-flight guard
     const runFallbackPoll = async () => {

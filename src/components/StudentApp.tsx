@@ -566,7 +566,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
           console.warn("Frame capture err:", err);
           isUploadingFrameRef.current = false;
         }
-      }, 125); // ~8 FPS, ultra-smooth and low battery/bandwidth impact
+      }, 90); // ~11 FPS continuous smooth broadcast loop without buffer lag
 
       // Start elapsed timer
       if (streamTimerIntervalRef.current) clearInterval(streamTimerIntervalRef.current);
