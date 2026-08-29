@@ -10,7 +10,7 @@ import {
   signInWithPhoneNumber, 
   ConfirmationResult 
 } from "firebase/auth";
-import { auth, db } from "../utils/firebase";
+import { auth, db, cleanFirestoreData } from "../utils/firebase";
 import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
 import { MockDatabase } from "../utils/db";
 import { Student, Trainer } from "../types";
@@ -820,14 +820,14 @@ export default function UnifiedAuthPortal({
 
     // Store in Firestore phone_otps collection directly
     try {
-      await setDoc(doc(db, "phone_otps", `reg_otp_${phoneDigits}`), {
+      await setDoc(doc(db, "phone_otps", `reg_otp_${phoneDigits}`), cleanFirestoreData({
         phone: phoneDigits,
         code: generatedOtp,
         createdAt: Date.now(),
         expiresAt: Date.now() + 300000,
         verified: false,
         used: false
-      });
+      }));
     } catch (fsErr) {
       console.warn("Firestore OTP write notice:", fsErr);
     }
@@ -944,7 +944,7 @@ export default function UnifiedAuthPortal({
         courseSyllabus: ["Steering Controls", "Clutch & Friction Point", "Traffic Navigation", "Parallel Reversal Parking", "Uphill Start Navigation"],
         emailVerified: true,
         isPremium: !!isPremium,
-        parentId
+        ...(parentId ? { parentId } : {})
       };
 
       const freshProgress = {
@@ -953,9 +953,9 @@ export default function UnifiedAuthPortal({
         highway: 0, confidence: 10
       };
 
-      // Save user profile directly in Firestore under 'students/{uid}'
-      await setDoc(doc(db, "students", uid), newStudentData, { merge: true });
-      await setDoc(doc(db, "progress", uid), freshProgress, { merge: true });
+      // Save user profile directly in Firestore under 'students/{uid}' with sanitized data
+      await setDoc(doc(db, "students", uid), cleanFirestoreData(newStudentData), { merge: true });
+      await setDoc(doc(db, "progress", uid), cleanFirestoreData(freshProgress), { merge: true });
 
       // If Premium Plan, create linked Parent account
       if (isPremium && parentId) {
@@ -974,7 +974,7 @@ export default function UnifiedAuthPortal({
           streamAccessAllowed: true,
           lastLoginAt: new Date().toISOString()
         };
-        await setDoc(doc(db, "parents", parentId), parentDoc, { merge: true });
+        await setDoc(doc(db, "parents", parentId), cleanFirestoreData(parentDoc), { merge: true });
         MockDatabase.createOrUpdateParentForStudent(uid, regName.trim(), phoneDigits, cleanEmail, regPassword.trim());
       }
 
@@ -1058,14 +1058,14 @@ export default function UnifiedAuthPortal({
 
     // Store reset OTP directly in Firestore
     try {
-      await setDoc(doc(db, "phone_otps", `reset_otp_${targetPhone}`), {
+      await setDoc(doc(db, "phone_otps", `reset_otp_${targetPhone}`), cleanFirestoreData({
         phone: targetPhone,
         studentId: matchingStudent.id,
         code: generatedOtp,
         createdAt: Date.now(),
         expiresAt: Date.now() + 300000,
         verified: false
-      });
+      }));
     } catch (fsErr) {
       console.warn("Firestore reset OTP write notice:", fsErr);
     }
@@ -1169,7 +1169,7 @@ export default function UnifiedAuthPortal({
 
       // Update password directly in Firestore
       if (targetStudentId) {
-        await setDoc(doc(db, "students", targetStudentId), { password: newPassword, phone: phoneDigits }, { merge: true });
+        await setDoc(doc(db, "students", targetStudentId), cleanFirestoreData({ password: newPassword, phone: phoneDigits }), { merge: true });
 
         // Update in local registered students list
         const updatedStudent: Student = {

@@ -498,7 +498,7 @@ export class MockDatabase {
       courseSyllabus: defaultSyllabus,
       password: password || "golden123",
       isPremium: isPremiumPlan,
-      parentId
+      ...(isPremiumPlan && parentId ? { parentId } : {})
     };
 
     students.push(newStudent);

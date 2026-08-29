@@ -131,6 +131,12 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: st
   ]);
 }
 
+// Helper to sanitize data for Firestore by removing undefined fields
+export function cleanFirestoreData<T = any>(data: T): T {
+  if (data === undefined || data === null) return data;
+  return JSON.parse(JSON.stringify(data));
+}
+
 // Helper to save a single document
 export async function saveToCloud(collectionName: string, docId: string, data: any) {
   const fullPath = `${collectionName}/${docId}`;
