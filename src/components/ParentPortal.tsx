@@ -50,6 +50,8 @@ export default function ParentPortal({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'reconnecting' | 'idle'>('idle');
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
+  const [streamNotActiveNotice, setStreamNotActiveNotice] = useState<string | null>(null);
+  const [isLiveStreamViewActive, setIsLiveStreamViewActive] = useState(false);
 
   // Video canvas and element refs
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -59,6 +61,36 @@ export default function ParentPortal({
   const isRenderingRafRef = useRef<boolean>(false);
   const isPollingRef = useRef<boolean>(false);
   const lastDecodedFrameRef = useRef<string | null>(null);
+
+  // Helper to update streamSession React state ONLY when telemetry or status genuinely changes (Prevents UI re-renders)
+  const updateStreamSessionIfChanged = (newSession: Partial<LiveStreamSession> | null) => {
+    setStreamSession(prev => {
+      if (!prev && !newSession) return null;
+      if (!prev && newSession) {
+        const copy = { ...newSession };
+        delete copy.latestFrame; // Keep bulky frame data out of React state
+        return copy as LiveStreamSession;
+      }
+      if (prev && !newSession) return null;
+      if (prev && newSession) {
+        if (
+          prev.isLive === newSession.isLive &&
+          prev.currentSpeed === newSession.currentSpeed &&
+          prev.location === newSession.location &&
+          prev.trainerName === newSession.trainerName &&
+          prev.carPlate === newSession.carPlate &&
+          prev.duration === newSession.duration &&
+          prev.quality === newSession.quality
+        ) {
+          return prev; // Return exact same reference to prevent re-renders
+        }
+        const updated = { ...prev, ...newSession };
+        delete updated.latestFrame;
+        return updated;
+      }
+      return prev;
+    });
+  };
 
   // Fast frame painter using dedicated recycled Image & requestAnimationFrame (Zero lag, zero memory churn, instantaneous auto-refresh)
   const scheduleCanvasRender = () => {
@@ -79,7 +111,7 @@ export default function ParentPortal({
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'low'; // Low/fast bilinear filtering ensures maximum fps & zero dropped frames on mobile/webview
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          setHasReceivedFrame(true);
+          setHasReceivedFrame(prev => prev ? prev : true);
         } catch (e) {
           // ignore transient canvas render errors
         }
@@ -120,7 +152,7 @@ export default function ParentPortal({
     const linkedStudentId = parent.studentId;
     const s = MockDatabase.getStudent(linkedStudentId);
     setStudent(prev => {
-      if (!prev || prev.id !== s.id || prev.isPremium !== s.isPremium || prev.courseName !== s.courseName) {
+      if (!prev || prev.id !== s.id || prev.isPremium !== s.isPremium || prev.courseName !== s.courseName || prev.name !== s.name) {
         return s;
       }
       return prev;
@@ -131,58 +163,68 @@ export default function ParentPortal({
     const studentBookings = allBookings.filter(b => b.studentId === linkedStudentId || b.studentId === s.id);
     setBookings(prev => {
       if (prev.length !== studentBookings.length) return studentBookings;
-      return prev;
+      const hasDiff = prev.some((b, i) => b.id !== studentBookings[i]?.id || b.status !== studentBookings[i]?.status);
+      return hasDiff ? studentBookings : prev;
     });
 
     // 3. Get assigned trainer
     const assignedTrainerId = s.assignedTrainerId || (studentBookings[0]?.trainerId) || "trainer_1";
     const t = MockDatabase.getTrainers().find(tr => tr.id === assignedTrainerId) || MockDatabase.getTrainers()[0];
     setTrainer(prev => {
-      if (!prev || prev.id !== t?.id) return t;
+      if (!prev || prev.id !== t?.id || prev.name !== t?.name) return t;
       return prev;
     });
 
     // 4. Get student progress
     const prog = MockDatabase.getProgress(s.id);
     setProgress(prev => {
-      if (!prev || prev.confidence !== prog?.confidence) return prog;
-      return prev;
+      if (!prev && !prog) return null;
+      if (!prev || !prog) return prog;
+      if (
+        prev.confidence === prog.confidence &&
+        prev.steering === prog.steering &&
+        prev.clutch === prog.clutch &&
+        prev.gear === prog.gear &&
+        prev.parking === prog.parking &&
+        prev.traffic === prog.traffic
+      ) {
+        return prev;
+      }
+      return prog;
     });
 
-    // 5. Get active live stream session from local database
+    // 5. Get active live stream session from database
     const stream = MockDatabase.getLiveStreamSession(s.id);
     if (stream && stream.isLive) {
-      setStreamSession(prev => ({ ...(prev || {}), ...stream }));
+      updateStreamSessionIfChanged(stream);
       if (stream.latestFrame) {
         handleIncomingFrame(stream.latestFrame);
       }
-      setConnectionStatus('connected');
+      setConnectionStatus(prev => prev === 'connected' ? prev : 'connected');
     } else if (!stream || !stream.isLive) {
-      setStreamSession(prev => prev && prev.isLive ? { ...prev, isLive: false } : prev);
-      if (connectionStatus === 'connected') {
-        setConnectionStatus('idle');
-      }
+      updateStreamSessionIfChanged(stream ? { ...stream, isLive: false } : null);
+      setConnectionStatus(prev => prev === 'idle' ? prev : 'idle');
     }
   };
 
-  // Low-frequency metadata sync (every 5 seconds instead of 2 seconds to keep CPU/battery light)
+  // Background auto-refresh timer to keep telemetry, student progress, and stream status in sync without UI re-renders
   useEffect(() => {
     loadParentStudentData();
-    const interval = setInterval(() => {
+    const autoRefreshInterval = setInterval(() => {
       loadParentStudentData();
-    }, 5000);
+    }, 3000);
 
-    return () => clearInterval(interval);
-  }, [parent]);
+    return () => clearInterval(autoRefreshInterval);
+  }, [parent?.id, parent?.studentId]);
 
-  // Real-Time Video Stream Engine: Server-Sent Events (SSE) + Auto-Reconnect + Fallback Polling
+  // Real-Time Video Stream Engine: Zero-Lag In-Memory Subscription + Server-Sent Events (SSE) + Auto-Refresh
   useEffect(() => {
     if (!student || !parent) return;
 
     // Verify Premium status
     const isPremium = MockDatabase.isStudentPremium(student);
     if (!isPremium) {
-      setStreamSession(null);
+      updateStreamSessionIfChanged(null);
       setConnectionStatus('idle');
       setHasReceivedFrame(false);
       return;
@@ -194,22 +236,22 @@ export default function ParentPortal({
     let fallbackPollInterval: any = null;
     let retryAttempt = 0;
 
-    // High-performance direct in-memory listener (sub-16ms zero latency when on same device)
-    const localStreamSync = () => {
+    // 1. Direct Zero-Lag In-Memory Live Stream Subscription (Instantaneous frame dispatch)
+    const unsubscribeLocal = MockDatabase.subscribeToLiveStream(student.id, (session) => {
       if (!isMounted) return;
-      const local = MockDatabase.getLiveStreamSession(student.id);
-      if (local && local.isLive) {
-        setStreamSession(prev => ({ ...(prev || {}), ...local }));
-        setConnectionStatus('connected');
-        if (local.latestFrame) {
-          handleIncomingFrame(local.latestFrame);
+      if (session && session.isLive) {
+        updateStreamSessionIfChanged(session);
+        setConnectionStatus(prev => prev === 'connected' ? prev : 'connected');
+        if (session.latestFrame) {
+          handleIncomingFrame(session.latestFrame);
         }
+      } else if (session && !session.isLive) {
+        updateStreamSessionIfChanged(session);
+        setConnectionStatus(prev => prev === 'idle' ? prev : 'idle');
       }
-    };
+    });
 
-    const localCheckInterval = setInterval(localStreamSync, 100);
-
-    // Fallback polling handler with in-flight guard
+    // 2. High-Frequency Fallback Poller with in-flight guard
     const runFallbackPoll = async () => {
       if (!isMounted || isPollingRef.current) return;
       isPollingRef.current = true;
@@ -218,31 +260,36 @@ export default function ParentPortal({
         if (res.ok && isMounted) {
           const data = await res.json();
           if (data.success && data.isLive) {
-            setStreamSession(prev => ({ ...(prev || {}), ...data }));
-            setConnectionStatus('connected');
+            updateStreamSessionIfChanged(data);
+            setConnectionStatus(prev => prev === 'connected' ? prev : 'connected');
             if (data.latestFrame) {
               handleIncomingFrame(data.latestFrame);
             }
           } else if (data.success && !data.isLive) {
-            setStreamSession(prev => prev && prev.isLive ? { ...prev, isLive: false } : prev);
-            setConnectionStatus('idle');
+            updateStreamSessionIfChanged(data);
+            setConnectionStatus(prev => prev === 'idle' ? prev : 'idle');
           }
         }
       } catch (err) {
-        localStreamSync();
+        // Fallback to in-memory session
+        const local = MockDatabase.getLiveStreamSession(student.id);
+        if (local && local.isLive && isMounted) {
+          updateStreamSessionIfChanged(local);
+          if (local.latestFrame) handleIncomingFrame(local.latestFrame);
+        }
       } finally {
         isPollingRef.current = false;
       }
     };
 
-    // Connect to Server-Sent Events (SSE) Stream
+    // Auto-poll every 2 seconds in background to guarantee continuous zero-lag refresh
+    fallbackPollInterval = setInterval(runFallbackPoll, 2000);
+
+    // 3. Connect to Server-Sent Events (SSE) Stream
     const connectSSEStream = () => {
       if (!isMounted) return;
 
       if (typeof window === "undefined" || !("EventSource" in window)) {
-        if (!fallbackPollInterval) {
-          fallbackPollInterval = setInterval(runFallbackPoll, 300);
-        }
         return;
       }
 
@@ -252,7 +299,7 @@ export default function ParentPortal({
           eventSource = null;
         }
 
-        setConnectionStatus(retryAttempt > 0 ? 'reconnecting' : 'connecting');
+        setConnectionStatus(prev => (retryAttempt > 0 ? (prev === 'reconnecting' ? prev : 'reconnecting') : (prev === 'connecting' ? prev : 'connecting')));
         const sseUrl = `/api/stream/events/${student.id}?parentId=${parent.id}`;
         eventSource = new EventSource(sseUrl);
 
@@ -270,15 +317,11 @@ export default function ParentPortal({
             const data = JSON.parse(event.data);
             if (data.type === "session_update" || data.type === "frame") {
               if (data.isLive !== undefined) {
-                setStreamSession(prev => ({
-                  ...(prev || {}),
-                  ...data,
-                  isLive: data.isLive
-                }));
+                updateStreamSessionIfChanged(data);
                 if (data.isLive) {
-                  setConnectionStatus('connected');
+                  setConnectionStatus(prev => prev === 'connected' ? prev : 'connected');
                 } else {
-                  setConnectionStatus('idle');
+                  setConnectionStatus(prev => prev === 'idle' ? prev : 'idle');
                 }
               }
 
@@ -293,28 +336,24 @@ export default function ParentPortal({
 
         eventSource.onerror = (err) => {
           if (!isMounted) return;
-          console.warn("SSE Stream disconnected, auto-reconnecting...", err);
-          setConnectionStatus('reconnecting');
+          setConnectionStatus(prev => prev === 'reconnecting' ? prev : 'reconnecting');
           
           if (eventSource) {
             eventSource.close();
             eventSource = null;
           }
 
-          // Fallback polling while reconnecting
+          // Fallback poll immediately
           runFallbackPoll();
 
-          // Exponential backoff auto-reconnect (500ms to 4000ms max)
-          const delay = Math.min(500 * Math.pow(1.5, retryAttempt), 4000);
+          // Exponential backoff auto-reconnect (500ms to 3000ms)
+          const delay = Math.min(500 * Math.pow(1.4, retryAttempt), 3000);
           retryAttempt++;
           reconnectTimer = setTimeout(connectSSEStream, delay);
         };
 
       } catch (err) {
         console.warn("SSE connection init error:", err);
-        if (!fallbackPollInterval) {
-          fallbackPollInterval = setInterval(runFallbackPoll, 300);
-        }
       }
     };
 
@@ -322,6 +361,7 @@ export default function ParentPortal({
 
     return () => {
       isMounted = false;
+      unsubscribeLocal();
       if (eventSource) {
         eventSource.close();
       }
@@ -331,11 +371,8 @@ export default function ParentPortal({
       if (fallbackPollInterval) {
         clearInterval(fallbackPollInterval);
       }
-      if (localCheckInterval) {
-        clearInterval(localCheckInterval);
-      }
     };
-  }, [student, parent]);
+  }, [student?.id, parent?.id, student?.isPremium]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -441,9 +478,17 @@ export default function ParentPortal({
                   </span>
                 )}
               </div>
-              <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
-                1:1 Secure Stream
-              </span>
+              <div className="flex items-center gap-2">
+                {streamSession?.isLive && (
+                  <span className="flex items-center gap-1 text-[10px] font-black text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-full animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                    Broadcasting
+                  </span>
+                )}
+                <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
+                  1:1 Secure Stream
+                </span>
+              </div>
             </div>
 
             {/* Video Player Box */}
@@ -465,14 +510,15 @@ export default function ParentPortal({
                     Live in-car video streaming is an exclusive feature of the Golden Hands Premium Package. Your student is currently enrolled in the {student?.courseName || "Standard Plan"}.
                   </p>
                 </div>
-              ) : streamSession?.isLive ? (
+              ) : streamSession?.isLive && isLiveStreamViewActive ? (
                 <>
                   {/* Real-time Video / Hardware Accelerated Canvas Stream View (Zero Black Screen, Zero Flicker) */}
                   <canvas 
                     ref={canvasRef} 
                     width={640} 
                     height={360} 
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover rounded-2xl sm:rounded-3xl block select-none"
+                    style={{ transform: "translateZ(0)", willChange: "contents", imageRendering: "auto" }}
                   />
 
                   {/* Connecting / Initializing Overlay (Fades away instantly when first frame paints) */}
@@ -481,14 +527,14 @@ export default function ParentPortal({
                       <div className="w-16 h-16 rounded-full bg-rose-600/20 border-2 border-rose-500 flex items-center justify-center mb-3 animate-pulse">
                         <Video className="w-8 h-8 text-rose-400" />
                       </div>
-                      <h3 className="text-base sm:text-lg font-black text-white">Live In-Car Camera Active</h3>
+                      <h3 className="text-base sm:text-lg font-black text-white">Connecting to In-Car Camera...</h3>
                       <p className="text-xs text-slate-400 mt-1 max-w-sm">
                         Receiving encrypted video signal from vehicle {streamSession.carPlate || "OD-02-GH-2026"} (Trainer: {streamSession.trainerName || trainer?.name || "Instructor"}).
                       </p>
                     </div>
                   )}
 
-                  {/* TOP OVERLAY HUD: Live Badge + Adaptive 360p / HD Quality Indicator + Speedometer */}
+                  {/* TOP OVERLAY HUD: Live Badge + Adaptive 360p / HD Quality Indicator + Speedometer + Close view */}
                   <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
                     <div className="flex items-center gap-2">
                       <span className="flex items-center gap-1.5 bg-rose-600/90 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-black uppercase text-white shadow-lg">
@@ -500,11 +546,18 @@ export default function ParentPortal({
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 pointer-events-auto">
                       <div className="bg-black/70 backdrop-blur-md px-3 py-1 rounded-lg border border-amber-500/30 text-amber-400 font-mono font-black text-xs flex items-center gap-1">
                         <Zap className="w-3.5 h-3.5 text-amber-400" />
                         <span>{streamSession.currentSpeed || 24} KM/H</span>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsLiveStreamViewActive(false)}
+                        className="bg-black/80 hover:bg-slate-900 text-slate-300 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 text-[10px] font-bold transition-all cursor-pointer shadow-lg"
+                      >
+                        Minimize
+                      </button>
                     </div>
                   </div>
 
@@ -539,21 +592,88 @@ export default function ParentPortal({
                   </div>
                 </>
               ) : (
-                /* Offline / Standby State with scheduled class countdown */
-                <div className="flex flex-col items-center justify-center p-6 text-center max-w-md">
-                  <div className="w-16 h-16 rounded-3xl bg-slate-800/80 border border-slate-700 flex items-center justify-center mb-3">
-                    <Video className="w-8 h-8 text-slate-500" />
+                /* Click to View Stream / Student Not Turned On State */
+                <div className="flex flex-col items-center justify-center p-6 sm:p-8 text-center max-w-lg w-full relative z-10">
+                  {/* Notice Banner when clicking while stream is off */}
+                  {streamNotActiveNotice && (
+                    <div className="mb-4 w-full bg-rose-500/10 border-2 border-rose-500/30 rounded-2xl p-3.5 text-left flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0 mt-0.5">
+                        <AlertCircle className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-xs font-black text-rose-300 uppercase tracking-wide">
+                          Student has not turned on the live stream
+                        </p>
+                        <p className="text-xs text-rose-200/80 mt-0.5 leading-relaxed">
+                          Please ask student ({student?.name || "your child"}) to turn on the live stream from their student app during their practical driving class.
+                        </p>
+                      </div>
+                      <button 
+                        type="button" 
+                        onClick={() => setStreamNotActiveNotice(null)}
+                        className="text-rose-400 hover:text-rose-200 p-1 text-xs font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+
+                  <div className={`w-16 h-16 rounded-3xl flex items-center justify-center mb-3 transition-all ${
+                    streamSession?.isLive 
+                      ? 'bg-rose-600/20 border-2 border-rose-500 text-rose-400 animate-pulse shadow-lg shadow-rose-600/20' 
+                      : 'bg-slate-800/80 border border-slate-700 text-slate-400'
+                  }`}>
+                    <Video className="w-8 h-8" />
                   </div>
-                  <h3 className="text-base sm:text-lg font-black text-white">No Live Class Broadcasting Now</h3>
-                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                    Live video stream automatically starts when the student turns on live streaming during their driving session.
+
+                  <h3 className="text-base sm:text-lg font-black text-white">
+                    {streamSession?.isLive 
+                      ? "🔴 Live Driving Class Is Broadcasting Now!" 
+                      : "In-Car Camera Live Stream"}
+                  </h3>
+                  
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed max-w-sm">
+                    {streamSession?.isLive 
+                      ? "Your student has enabled their in-car video camera. Click the button below to view the secure live feed." 
+                      : "Click below to connect to the live stream. Stream becomes viewable once the student turns on camera broadcasting."}
                   </p>
+
+                  {/* Primary Action Button: CLICK HERE TO VIEW LIVE STREAM */}
+                  <div className="mt-4 w-full flex flex-col sm:flex-row items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Check if student has turned on live stream
+                        const currentSession = MockDatabase.getLiveStreamSession(student?.id || "") || streamSession;
+                        if (currentSession && currentSession.isLive) {
+                          setStreamNotActiveNotice(null);
+                          setIsLiveStreamViewActive(true);
+                          setConnectionStatus('connected');
+                          if (currentSession.latestFrame) {
+                            handleIncomingFrame(currentSession.latestFrame);
+                          }
+                        } else {
+                          // Show notice asking student to turn on
+                          setIsLiveStreamViewActive(false);
+                          setStreamNotActiveNotice("Student has not turned on the live stream. Please ask student to turn on.");
+                        }
+                      }}
+                      className={`w-full sm:w-auto px-6 py-3 rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xl active:scale-95 ${
+                        streamSession?.isLive 
+                          ? 'bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white shadow-rose-600/30 animate-pulse ring-2 ring-rose-400/50' 
+                          : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-amber-500/20'
+                      }`}
+                    >
+                      <Video className="w-4 h-4" />
+                      <span>Click here to view live stream</span>
+                    </button>
+                  </div>
 
                   <div className="mt-4 bg-slate-900/90 border border-slate-800 p-3 rounded-2xl w-full text-left flex items-center justify-between">
                     <div>
-                      <p className="text-[10px] font-black uppercase text-amber-400">Next Scheduled Class</p>
+                      <p className="text-[10px] font-black uppercase text-amber-400">Class Information</p>
                       <p className="text-xs font-bold text-white mt-0.5">
-                        {activeBooking ? `${activeBooking.date} at ${activeBooking.time}` : "Tomorrow at 08:30 AM"}
+                        {activeBooking ? `${activeBooking.date} at ${activeBooking.time}` : "Daily Practical Session"}
                       </p>
                     </div>
                     <span className="text-[11px] font-bold text-slate-300 bg-slate-800 px-3 py-1.5 rounded-xl">

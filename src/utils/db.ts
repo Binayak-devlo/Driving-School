@@ -997,21 +997,71 @@ export class MockDatabase {
   // LIVE CLASS VIDEO STREAMING & SIGNALING
   // ==========================================
 
-  static getLiveStreamSession(studentId: string): LiveStreamSession | null {
-    if (!studentId) return null;
-    return this.getStored<LiveStreamSession | null>(`stream_session_${studentId}`, null);
+  private static inMemoryStreams = new Map<string, LiveStreamSession>();
+  private static streamListeners = new Map<string, Set<(session: LiveStreamSession) => void>>();
+
+  static subscribeToLiveStream(studentId: string, callback: (session: LiveStreamSession) => void): () => void {
+    if (!studentId) return () => {};
+    if (!this.streamListeners.has(studentId)) {
+      this.streamListeners.set(studentId, new Set());
+    }
+    const set = this.streamListeners.get(studentId)!;
+    set.add(callback);
+
+    // Provide initial state if present
+    const current = this.getLiveStreamSession(studentId);
+    if (current) {
+      try { callback(current); } catch {}
+    }
+
+    return () => {
+      set.delete(callback);
+      if (set.size === 0) {
+        this.streamListeners.delete(studentId);
+      }
+    };
   }
 
-  static saveLiveStreamSession(session: LiveStreamSession): void {
+  static getLiveStreamSession(studentId: string): LiveStreamSession | null {
+    if (!studentId) return null;
+    if (this.inMemoryStreams.has(studentId)) {
+      return this.inMemoryStreams.get(studentId)!;
+    }
+    const stored = this.getStored<LiveStreamSession | null>(`stream_session_${studentId}`, null);
+    if (stored) {
+      this.inMemoryStreams.set(studentId, stored);
+    }
+    return stored;
+  }
+
+  static saveLiveStreamSession(session: LiveStreamSession, isFrameOnly = false): void {
     if (!session || !session.studentId) return;
     session.updatedAt = Date.now();
-    this.setStored(`stream_session_${session.studentId}`, session);
-    try {
-      saveToCloud("stream_sessions", session.studentId, session);
-    } catch (e) {
-      console.warn("Could not save stream session to cloud:", e);
+    this.inMemoryStreams.set(session.studentId, session);
+
+    // Notify registered in-memory subscribers with 0ms latency
+    const listeners = this.streamListeners.get(session.studentId);
+    if (listeners && listeners.size > 0) {
+      for (const cb of listeners) {
+        try { cb(session); } catch (err) {}
+      }
     }
-    this.notifyChange();
+
+    // Only persist to localStorage and Cloud if it's state change (start/stop), NOT every frame tick to prevent lag
+    if (!isFrameOnly) {
+      // Store lightweight session in localStorage without heavy raw frame to prevent quota exhaustion
+      const lightSession = { ...session };
+      if (lightSession.latestFrame && lightSession.latestFrame.length > 500) {
+        delete lightSession.latestFrame;
+      }
+      this.setStored(`stream_session_${session.studentId}`, lightSession);
+      try {
+        saveToCloud("stream_sessions", session.studentId, lightSession);
+      } catch (e) {
+        console.warn("Could not save stream session to cloud:", e);
+      }
+      this.notifyChange();
+    }
   }
 
   static setLiveStreamActive(studentId: string, isLive: boolean, meta?: Partial<LiveStreamSession>): void {
@@ -1021,6 +1071,8 @@ export class MockDatabase {
       isLive: false,
       startedAt: new Date().toISOString()
     };
+
+    const isFrameOnly = isLive && existing.isLive && Boolean(meta?.latestFrame && !meta?.streamType);
 
     const updated: LiveStreamSession = {
       ...existing,
@@ -1032,7 +1084,7 @@ export class MockDatabase {
       updatedAt: Date.now()
     };
 
-    this.saveLiveStreamSession(updated);
+    this.saveLiveStreamSession(updated, isFrameOnly);
   }
 
   static getLiveStreamSessions(): LiveStreamSession[] {
