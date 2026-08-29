@@ -304,7 +304,7 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
           {/* Bottom Footer Creator Section - Permanent, never hidden, safe-area padded */}
           <div className="z-10 select-none mt-auto pb-4">
             <a 
-              href="https://bnptech.in"
+              href="https://bnpt.vercel.app/"
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
