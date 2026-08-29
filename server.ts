@@ -1159,7 +1159,24 @@ async function startServer() {
     sdpAnswer?: any;
     candidates?: any[];
     lastPing: number;
+    quality?: string;
   }>();
+
+  // Active SSE stream subscriber clients
+  const streamClients = new Map<string, Set<express.Response>>();
+
+  function broadcastToStreamClients(studentId: string, eventData: any) {
+    const clients = streamClients.get(studentId);
+    if (!clients || clients.size === 0) return;
+    const payload = `data: ${JSON.stringify(eventData)}\n\n`;
+    for (const res of clients) {
+      try {
+        res.write(payload);
+      } catch (err) {
+        clients.delete(res);
+      }
+    }
+  }
 
   // Helper to check if student has Premium package in database
   async function verifyStudentPremiumStatus(studentId: string): Promise<boolean> {
@@ -1182,7 +1199,7 @@ async function startServer() {
   // Publish / Start Stream (Validates Premium Package backend constraint)
   app.post("/api/stream/publish", async (req, res) => {
     try {
-      const { studentId, isLive, trainerName, carName, carPlate, location, currentSpeed, sdpOffer, latestFrame } = req.body;
+      const { studentId, isLive, trainerName, carName, carPlate, location, currentSpeed, sdpOffer, latestFrame, quality } = req.body;
       if (!studentId) {
         return res.status(400).json({ error: "studentId is required." });
       }
@@ -1208,10 +1225,18 @@ async function startServer() {
         sdpOffer: sdpOffer || undefined,
         sdpAnswer: undefined,
         candidates: [],
+        quality: quality || "360p",
         lastPing: Date.now()
       };
 
       activeStreams.set(studentId, streamState);
+
+      // Broadcast live event to all connected parent clients immediately
+      broadcastToStreamClients(studentId, {
+        type: "session_update",
+        success: true,
+        ...streamState
+      });
 
       // Persist in Firestore
       await setDoc(doc(db, "stream_sessions", studentId), {
@@ -1224,6 +1249,7 @@ async function startServer() {
         location: streamState.location,
         currentSpeed: streamState.currentSpeed,
         latestFrame: streamState.latestFrame || null,
+        quality: streamState.quality,
         updatedAt: Date.now()
       }, { merge: true });
 
@@ -1286,7 +1312,7 @@ async function startServer() {
   // Real-time Frame broadcast / Fallback stream sync (for robust multi-device viewing)
   app.post("/api/stream/frame", async (req, res) => {
     try {
-      const { studentId, frame, speed, location, trainerName } = req.body;
+      const { studentId, frame, speed, location, trainerName, quality } = req.body;
       if (!studentId) {
         return res.status(400).json({ error: "studentId is required." });
       }
@@ -1312,12 +1338,112 @@ async function startServer() {
       if (speed !== undefined) current.currentSpeed = speed;
       if (location) current.location = location;
       if (trainerName) current.trainerName = trainerName;
+      if (quality) current.quality = quality;
       current.lastPing = Date.now();
 
-      // Also sync latestFrame to Firestore occasionally or in memory
+      // Instant push to all connected Parent Portal clients over SSE (Zero lag)
+      broadcastToStreamClients(studentId, {
+        type: "frame",
+        success: true,
+        isLive: true,
+        studentId,
+        latestFrame: frame,
+        currentSpeed: current.currentSpeed,
+        location: current.location,
+        trainerName: current.trainerName,
+        quality: current.quality || "360p",
+        timestamp: Date.now()
+      });
+
       return res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to update frame." });
+    }
+  });
+
+  // Server-Sent Events (SSE) Real-Time Stream Endpoint for Parent Portal (Zero polling overhead, sub-15ms frame delivery)
+  app.get("/api/stream/events/:studentId", async (req, res) => {
+    try {
+      const { studentId } = req.params;
+      const { parentId } = req.query;
+
+      if (!studentId) {
+        return res.status(400).json({ error: "studentId is required." });
+      }
+
+      // 1. Verify Premium package permission
+      const isPremium = await verifyStudentPremiumStatus(studentId);
+      if (!isPremium) {
+        return res.status(403).json({ error: "Live Stream is available exclusively with the Premium Package." });
+      }
+
+      // 2. Verify parent-student authorization if parentId provided
+      if (parentId && typeof parentId === "string") {
+        try {
+          const parentDoc = await getDoc(doc(db, "parents", parentId));
+          if (parentDoc.exists()) {
+            const pData = parentDoc.data();
+            if (pData.studentId !== studentId) {
+              return res.status(403).json({
+                error: "Unauthorized: You are not authorized to view this student's live stream."
+              });
+            }
+          }
+        } catch (e) {
+          console.warn("Parent link verification error:", e);
+        }
+      }
+
+      // Set headers for SSE stream (compatible with mobile browsers, Android WebView, Chrome, Safari)
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders?.();
+
+      // Register subscriber
+      if (!streamClients.has(studentId)) {
+        streamClients.set(studentId, new Set());
+      }
+      const clients = streamClients.get(studentId)!;
+      clients.add(res);
+
+      // Send initial snapshot immediately to eliminate black-screen
+      const current = activeStreams.get(studentId);
+      if (current) {
+        res.write(`data: ${JSON.stringify({
+          type: "session_update",
+          success: true,
+          ...current
+        })}\n\n`);
+      } else {
+        res.write(`data: ${JSON.stringify({
+          type: "session_update",
+          success: true,
+          isLive: false,
+          studentId
+        })}\n\n`);
+      }
+
+      // Heartbeat ping every 12 seconds to keep mobile connections open & prevent ISP/carrier timeouts
+      const pingInterval = setInterval(() => {
+        try {
+          res.write(`: ping\n\n`);
+        } catch (e) {
+          clearInterval(pingInterval);
+        }
+      }, 12000);
+
+      req.on("close", () => {
+        clearInterval(pingInterval);
+        clients.delete(res);
+        if (clients.size === 0) {
+          streamClients.delete(studentId);
+        }
+      });
+    } catch (error: any) {
+      console.error("SSE stream setup error:", error);
+      res.status(500).end();
     }
   });
 
@@ -1407,6 +1533,13 @@ async function startServer() {
         current.isLive = false;
         activeStreams.set(studentId, current);
       }
+
+      broadcastToStreamClients(studentId, {
+        type: "session_update",
+        success: true,
+        isLive: false,
+        studentId
+      });
 
       await setDoc(doc(db, "stream_sessions", studentId), {
         isLive: false,

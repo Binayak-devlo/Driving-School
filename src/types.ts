@@ -100,6 +100,8 @@ export interface LiveStreamSession {
   currentSpeed?: number;
   streamType?: 'webrtc' | 'frame_stream';
   latestFrame?: string; // Base64 snapshot fallback for real-time video sync across all network conditions
+  quality?: string;
+  duration?: string;
   updatedAt?: number;
 }
 

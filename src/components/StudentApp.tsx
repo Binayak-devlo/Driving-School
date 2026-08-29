@@ -358,11 +358,14 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const [streamError, setStreamError] = useState<string | null>(null);
   const [streamFacingMode, setStreamFacingMode] = useState<'user' | 'environment'>('user');
   const [streamTimer, setStreamTimer] = useState(0);
+  const [streamQuality, setStreamQuality] = useState<'360p' | 'auto'>('auto');
 
   const videoStreamRef = useRef<MediaStream | null>(null);
   const studentVideoRef = useRef<HTMLVideoElement | null>(null);
   const frameIntervalRef = useRef<any>(null);
   const streamTimerIntervalRef = useRef<any>(null);
+  const isUploadingFrameRef = useRef<boolean>(false);
+  const lastLatencyRef = useRef<number>(50);
 
   const formatStreamTimer = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -373,6 +376,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const stopLiveStream = useCallback(async () => {
     setIsLiveStreamOn(false);
     setStreamStarting(false);
+    isUploadingFrameRef.current = false;
 
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
@@ -443,8 +447,9 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         const constraints: MediaStreamConstraints = {
           video: {
             facingMode: facing,
-            width: { ideal: 640 },
-            height: { ideal: 360 }
+            width: { ideal: 640, max: 1280 },
+            height: { ideal: 360, max: 720 },
+            frameRate: { ideal: 15, max: 30 }
           },
           audio: false
         };
@@ -480,6 +485,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         carPlate: "OD-02-GH-2026",
         location: currentStud.location || "Rasulgarh, Bhubaneswar",
         currentSpeed: 24,
+        quality: "360p",
         streamType: 'frame_stream' as const
       };
 
@@ -491,41 +497,76 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         body: JSON.stringify(initialMeta)
       }).catch(e => console.warn("Stream publish error:", e));
 
-      // Continuous frame broadcast loop (5 frames per second)
-      const canvas = document.createElement("canvas");
-      canvas.width = 480;
-      canvas.height = 270;
-      const ctx = canvas.getContext("2d");
+      // Continuous adaptive frame broadcast engine (360p / 270p downscale with non-blocking queue)
+      const offscreenCanvas = document.createElement("canvas");
+      const offscreenCtx = offscreenCanvas.getContext("2d", { alpha: false });
+      
+      // Default to crisp and lightweight 360p (480x270 or 640x360)
+      offscreenCanvas.width = 480;
+      offscreenCanvas.height = 270;
 
       if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
       frameIntervalRef.current = setInterval(() => {
-        if (studentVideoRef.current && studentVideoRef.current.readyState >= 2 && ctx) {
-          try {
-            ctx.drawImage(studentVideoRef.current, 0, 0, 480, 270);
-            const frameData = canvas.toDataURL("image/jpeg", 0.45);
-            const speed = 20 + Math.floor(Math.random() * 12);
-
-            MockDatabase.setLiveStreamActive(currentStud.id, true, {
-              latestFrame: frameData,
-              currentSpeed: speed
-            });
-
-            fetch("/api/stream/frame", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                studentId: currentStud.id,
-                frame: frameData,
-                speed,
-                location: currentStud.location || "Rasulgarh, Bhubaneswar",
-                trainerName: currentStud.assignedTrainerName || "Certified Instructor"
-              })
-            }).catch(() => {});
-          } catch (err) {
-            console.warn("Frame capture err:", err);
-          }
+        if (!studentVideoRef.current || studentVideoRef.current.readyState < 2 || !offscreenCtx) {
+          return;
         }
-      }, 200);
+
+        // Prevent request piling / buffering lag: if previous upload is in-flight, skip tick
+        if (isUploadingFrameRef.current) {
+          return;
+        }
+
+        try {
+          // Dynamic adaptive resolution based on network upload latency
+          const isHighLatency = lastLatencyRef.current > 200;
+          const targetWidth = isHighLatency ? 360 : 480;
+          const targetHeight = isHighLatency ? 202 : 270;
+          const jpegQuality = isHighLatency ? 0.38 : 0.52;
+
+          if (offscreenCanvas.width !== targetWidth) {
+            offscreenCanvas.width = targetWidth;
+            offscreenCanvas.height = targetHeight;
+          }
+
+          offscreenCtx.drawImage(studentVideoRef.current, 0, 0, targetWidth, targetHeight);
+          const frameData = offscreenCanvas.toDataURL("image/jpeg", jpegQuality);
+          const speed = 20 + Math.floor(Math.random() * 12);
+
+          // Instant in-memory update for same-window / local cross-tab viewing
+          MockDatabase.setLiveStreamActive(currentStud.id, true, {
+            latestFrame: frameData,
+            currentSpeed: speed,
+            quality: isHighLatency ? '360p' : '360p'
+          });
+
+          // Upload frame to server with latency tracking
+          isUploadingFrameRef.current = true;
+          const uploadStart = Date.now();
+
+          fetch("/api/stream/frame", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              studentId: currentStud.id,
+              frame: frameData,
+              speed,
+              location: currentStud.location || "Rasulgarh, Bhubaneswar",
+              trainerName: currentStud.assignedTrainerName || "Certified Instructor",
+              quality: isHighLatency ? "360p-adaptive" : "360p-smooth"
+            })
+          }).then(() => {
+            lastLatencyRef.current = Date.now() - uploadStart;
+          }).catch(e => {
+            console.warn("Frame upload failed:", e);
+          }).finally(() => {
+            isUploadingFrameRef.current = false;
+          });
+
+        } catch (err) {
+          console.warn("Frame capture err:", err);
+          isUploadingFrameRef.current = false;
+        }
+      }, 125); // ~8 FPS, ultra-smooth and low battery/bandwidth impact
 
       // Start elapsed timer
       if (streamTimerIntervalRef.current) clearInterval(streamTimerIntervalRef.current);
