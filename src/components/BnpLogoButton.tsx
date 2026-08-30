@@ -7,72 +7,145 @@ interface BnpLogoProps {
   showLabel?: boolean;
 }
 
-export const BnpTechLogoSVG: React.FC<{ className?: string }> = ({ className = "w-full h-full" }) => {
+export const BnpTechLogoSVG: React.FC<{ className?: string; inverted?: boolean }> = ({ 
+  className = "w-full h-full",
+  inverted = false
+}) => {
+  const darkColor = inverted ? "#FFFFFF" : "#0F172A";
+  const blueColor = "#0052CC";
+
   return (
     <svg 
-      viewBox="0 0 400 240" 
+      viewBox="0 0 540 340" 
       className={className}
       fill="none" 
       xmlns="http://www.w3.org/2000/svg"
-      aria-label="BNP TECH Logo"
+      aria-label="BNP TECH Official Logo"
     >
-      {/* Background glow / container */}
-      <rect width="100%" height="100%" fill="transparent" />
+      <defs>
+        {/* Subtle drop shadow for premium vector fidelity */}
+        <filter id="bnp-logo-subtle-glow" x="-10%" y="-10%" width="120%" height="120%" filterUnits="userSpaceOnUse">
+          <feDropShadow dx="0" dy="1" stdDeviation="1" floodColor="#000000" floodOpacity="0.06" />
+        </filter>
+      </defs>
 
-      {/* Signature Cursive 'Bnp' */}
-      <g transform="translate(40, 115)">
-        {/* 'B' Calligraphy Main Loop & Stem */}
+      <g filter="url(#bnp-logo-subtle-glow)">
+        {/* ========================================================================= */}
+        {/* 1. SIGNATURE CURSIVE "B" (Solid Deep Charcoal / Black)                    */}
+        {/* ========================================================================= */}
+        {/* Large sweeping entry loop from bottom-left swooping up to top ascender */}
         <path 
-          d="M 38,-75 C 22,-35 8,-5 0,38 C -2,44 4,47 10,43 C 25,35 46,12 52,-15 C 55,-28 42,-32 30,-28 C 45,-42 62,-65 52,-78 C 42,-88 30,-80 38,-75 Z" 
-          fill="#0F172A" 
+          d="M 102 228 C 122 216 160 190 190 156 C 218 124 238 88 238 58 C 238 34 218 20 188 22 C 146 25 110 68 84 122 C 64 162 52 208 52 242 C 52 258 64 266 82 258 C 114 244 162 206 208 152 C 220 138 214 126 194 136 C 154 156 112 188 88 212 C 82 218 78 214 82 206 C 98 174 134 104 168 56 C 182 36 196 28 206 32 C 214 36 218 48 212 68 C 196 116 142 200 102 228 Z" 
+          fill={darkColor} 
         />
-        <path 
-          d="M 12,-72 C 38,-65 92,-42 89,-12 C 86,10 52,18 20,24 C 62,22 105,10 112,-18 C 118,-42 82,-78 20,-82 C 10,-83 5,-75 12,-72 Z" 
-          fill="#0F172A" 
-        />
-        
-        {/* 'n' in Electric Royal Blue */}
-        <path 
-          d="M 96,6 C 100,-18 116,-35 130,-35 C 144,-35 148,-18 144,8 C 140,32 126,45 136,45 C 146,45 160,25 168,-2 C 170,-8 163,-12 158,-6 C 150,12 140,22 136,18 C 132,14 138,-12 142,-24 C 148,-46 128,-52 113,-38 C 100,-26 93,2 90,18 C 88,26 94,30 100,28 C 100,20 98,10 96,6 Z" 
-          fill="#0052CC" 
-        />
-        
-        {/* Blue Accent Underline */}
-        <line x1="82" y1="56" x2="162" y2="56" stroke="#0052CC" strokeWidth="5" strokeLinecap="round" />
 
-        {/* 'p' in Black with Descender */}
+        {/* Dynamic 'B' Main Diagonal Spine & Double Head Loops */}
         <path 
-          d="M 170,-15 C 176,-35 190,-48 204,-48 C 218,-48 226,-32 220,-8 C 213,18 193,34 180,32 C 170,30 166,12 168,-15 L 153,75 C 151,84 160,88 166,82 L 178,18 C 188,22 206,12 214,-10 C 222,-32 210,-60 190,-58 C 173,-56 160,-35 156,-12 C 153,2 163,4 170,-15 Z" 
-          fill="#0F172A" 
+          d="M 120 178 C 160 162 206 148 248 136 C 266 131 278 120 274 106 C 268 88 242 76 204 82 C 180 86 156 96 136 108 C 130 112 126 104 132 98 C 158 74 198 58 238 60 C 272 62 290 80 286 104 C 282 124 260 138 232 146 C 258 144 282 152 284 168 C 286 186 264 204 228 214 C 182 226 132 230 92 232 C 84 232 82 224 88 220 C 132 192 184 176 230 170 C 252 167 262 159 260 149 C 258 138 244 134 224 138 C 188 145 152 158 120 178 Z" 
+          fill={darkColor} 
         />
-        
-        {/* Extended Signature Flourish */}
-        <path 
-          d="M 192,5 C 218,-15 258,-28 312,-12 C 319,-9 321,-18 313,-20 C 254,-38 208,-22 182,-2 C 177,3 185,10 192,5 Z" 
-          fill="#0F172A" 
-        />
-      </g>
 
-      {/* 'BNP TECH' Base Typography */}
-      <g transform="translate(195, 205)" textAnchor="middle">
-        {/* BNP in Royal Blue */}
-        <text x="-65" y="0" fontFamily="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" fontSize="22" fontWeight="900" letterSpacing="6" fill="#0052CC">BNP</text>
-        
-        {/* T */}
-        <text x="35" y="0" fontFamily="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" fontSize="22" fontWeight="900" fill="#0F172A">T</text>
-        
-        {/* Stylized 3-bar E */}
-        <g transform="translate(68, -17)">
-          <line x1="0" y1="2" x2="16" y2="2" stroke="#0F172A" strokeWidth="3.5" strokeLinecap="round"/>
-          <line x1="0" y1="9" x2="14" y2="9" stroke="#0F172A" strokeWidth="3.5" strokeLinecap="round"/>
-          <line x1="0" y1="16" x2="16" y2="16" stroke="#0F172A" strokeWidth="3.5" strokeLinecap="round"/>
+        {/* Lower flourish sweep of the B tail */}
+        <path 
+          d="M 92 232 C 60 238 42 220 48 190 C 54 162 76 134 98 108 C 102 103 108 108 104 114 C 84 138 66 164 62 186 C 58 204 68 214 90 208 C 104 204 116 196 124 190 C 128 187 132 193 128 197 C 118 208 106 220 92 232 Z" 
+          fill={darkColor} 
+        />
+
+        {/* ========================================================================= */}
+        {/* 2. CURSIVE "n" (Signature Electric / Royal Blue)                          */}
+        {/* ========================================================================= */}
+        {/* Smooth calligraphic dual-arch cursive 'n' */}
+        <path 
+          d="M 234 174 C 242 154 252 136 264 124 C 274 114 284 112 292 118 C 300 124 300 138 294 154 L 284 180 C 282 185 288 189 292 184 C 304 168 316 142 328 126 C 336 116 346 114 354 120 C 362 126 362 140 354 158 C 344 182 334 198 344 200 C 352 202 366 186 376 166 C 379 160 386 163 384 169 C 372 194 352 214 336 210 C 320 206 324 184 334 160 C 340 146 344 136 340 132 C 336 128 328 132 320 144 C 306 164 294 194 280 208 C 272 216 262 210 264 196 L 274 168 C 278 156 280 144 276 140 C 272 136 264 142 256 154 C 246 169 238 186 230 200 C 226 206 218 202 222 194 C 226 187 230 180 234 174 Z" 
+          fill={blueColor} 
+        />
+
+        {/* ========================================================================= */}
+        {/* 3. BLUE HORIZONTAL UNDERLINE ACCENT                                       */}
+        {/* ========================================================================= */}
+        <path 
+          d="M 216 226 C 248 224 286 224 322 226 C 326 226 326 230 322 230 C 286 230 248 230 216 228 C 212 228 212 226 216 226 Z" 
+          fill={blueColor} 
+          stroke={blueColor} 
+          strokeWidth="3.5" 
+          strokeLinecap="round" 
+        />
+
+        {/* ========================================================================= */}
+        {/* 4. SIGNATURE CURSIVE "p" WITH LONG DESCENT & EXTENDED RIGHT FLOURISH      */}
+        {/* ========================================================================= */}
+        {/* 'p' Ascending loop and dramatic sharp downward spear stroke */}
+        <path 
+          d="M 374 168 C 382 144 394 122 410 108 C 424 96 438 98 444 110 C 450 124 446 144 432 166 C 418 188 398 204 382 208 L 340 300 C 336 308 326 304 328 296 L 372 196 C 366 186 364 172 374 168 Z M 428 128 C 424 118 416 118 406 128 C 394 140 384 158 378 176 C 390 172 406 160 418 146 C 426 138 430 132 428 128 Z" 
+          fill={darkColor} 
+        />
+
+        {/* Dynamic sweeping right horizontal calligraphy flourish from the p */}
+        <path 
+          d="M 392 186 C 416 164 456 142 506 142 C 520 142 530 145 526 149 C 520 153 502 156 480 162 C 444 172 412 188 388 204 C 382 208 378 202 384 196 C 386 192 389 189 392 186 Z" 
+          fill={darkColor} 
+        />
+
+        {/* ========================================================================= */}
+        {/* 5. TYPOGRAPHY "B N P   T E C H" (Modern Geometric Font with 3-Bar E)     */}
+        {/* ========================================================================= */}
+        <g transform="translate(142, 286)">
+          {/* 'B N P' in Royal Blue with wide letter spacing */}
+          <text 
+            x="0" 
+            y="0" 
+            fontFamily="'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif" 
+            fontSize="26" 
+            fontWeight="900" 
+            letterSpacing="9" 
+            fill={blueColor}
+          >
+            BNP
+          </text>
+
+          {/* 'T' in Solid Black */}
+          <text 
+            x="132" 
+            y="0" 
+            fontFamily="'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif" 
+            fontSize="26" 
+            fontWeight="900" 
+            fill={darkColor}
+          >
+            T
+          </text>
+
+          {/* Stylized Futuristic 3-Bar 'E' (T ≡ C H) */}
+          <g transform="translate(168, -20)">
+            <line x1="0" y1="2.5" x2="20" y2="2.5" stroke={darkColor} strokeWidth="4.2" strokeLinecap="square" />
+            <line x1="0" y1="10.5" x2="16.5" y2="10.5" stroke={darkColor} strokeWidth="4.2" strokeLinecap="square" />
+            <line x1="0" y1="18.5" x2="20" y2="18.5" stroke={darkColor} strokeWidth="4.2" strokeLinecap="square" />
+          </g>
+
+          {/* 'C' in Solid Black */}
+          <text 
+            x="212" 
+            y="0" 
+            fontFamily="'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif" 
+            fontSize="26" 
+            fontWeight="900" 
+            fill={darkColor}
+          >
+            C
+          </text>
+
+          {/* 'H' in Solid Black */}
+          <text 
+            x="254" 
+            y="0" 
+            fontFamily="'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif" 
+            fontSize="26" 
+            fontWeight="900" 
+            fill={darkColor}
+          >
+            H
+          </text>
         </g>
-        
-        {/* C */}
-        <text x="108" y="0" fontFamily="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" fontSize="22" fontWeight="900" fill="#0F172A">C</text>
-        
-        {/* H */}
-        <text x="142" y="0" fontFamily="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" fontSize="22" fontWeight="900" fill="#0F172A">H</text>
       </g>
     </svg>
   );
