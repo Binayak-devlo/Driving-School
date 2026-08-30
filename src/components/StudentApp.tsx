@@ -42,7 +42,15 @@ import {
     PlusCircle,
     FolderPlus,
     FolderOpen,
-    Edit3
+    Edit3,
+    Eye,
+    EyeOff,
+    Settings,
+    Key,
+    ShieldCheck,
+    HelpCircle,
+    Globe,
+    Shield
 } from "lucide-react";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion } from "motion/react";
@@ -80,6 +88,7 @@ import {
 
 import { downloadPaymentReceipt, downloadFileOrImage, downloadCSV } from "../utils/exportUtils";
 import { Download } from "lucide-react";
+import BnpLogoButton from "./BnpLogoButton";
 
 interface StudentAppProps {
   onStateChange: () => void; // call when state needs to refresh across other roles
@@ -188,6 +197,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
   const notifDropdownRef = useRef<HTMLDivElement>(null);
+  const menuDropdownRef = useRef<HTMLDivElement>(null);
   const [activeOtpFocus, setActiveOtpFocus] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'home' | 'classes' | 'modify' | 'track' | 'learn' | 'profile'>(() => {
     if (navState && navState.activeView === 'student' && navState.studentTab) {
@@ -200,8 +210,34 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       return navState.studentSubPage;
     }
     return null;
-  }); // 'ai-coach', 'mock-test', 'documents', 'payments', 'licence', 'licence-apply', 'vault-files', 'vault-notes', 'vault-team'
+  }); // 'ai-coach', 'mock-test', 'documents', 'payments', 'licence', 'licence-apply', 'change-password', 'settings', 'edit-profile', 'vault-files', 'vault-notes', 'vault-team'
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Change Password state
+  const [changePassCurrent, setChangePassCurrent] = useState('');
+  const [changePassNew, setChangePassNew] = useState('');
+  const [changePassConfirm, setChangePassConfirm] = useState('');
+  const [changePassShowCurrent, setChangePassShowCurrent] = useState(false);
+  const [changePassShowNew, setChangePassShowNew] = useState(false);
+  const [changePassShowConfirm, setChangePassShowConfirm] = useState(false);
+  const [changePassError, setChangePassError] = useState<string | null>(null);
+  const [changePassSuccess, setChangePassSuccess] = useState<string | null>(null);
+  const [changePassLoading, setChangePassLoading] = useState(false);
+
+  // App Settings state
+  const [settingsNotifPush, setSettingsNotifPush] = useState(true);
+  const [settingsNotifSms, setSettingsNotifSms] = useState(true);
+  const [settingsNotifVoice, setSettingsNotifVoice] = useState(true);
+  const [settingsLanguage, setSettingsLanguage] = useState<'English' | 'Odia' | 'Hindi'>('English');
+
+  // Inline Profile Edit state
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileEditName, setProfileEditName] = useState('');
+  const [profileEditEmail, setProfileEditEmail] = useState('');
+  const [profileEditPhone, setProfileEditPhone] = useState('');
+  const [profileEditLocation, setProfileEditLocation] = useState('');
+  const [profileEditError, setProfileEditError] = useState<string | null>(null);
+  const [profileEditLoading, setProfileEditLoading] = useState(false);
 
   // Driving Licence Application state (4-tab document upload system)
   const [dlApp, setDlApp] = useState<DrivingLicenceApplication | null>(() => {
@@ -343,6 +379,16 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
   // DB State Loaders
   const [student, setStudent] = useState(MockDatabase.getStudent());
+
+  // Sync profile edit fields when student state changes
+  useEffect(() => {
+    if (student) {
+      setProfileEditName(student.name || '');
+      setProfileEditEmail(student.email || '');
+      setProfileEditPhone(student.phone || '');
+      setProfileEditLocation(student.location || 'Bhubaneswar, Odisha');
+    }
+  }, [student]);
   const [progress, setProgress] = useState(MockDatabase.getProgress());
   const [bookings, setBookings] = useState(MockDatabase.getBookings());
   const [showAllBookings, setShowAllBookings] = useState(false);
@@ -903,6 +949,169 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const handleResetProfilePicToDefault = async () => {
     const defaultUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200";
     await handleSaveProfilePicture(defaultUrl);
+  };
+
+  // CHANGE PASSWORD HANDLER WITH VERIFICATION
+  const handlePerformChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setChangePassError(null);
+    setChangePassSuccess(null);
+
+    // 1. Verify current password
+    if (!changePassCurrent.trim()) {
+      setChangePassError("Please enter your current password.");
+      return;
+    }
+    
+    // Check match with stored student password if student has a password
+    if (student.password && changePassCurrent !== student.password) {
+      setChangePassError("Current password does not match our records. Please verify.");
+      return;
+    }
+
+    // 2. Validate new password
+    if (changePassNew.length < 6) {
+      setChangePassError("New password must be at least 6 characters long.");
+      return;
+    }
+
+    if (changePassNew === changePassCurrent) {
+      setChangePassError("New password cannot be the same as your current password.");
+      return;
+    }
+
+    // 3. Validate confirm password
+    if (changePassNew !== changePassConfirm) {
+      setChangePassError("New password and confirm password do not match.");
+      return;
+    }
+
+    setChangePassLoading(true);
+
+    try {
+      // Update student object
+      const updatedStudent: Student = {
+        ...student,
+        password: changePassNew
+      };
+
+      setStudent(updatedStudent);
+      MockDatabase.saveStudent(updatedStudent, student.id);
+
+      // Update registered students list
+      const students = MockDatabase.getRegisteredStudents();
+      const updatedList = students.map(s => s.id === student.id ? { ...s, password: changePassNew } : s);
+      MockDatabase.saveRegisteredStudents(updatedList);
+
+      // Try updating Firestore doc
+      try {
+        await setDoc(doc(db, "students", student.id), { password: changePassNew }, { merge: true });
+      } catch (cloudErr) {
+        console.warn("Firestore password update skipped/failed:", cloudErr);
+      }
+
+      // Try Firebase auth update if current user exists
+      if (auth.currentUser) {
+        try {
+          await updatePassword(auth.currentUser, changePassNew);
+        } catch (authErr) {
+          console.warn("Firebase Auth updatePassword notice:", authErr);
+        }
+      }
+
+      setChangePassLoading(false);
+      setChangePassSuccess("Your password has been changed successfully.");
+      setChangePassCurrent('');
+      setChangePassNew('');
+      setChangePassConfirm('');
+      showNotification("Password changed successfully!");
+      onStateChange();
+      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new Event('local-db-updated'));
+    } catch (err: any) {
+      console.error("Error changing password:", err);
+      setChangePassLoading(false);
+      setChangePassError(err?.message || "Failed to update password. Please try again.");
+    }
+  };
+
+  // PROFILE PERSONAL INFO EDITING HANDLER
+  const handleSaveProfileInfo = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setProfileEditError(null);
+
+    if (!profileEditName.trim()) {
+      setProfileEditError("Name cannot be empty.");
+      return;
+    }
+    if (!profileEditPhone.trim()) {
+      setProfileEditError("Mobile phone number cannot be empty.");
+      return;
+    }
+    if (!profileEditEmail.trim()) {
+      setProfileEditError("Email address cannot be empty.");
+      return;
+    }
+
+    setProfileEditLoading(true);
+
+    try {
+      const updatedStudent: Student = {
+        ...student,
+        name: profileEditName.trim(),
+        email: profileEditEmail.trim(),
+        phone: profileEditPhone.trim(),
+        location: profileEditLocation.trim() || 'Bhubaneswar, Odisha'
+      };
+
+      setStudent(updatedStudent);
+      MockDatabase.saveStudent(updatedStudent, student.id);
+
+      // Update registered students list
+      const students = MockDatabase.getRegisteredStudents();
+      const updatedList = students.map(s => s.id === student.id ? { 
+        ...s, 
+        name: profileEditName.trim(),
+        email: profileEditEmail.trim(),
+        phone: profileEditPhone.trim(),
+        location: profileEditLocation.trim() || 'Bhubaneswar, Odisha'
+      } : s);
+      MockDatabase.saveRegisteredStudents(updatedList);
+
+      // Save to Firestore
+      try {
+        await setDoc(doc(db, "students", student.id), {
+          name: profileEditName.trim(),
+          email: profileEditEmail.trim(),
+          phone: profileEditPhone.trim(),
+          location: profileEditLocation.trim() || 'Bhubaneswar, Odisha'
+        }, { merge: true });
+      } catch (cloudErr) {
+        console.warn("Firestore profile sync notice:", cloudErr);
+      }
+
+      // Update Firebase Auth profile displayName if available
+      if (auth.currentUser) {
+        try {
+          await updateProfile(auth.currentUser, {
+            displayName: profileEditName.trim()
+          });
+        } catch (authErr) {
+          console.warn("Auth updateProfile notice:", authErr);
+        }
+      }
+
+      setProfileEditLoading(false);
+      setIsEditingProfile(false);
+      showNotification("Profile updated successfully!");
+      onStateChange();
+      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new Event('local-db-updated'));
+    } catch (err: any) {
+      console.error("Error saving profile info:", err);
+      setProfileEditLoading(false);
+      setProfileEditError(err?.message || "Failed to update profile. Please try again.");
+    }
   };
 
   // ACCOUNT DELETION FLOW STATES
@@ -1986,12 +2195,15 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       if (notificationsOpen && notifDropdownRef.current && !notifDropdownRef.current.contains(event.target as Node)) {
         setNotificationsOpen(false);
       }
+      if (menuOpen && menuDropdownRef.current && !menuDropdownRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [notificationsOpen]);
+  }, [notificationsOpen, menuOpen]);
 
   // Alert dismiss helper
   const showNotification = (msg: string, title?: string) => {
@@ -2974,6 +3186,14 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
   // Reschedule handler
   const handleReschedule = (bookingId: string) => {
+    const target = bookings.find(b => b.id === bookingId);
+    if (!target) return;
+
+    if (target.status === 'confirmed' || target.status === 'upcoming') {
+      showNotification("Confirmed classes cannot be rescheduled. Please contact your trainer or academy support for schedule assistance.");
+      return;
+    }
+
     const updated = bookings.map(b => {
       if (b.id === bookingId) {
         return { ...b, date: "2026-07-10", timeSlot: "11:30 AM - 12:30 PM", status: "rescheduled" as const };
@@ -3875,20 +4095,19 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
       {/* Web App Brand Header */}
       {currentScreen === 'app' && (
-        <div className="bg-white px-6 py-4 flex justify-between items-center z-50 border-b border-[#F1F3F9] shrink-0">
+        <div className="bg-white px-3 sm:px-6 py-3 flex justify-between items-center z-50 border-b border-[#F1F3F9] shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-[#6D3BFF] flex items-center justify-center text-white font-black text-sm">
+            <div className="w-8 h-8 rounded-lg bg-[#6D3BFF] flex items-center justify-center text-white font-black text-sm shadow-xs">
               GH
             </div>
             <div>
               <span className="font-extrabold text-[#161623] text-sm tracking-tight">GOLDEN HANDS</span>
-              <span className="text-[9px] text-[#6D3BFF] font-extrabold ml-2 bg-[#6D3BFF]/10 px-1.5 py-0.5 rounded">STUDENT PORTAL</span>
+              <span className="text-[9px] text-[#6D3BFF] font-extrabold ml-2 bg-[#6D3BFF]/10 px-1.5 py-0.5 rounded hidden xs:inline-block">STUDENT PORTAL</span>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="w-8 h-8 rounded-full bg-[#6D3BFF]/10 flex items-center justify-center text-[#6D3BFF] font-bold text-xs border border-[#6D3BFF]/20">
-              {(student?.name || "Student").charAt(0)}
-            </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* BNP TECH Company Logo with redirection and confirmation popup */}
+            <BnpLogoButton size="md" showLabel={true} />
           </div>
         </div>
       )}
@@ -3935,11 +4154,25 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
             </div>
 
             <div className="flex flex-col items-center">
-              <img 
-                src="https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=300" 
-                alt="Car illustration" 
-                className="w-48 object-contain mb-6 drop-shadow-2xl"
-              />
+              <div className="w-56 h-32 rounded-3xl bg-white/5 border border-white/10 p-1.5 backdrop-blur-md shadow-2xl mb-6 overflow-hidden">
+                <img 
+                  src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Lamborghini_SC63.jpg/1280px-Lamborghini_SC63.jpg" 
+                  alt="Lamborghini SC63 LMDh Racer" 
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.triedBackup) {
+                      target.dataset.triedBackup = "1";
+                      target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/2024_24_Hours_of_Le_Mans_%2854094300036%29.jpg/1280px-2024_24_Hours_of_Le_Mans_%2854094300036%29.jpg";
+                    } else if (target.dataset.triedBackup === "1") {
+                      target.dataset.triedBackup = "2";
+                      target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/2023_Lamborghini_SC63.jpg/1280px-2023_Lamborghini_SC63.jpg";
+                    }
+                  }}
+                  className="w-full h-full object-cover rounded-2xl drop-shadow-2xl"
+                />
+              </div>
               <h2 className="text-xl font-bold mb-2">Drive with confidence</h2>
               <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
                 Step-by-step guidance from Bhubaneswar's gold standard instructors.
@@ -5574,62 +5807,718 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
               </div>
             )}
 
+            {/* SUBPAGE: CHANGE PASSWORD */}
+            {activeSubPage === 'change-password' && (
+              <div className="pt-2 animate-fadeIn text-[#161623]">
+                <div className="flex items-center justify-between mb-3">
+                  <button 
+                    onClick={() => {
+                      setActiveSubPage(null);
+                      setChangePassError(null);
+                      setChangePassSuccess(null);
+                    }} 
+                    className="text-xs text-slate-500 hover:text-[#6D3BFF] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" /> Back to Home
+                  </button>
+                  <span className="text-[10px] bg-[#6D3BFF]/10 text-[#6D3BFF] font-black px-2.5 py-1 rounded-full uppercase tracking-wider">
+                    Security
+                  </span>
+                </div>
+
+                <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
+                  <div className="flex items-center gap-3 pb-3.5 border-b border-slate-100 mb-4">
+                    <div className="w-10 h-10 rounded-2xl bg-[#6D3BFF]/10 text-[#6D3BFF] flex items-center justify-center shrink-0">
+                      <KeyRound className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-extrabold text-sm text-[#161623]">Change Password</h3>
+                      <p className="text-[10.5px] text-slate-400">Verify your current password to set a new secure password</p>
+                    </div>
+                  </div>
+
+                  {changePassError && (
+                    <div className="mb-4 bg-rose-50 border border-rose-200 text-rose-700 text-xs p-3 rounded-2xl flex items-start gap-2.5 animate-fadeIn">
+                      <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-bold text-rose-800">Verification Error</p>
+                        <p className="text-[10.5px] mt-0.5">{changePassError}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {changePassSuccess && (
+                    <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs p-3 rounded-2xl flex items-start gap-2.5 animate-fadeIn">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-bold text-emerald-800">Success</p>
+                        <p className="text-[10.5px] mt-0.5">{changePassSuccess}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <form onSubmit={handlePerformChangePassword} className="flex flex-col gap-3.5">
+                    {/* Current Password */}
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
+                        Current Password <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <input 
+                          type={changePassShowCurrent ? "text" : "password"}
+                          value={changePassCurrent}
+                          onChange={(e) => { setChangePassCurrent(e.target.value); setChangePassError(null); }}
+                          placeholder="Enter your existing password"
+                          className="w-full bg-[#F8F9FF] border border-slate-100 rounded-xl p-3 pr-10 text-xs focus:outline-none focus:border-[#6D3BFF] font-semibold text-[#161623]"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setChangePassShowCurrent(!changePassShowCurrent)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          {changePassShowCurrent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* New Password */}
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
+                        New Password (Min. 6 Characters) <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <input 
+                          type={changePassShowNew ? "text" : "password"}
+                          value={changePassNew}
+                          onChange={(e) => { setChangePassNew(e.target.value); setChangePassError(null); }}
+                          placeholder="Enter new strong password"
+                          className="w-full bg-[#F8F9FF] border border-slate-100 rounded-xl p-3 pr-10 text-xs focus:outline-none focus:border-[#6D3BFF] font-semibold text-[#161623]"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setChangePassShowNew(!changePassShowNew)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          {changePassShowNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Confirm New Password */}
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
+                        Confirm New Password <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <input 
+                          type={changePassShowConfirm ? "text" : "password"}
+                          value={changePassConfirm}
+                          onChange={(e) => { setChangePassConfirm(e.target.value); setChangePassError(null); }}
+                          placeholder="Re-enter new password to confirm"
+                          className="w-full bg-[#F8F9FF] border border-slate-100 rounded-xl p-3 pr-10 text-xs focus:outline-none focus:border-[#6D3BFF] font-semibold text-[#161623]"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setChangePassShowConfirm(!changePassShowConfirm)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          {changePassShowConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Password Tips */}
+                    <div className="bg-[#6D3BFF]/5 border border-[#6D3BFF]/10 rounded-2xl p-3 text-[10px] text-slate-600 flex items-start gap-2">
+                      <ShieldCheck className="w-4 h-4 text-[#6D3BFF] shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold text-[#161623]">Security Tips:</span>
+                        <ul className="list-disc list-inside mt-0.5 space-y-0.5 text-slate-500">
+                          <li>Use at least 6 alphanumeric characters.</li>
+                          <li>Avoid using your birthdate or simple consecutive digits.</li>
+                          <li>Your updated password takes effect across all devices immediately.</li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2.5 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveSubPage(null);
+                          setChangePassError(null);
+                          setChangePassSuccess(null);
+                        }}
+                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 rounded-xl font-bold text-xs transition-all cursor-pointer text-center"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={changePassLoading}
+                        className="flex-1 bg-[#6D3BFF] hover:bg-[#8F52FF] text-white py-3 rounded-xl font-bold text-xs transition-all cursor-pointer text-center disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-md shadow-[#6D3BFF]/20"
+                      >
+                        {changePassLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Updating...
+                          </>
+                        ) : (
+                          <>
+                            <KeyRound className="w-3.5 h-3.5" /> Update Password
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* SUBPAGE: SETTINGS */}
+            {activeSubPage === 'settings' && (
+              <div className="pt-2 animate-fadeIn text-[#161623]">
+                <div className="flex items-center justify-between mb-3">
+                  <button 
+                    onClick={() => setActiveSubPage(null)} 
+                    className="text-xs text-slate-500 hover:text-[#6D3BFF] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" /> Back to Home
+                  </button>
+                  <span className="text-[10px] bg-slate-100 text-slate-600 font-black px-2.5 py-1 rounded-full uppercase tracking-wider">
+                    Preferences
+                  </span>
+                </div>
+
+                {/* 1. Notifications & Alerts Settings */}
+                <div className="bg-white border border-slate-100 rounded-3xl p-4 shadow-sm mb-3.5">
+                  <div className="flex items-center gap-2.5 pb-2.5 border-b border-slate-100 mb-3">
+                    <div className="w-8 h-8 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center">
+                      <Bell className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-xs text-[#161623]">Notifications & Alerts</h4>
+                      <p className="text-[9.5px] text-slate-400">Manage how you receive class and booking updates</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between p-2.5 bg-[#F8F9FF] rounded-2xl">
+                      <div>
+                        <p className="text-xs font-bold text-[#161623]">Push Notifications</p>
+                        <p className="text-[9px] text-slate-400">Class booking, schedule and reminder alerts</p>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => setSettingsNotifPush(!settingsNotifPush)}
+                        className={`w-10 h-6 rounded-full transition-colors relative cursor-pointer ${settingsNotifPush ? 'bg-[#6D3BFF]' : 'bg-slate-300'}`}
+                      >
+                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${settingsNotifPush ? 'right-1' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-2.5 bg-[#F8F9FF] rounded-2xl">
+                      <div>
+                        <p className="text-xs font-bold text-[#161623]">SMS & WhatsApp Alerts</p>
+                        <p className="text-[9px] text-slate-400">OTP codes, receipt invoices & RTO status</p>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => setSettingsNotifSms(!settingsNotifSms)}
+                        className={`w-10 h-6 rounded-full transition-colors relative cursor-pointer ${settingsNotifSms ? 'bg-[#6D3BFF]' : 'bg-slate-300'}`}
+                      >
+                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${settingsNotifSms ? 'right-1' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-2.5 bg-[#F8F9FF] rounded-2xl">
+                      <div>
+                        <p className="text-xs font-bold text-[#161623]">Mock Test Audio Voice Guidance</p>
+                        <p className="text-[9px] text-slate-400">Spoken road sign assistance and tips</p>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => setSettingsNotifVoice(!settingsNotifVoice)}
+                        className={`w-10 h-6 rounded-full transition-colors relative cursor-pointer ${settingsNotifVoice ? 'bg-[#6D3BFF]' : 'bg-slate-300'}`}
+                      >
+                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${settingsNotifVoice ? 'right-1' : 'left-1'}`} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Language Preferences */}
+                <div className="bg-white border border-slate-100 rounded-3xl p-4 shadow-sm mb-3.5">
+                  <div className="flex items-center gap-2.5 pb-2.5 border-b border-slate-100 mb-3">
+                    <div className="w-8 h-8 rounded-xl bg-cyan-100 text-cyan-600 flex items-center justify-center">
+                      <Globe className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-xs text-[#161623]">Language Preferences</h4>
+                      <p className="text-[9.5px] text-slate-400">Choose your preferred application language</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['English', 'Odia', 'Hindi'] as const).map((lang) => (
+                      <button
+                        key={lang}
+                        onClick={() => {
+                          setSettingsLanguage(lang);
+                          showNotification(`App language set to ${lang}`);
+                        }}
+                        className={`p-2.5 rounded-2xl border text-center transition-all cursor-pointer font-bold text-xs ${
+                          settingsLanguage === lang 
+                            ? 'bg-[#6D3BFF]/10 border-[#6D3BFF] text-[#6D3BFF]' 
+                            : 'bg-[#F8F9FF] border-slate-100 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {lang}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. Security & Account Info */}
+                <div className="bg-white border border-slate-100 rounded-3xl p-4 shadow-sm mb-3.5">
+                  <div className="flex items-center gap-2.5 pb-2.5 border-b border-slate-100 mb-3">
+                    <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center">
+                      <Shield className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-xs text-[#161623]">Security & Credentials</h4>
+                      <p className="text-[9.5px] text-slate-400">Manage your student credentials & authentication</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <div 
+                      onClick={() => setActiveSubPage('change-password')}
+                      className="flex items-center justify-between p-3 bg-[#F8F9FF] hover:bg-[#6D3BFF]/5 border border-slate-100 hover:border-[#6D3BFF]/30 rounded-2xl cursor-pointer transition-all group"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <KeyRound className="w-4 h-4 text-[#6D3BFF]" />
+                        <div>
+                          <p className="text-xs font-bold text-[#161623] group-hover:text-[#6D3BFF] transition-colors">Change Account Password</p>
+                          <p className="text-[9px] text-slate-400">Update your sign-in password anytime</p>
+                        </div>
+                      </div>
+                      <span className="text-xs text-slate-400 group-hover:text-[#6D3BFF] font-bold">→</span>
+                    </div>
+
+                    <div className="p-3 bg-[#F8F9FF] rounded-2xl flex flex-col gap-1 text-[10px]">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Student ID:</span>
+                        <span className="font-mono font-bold text-slate-700">{student.id}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Registered Email:</span>
+                        <span className="font-bold text-slate-700">{student.email}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Registered Mobile:</span>
+                        <span className="font-bold text-slate-700">{student.phone}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. DANGER ZONE: ACCOUNT DELETION */}
+                {student.deletionRequested || student.deletionStatus === 'requested' ? (
+                  <div className="bg-rose-50 border border-rose-200 rounded-3xl p-4 text-rose-800 shadow-sm animate-fadeIn">
+                    <div className="flex items-center gap-2 mb-1">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                      <h4 className="font-extrabold text-xs text-rose-900">Account Deletion Requested</h4>
+                    </div>
+                    <p className="text-[10px] leading-relaxed text-rose-700">
+                      Your deletion request has been submitted. Account erasure will be completed upon <strong>Admin approval</strong> or <strong>automatically after 15 days</strong> if you do not log in during this period.
+                    </p>
+                    {student.deletionRequestedAt && (
+                      <p className="text-[9px] text-rose-500 font-bold mt-1.5">
+                        Submitted: {new Date(student.deletionRequestedAt).toLocaleDateString()} at {new Date(student.deletionRequestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-rose-50/60 hover:bg-rose-50 border border-rose-200 rounded-3xl p-4 shadow-sm transition-all">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0 mt-0.5">
+                          <Trash2 className="w-4 h-4 text-rose-600" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-xs text-rose-900">Delete Student Account</h4>
+                          <p className="text-[10px] text-rose-700 leading-relaxed mt-0.5">
+                            Permanently erase your student profile, booking history, attendance logs, and uploaded documents.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-rose-200/60 flex justify-end">
+                      <button
+                        onClick={handleOpenAccountDeletion}
+                        className="bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Request Account Deletion
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SUBPAGE: EDIT PROFILE */}
+            {activeSubPage === 'edit-profile' && (
+              <EditProfileSubpage
+                student={student}
+                onSave={async (name, email, phone, photoUrl) => {
+                  try {
+                    const updatedStudent: Student = {
+                      ...student,
+                      name,
+                      email,
+                      phone,
+                      photoUrl: photoUrl || student.photoUrl
+                    };
+                    setStudent(updatedStudent);
+                    MockDatabase.saveStudent(updatedStudent, student.id);
+                    const students = MockDatabase.getRegisteredStudents();
+                    const updatedList = students.map(s => s.id === student.id ? updatedStudent : s);
+                    MockDatabase.saveRegisteredStudents(updatedList);
+                    try {
+                      await setDoc(doc(db, "students", student.id), {
+                        name, email, phone, photoUrl: photoUrl || student.photoUrl
+                      }, { merge: true });
+                    } catch (e) {
+                      console.warn("Firestore save notice:", e);
+                    }
+                    setActiveSubPage(null);
+                    showNotification("Profile updated successfully!");
+                    onStateChange();
+                    window.dispatchEvent(new Event('storage'));
+                    window.dispatchEvent(new Event('local-db-updated'));
+                  } catch (err: any) {
+                    alert(err?.message || "Failed to update profile.");
+                  }
+                }}
+                onCancel={() => setActiveSubPage(null)}
+              />
+            )}
+
             {/* PRIMARY TAB SCREENS */}
 
             {/* TAB 1: HOME */}
             {activeTab === 'home' && !activeSubPage && (
               <div className="flex flex-col gap-4 animate-fadeIn">
-                {/* Header Profile Greeting */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <img 
-                      src={student.photoUrl} 
-                      alt="Student" 
-                      className="w-10 h-10 rounded-full border-2 border-white shadow-md object-cover"
-                    />
-                    <div>
-                      <p className="text-[10px] text-slate-400">Good Morning,</p>
-                      <h3 className="font-extrabold text-sm text-[#1A1A1A] tracking-tight">{student.name} 👋</h3>
-                      <div className="mt-0.5">
-                        <span className="text-[9px] text-[#6D3BFF] font-black uppercase tracking-wide bg-[#6D3BFF]/5 px-2 py-0.5 rounded-full inline-block">
-                          🎓 {bookings.filter(b => b.status === 'completed').length} Classes Completed
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 relative">
-                    <button 
-                      onClick={() => {
-                        setNotificationsOpen(!notificationsOpen);
-                        setMenuOpen(false);
-                      }}
-                      className={`w-8 h-8 rounded-full flex items-center justify-center relative transition-all cursor-pointer border ${
-                        notificationsOpen 
-                          ? 'bg-[#6D3BFF]/10 border-[#6D3BFF]/20 text-[#6D3BFF]' 
-                          : 'bg-white border-slate-100 text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Bell className="w-4 h-4" />
-                      {notifications.filter(n => !n.read).length > 0 && (
-                        <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-[#EB5757] text-white text-[8px] rounded-full flex items-center justify-center font-bold">
-                          {notifications.filter(n => !n.read).length}
-                        </span>
-                      )}
-                    </button>
+                {/* Header Top Bar: Left Action Buttons (Menu, Notifications, BNP Tech Creator) & Right Profile Greeting */}
+                <div className="flex items-center justify-between pt-1 pb-1">
+                  {/* Left: Menu, Notification and BNP Tech Creator Logo Buttons */}
+                  <div className="flex items-center gap-1.5 sm:gap-2 relative">
                     <button 
                       onClick={() => {
                         setMenuOpen(!menuOpen);
                         setNotificationsOpen(false);
                       }}
-                      className="w-8 h-8 bg-white border border-slate-100 rounded-full flex items-center justify-center text-slate-700 hover:bg-slate-50 transition-all cursor-pointer z-50"
+                      className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all duration-200 cursor-pointer z-50 border shadow-xs active:scale-95 ${
+                        menuOpen 
+                          ? 'bg-[#6D3BFF] text-white border-[#6D3BFF] shadow-[#6D3BFF]/25 shadow-md' 
+                          : 'bg-white border-slate-200/80 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                      }`}
+                      title="Menu"
                     >
                       {menuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
                     </button>
+                    <button 
+                      onClick={() => {
+                        setNotificationsOpen(!notificationsOpen);
+                        setMenuOpen(false);
+                      }}
+                      className={`w-9 h-9 rounded-2xl flex items-center justify-center relative transition-all duration-200 cursor-pointer border shadow-xs active:scale-95 ${
+                        notificationsOpen 
+                          ? 'bg-[#6D3BFF] border-[#6D3BFF] text-white shadow-[#6D3BFF]/25 shadow-md' 
+                          : 'bg-white border-slate-200/80 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                      }`}
+                      title="Notifications"
+                    >
+                      <Bell className="w-4 h-4" />
+                      {notifications.filter(n => !n.read).length > 0 && (
+                        <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white text-[8px] rounded-full flex items-center justify-center font-extrabold shadow-sm ring-2 ring-white animate-pulse">
+                          {notifications.filter(n => !n.read).length}
+                        </span>
+                      )}
+                    </button>
+                    
+                    {/* BNP TECH Creator Logo Quick Button */}
+                    <BnpLogoButton size="sm" showLabel={false} className="h-9 rounded-2xl" />
+
+                    {menuOpen && (
+                      <div 
+                        ref={menuDropdownRef}
+                        className="absolute left-0 top-12 w-72 sm:w-80 bg-white border border-slate-100 rounded-3xl shadow-2xl p-3 z-50 animate-fadeIn text-left max-h-[480px] overflow-y-auto scrollable-touch custom-scrollbar border-t-4 border-t-[#6D3BFF] ring-1 ring-black/5"
+                      >
+                        {/* Student User Header */}
+                        <div 
+                          onClick={() => {
+                            setActiveTab('profile');
+                            setActiveSubPage(null);
+                            setMenuOpen(false);
+                          }}
+                          className="p-3 bg-[#F8F9FF] hover:bg-[#6D3BFF]/5 rounded-2xl border border-slate-100 flex items-center justify-between cursor-pointer transition-all mb-2 group"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="relative shrink-0">
+                              <img 
+                                src={student.photoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"} 
+                                alt={student.name} 
+                                className="w-9 h-9 rounded-full object-cover border border-[#6D3BFF]/30"
+                              />
+                              <span className="w-2.5 h-2.5 bg-emerald-500 ring-2 ring-white rounded-full absolute bottom-0 right-0" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Signed in as</p>
+                              <h4 className="text-xs font-black text-[#161623] truncate group-hover:text-[#6D3BFF] transition-colors">{student.name}</h4>
+                              <p className="text-[9px] text-slate-400 truncate">{student.email}</p>
+                            </div>
+                          </div>
+                          <span className="text-[9px] font-extrabold text-[#6D3BFF] bg-[#6D3BFF]/10 px-2.5 py-1 rounded-full shrink-0 group-hover:bg-[#6D3BFF] group-hover:text-white transition-all">
+                            Profile →
+                          </span>
+                        </div>
+
+                        {/* SECTION 1: CLASSES & SCHEDULING */}
+                        <div className="px-2 py-1">
+                          <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider">Classes & Schedule</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5 mb-2">
+                          <button
+                            onClick={() => {
+                              setActiveTab('classes');
+                              setActiveSubPage(null);
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <Calendar className="w-4 h-4 text-[#6D3BFF] shrink-0" />
+                            <div className="flex-1">
+                              <span>Book Class</span>
+                              <p className="text-[9px] text-slate-400 font-normal">Choose dates & slots with trainer</p>
+                            </div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveTab('classes');
+                              setActiveSubPage(null);
+                              setMenuOpen(false);
+                              showNotification("Choose an eligible unconfirmed class below to reschedule.");
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <RefreshCw className="w-4 h-4 text-indigo-500 shrink-0" />
+                            <div className="flex-1">
+                              <span>Reschedule Class</span>
+                              <p className="text-[9px] text-slate-400 font-normal">Change unconfirmed class timing</p>
+                            </div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveTab('classes');
+                              setActiveSubPage(null);
+                              setMenuOpen(false);
+                              showNotification("Select a class below to cancel.");
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <CalendarX className="w-4 h-4 text-rose-500 shrink-0" />
+                            <div className="flex-1">
+                              <span>Cancel Class</span>
+                              <p className="text-[9px] text-slate-400 font-normal">Manage class cancellations</p>
+                            </div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveTab('classes');
+                              setActiveSubPage(null);
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <BookOpen className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <div className="flex-1">
+                              <span>Class & Attendance History</span>
+                              <p className="text-[9px] text-slate-400 font-normal">Completed drives & feedback ratings</p>
+                            </div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveTab('track');
+                              setActiveSubPage(null);
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <Compass className="w-4 h-4 text-cyan-600 shrink-0" />
+                            <div className="flex-1">
+                              <span>Track</span>
+                              <p className="text-[9px] text-slate-400 font-normal">Live trainer route & student location</p>
+                            </div>
+                          </button>
+                        </div>
+
+                        {/* SECTION 2: FINANCE & RECORDS */}
+                        <div className="px-2 py-1 border-t border-slate-100 pt-2">
+                          <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider">Records & Finance</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5 mb-2">
+                          <button
+                            onClick={() => {
+                              setActiveSubPage('payments');
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <CreditCard className="w-4 h-4 text-amber-500 shrink-0" />
+                            <div className="flex-1">
+                              <span>Payments / Payment History</span>
+                              <p className="text-[9px] text-slate-400 font-normal">Fee invoices, receipts & balance</p>
+                            </div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveSubPage('documents');
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <FileText className="w-4 h-4 text-[#8F52FF] shrink-0" />
+                            <div className="flex-1">
+                              <span>Documents</span>
+                              <p className="text-[9px] text-slate-400 font-normal">ID cards, receipts & uploaded files</p>
+                            </div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveSubPage('licence');
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <FileCheck className="w-4 h-4 text-teal-600 shrink-0" />
+                            <div className="flex-1">
+                              <span>Driving Licence Status</span>
+                              <p className="text-[9px] text-slate-400 font-normal">RTO application & verified status</p>
+                            </div>
+                          </button>
+                        </div>
+
+                        {/* SECTION 3: ACCOUNT & SECURITY */}
+                        <div className="px-2 py-1 border-t border-slate-100 pt-2">
+                          <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider">Account & Settings</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5 mb-2">
+                          <button
+                            onClick={() => {
+                              setNotificationsOpen(true);
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <Bell className="w-4 h-4 text-violet-500 shrink-0" />
+                            <div className="flex-1 flex items-center justify-between">
+                              <div>
+                                <span>Notifications</span>
+                                <p className="text-[9px] text-slate-400 font-normal">Class alerts & updates</p>
+                              </div>
+                              {notifications.filter(n => !n.read).length > 0 && (
+                                <span className="bg-rose-500 text-white text-[8.5px] font-extrabold px-1.5 py-0.5 rounded-full">
+                                  {notifications.filter(n => !n.read).length} new
+                                </span>
+                              )}
+                            </div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveSubPage('change-password');
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <KeyRound className="w-4 h-4 text-[#6D3BFF] shrink-0" />
+                            <div className="flex-1">
+                              <span>Change Password</span>
+                              <p className="text-[9px] text-slate-400 font-normal">Update security credentials</p>
+                            </div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveSubPage('settings');
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <Settings className="w-4 h-4 text-slate-600 shrink-0" />
+                            <div className="flex-1">
+                              <span>Settings</span>
+                              <p className="text-[9px] text-slate-400 font-normal">Preferences & account management</p>
+                            </div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setActiveSubPage('ai-coach');
+                              setMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                            <div className="flex-1">
+                              <span>Help & Support</span>
+                              <p className="text-[9px] text-slate-400 font-normal">Chat with Odnex AI Bot</p>
+                            </div>
+                          </button>
+                        </div>
+
+                        {/* SECTION: CREATOR & DEVELOPER */}
+                        <div className="px-2 py-1">
+                          <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider">Creator & Developer</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5 mb-2">
+                          <div className="p-1">
+                            <BnpLogoButton size="md" showLabel={true} className="w-full justify-between" />
+                          </div>
+                        </div>
+
+                        {/* SECTION 4: LOGOUT */}
+                        <div className="pt-2 border-t border-slate-100">
+                          <button
+                            onClick={() => {
+                              setMenuOpen(false);
+                              performLogout();
+                            }}
+                            className="w-full text-left px-3 py-2.5 text-xs font-black text-rose-600 hover:bg-rose-50 rounded-xl transition-all flex items-center gap-2.5 cursor-pointer"
+                          >
+                            <LogOut className="w-4 h-4 text-rose-600 shrink-0" />
+                            <div className="flex-1">
+                              <span>Log Out</span>
+                              <p className="text-[9px] text-rose-400 font-normal">Sign out / Switch account</p>
+                            </div>
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {notificationsOpen && (
                       <div 
                         ref={notifDropdownRef}
-                        className="absolute right-0 top-11 w-72 md:w-80 bg-white border border-slate-100 rounded-3xl shadow-2xl p-4 z-50 animate-fadeIn text-left max-h-[420px] overflow-y-auto scrollable-touch custom-scrollbar flex flex-col gap-3 border-t-4 border-t-[#6D3BFF] ring-1 ring-black/5"
+                        className="absolute left-0 top-12 w-72 md:w-80 bg-white border border-slate-100 rounded-3xl shadow-2xl p-4 z-50 animate-fadeIn text-left max-h-[420px] overflow-y-auto scrollable-touch custom-scrollbar flex flex-col gap-3 border-t-4 border-t-[#6D3BFF] ring-1 ring-black/5"
                       >
                         <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                           <span className="font-extrabold text-xs text-[#161623] uppercase tracking-wider">Notifications</span>
@@ -5724,33 +6613,41 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         </div>
                       </div>
                     )}
+                  </div>
 
-                    {menuOpen && (
-                      <div className="absolute right-0 top-10 w-48 bg-white border border-slate-100 rounded-2xl shadow-xl p-2 z-50 animate-fadeIn text-left">
-                        <div className="px-3 py-2 border-b border-slate-50">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Signed in as</p>
-                          <p className="text-xs font-black text-[#161623] truncate mt-0.5">{student.name}</p>
-                        </div>
-                        <div className="py-1 flex flex-col gap-0.5">
-                          <button
-                            onClick={() => {
-                              setActiveTab('profile');
-                              setActiveSubPage(null);
-                              setMenuOpen(false);
-                            }}
-                            className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-[#6D3BFF]/5 hover:text-[#6D3BFF] rounded-lg transition-all flex items-center gap-2 cursor-pointer"
-                          >
-                            <User className="w-3.5 h-3.5" /> View Profile
-                          </button>
-                          <button
-                            onClick={performLogout}
-                            className="w-full text-left px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50 rounded-lg transition-all flex items-center gap-2 cursor-pointer"
-                          >
-                            <LogOut className="w-3.5 h-3.5" /> Log Out
-                          </button>
-                        </div>
+                  {/* Right: Header Profile Greeting (Clickable to open profile) */}
+                  <div 
+                    onClick={() => {
+                      setActiveTab('profile');
+                      setActiveSubPage(null);
+                    }}
+                    className="bg-white hover:bg-[#F8F9FF] border border-slate-200/80 hover:border-[#6D3BFF]/30 pl-3 pr-1.5 py-1 rounded-full shadow-xs hover:shadow-md flex items-center gap-2.5 cursor-pointer group transition-all duration-200 active:scale-98"
+                    title="View Profile Details"
+                  >
+                    <div className="text-right leading-tight">
+                      <div className="flex items-center justify-end gap-1">
+                        <span className="text-[9.5px] font-medium text-slate-400">
+                          {new Date().getHours() < 12 ? 'Good morning,' : new Date().getHours() < 17 ? 'Good afternoon,' : 'Good evening,'}
+                        </span>
                       </div>
-                    )}
+                      <h3 className="font-extrabold text-xs text-[#161623] group-hover:text-[#6D3BFF] transition-colors tracking-tight">
+                        {student.name ? student.name.split(' ')[0] : 'Student'} 👋
+                      </h3>
+                      <div className="flex justify-end mt-0.5">
+                        <span className="text-[8px] font-black text-[#6D3BFF] bg-[#6D3BFF]/8 px-1.5 py-0.2 rounded-md uppercase tracking-wider">
+                          {bookings.filter(b => b.status === 'completed').length} Classes Done
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="relative shrink-0">
+                      <img 
+                        src={student.photoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200"} 
+                        alt={student.name} 
+                        className="w-9 h-9 rounded-full border-2 border-[#6D3BFF]/20 group-hover:border-[#6D3BFF] shadow-xs object-cover transition-all"
+                      />
+                      <span className="w-2.5 h-2.5 bg-emerald-500 ring-2 ring-white rounded-full absolute -bottom-0.5 -right-0.5" />
+                    </div>
                   </div>
                 </div>
 
@@ -5795,19 +6692,74 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   );
                 })()}
 
-                {/* Hero Illustration Block */}
-                <div className="bg-gradient-to-r from-[#6D3BFF]/5 to-[#8F52FF]/5 border border-[#6D3BFF]/10 rounded-3xl p-4 flex items-center justify-between relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-[#D4AF37]/10 to-transparent rounded-full blur-xl" />
-                  <div>
-                    <span className="text-[10px] uppercase tracking-wider font-extrabold text-[#6D3BFF]">Golden Hands Hub</span>
-                    <h2 className="font-extrabold text-[#161623] text-sm mt-1">Drive with confidence,<br />succeed for life.</h2>
-                    <p className="text-[9px] text-slate-400 mt-0.5">Rasulgarh • Bhubaneswar</p>
+                {/* Hero Driving Hub Banner */}
+                <div className="bg-gradient-to-br from-[#161623] via-[#1E1E30] to-[#25253D] text-white rounded-3xl p-4.5 relative overflow-hidden border border-slate-800/80 shadow-lg group">
+                  <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-[#6D3BFF]/20 via-[#D4AF37]/15 to-transparent rounded-full blur-2xl pointer-events-none" />
+                  <div className="absolute -bottom-6 -left-6 w-32 h-32 bg-[#6D3BFF]/15 rounded-full blur-xl pointer-events-none" />
+
+                  <div className="flex items-center justify-between relative z-10">
+                    <div className="flex-1 pr-3">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-[#D4AF37] bg-[#D4AF37]/15 px-2 py-0.5 rounded-full border border-[#D4AF37]/20 flex items-center gap-1">
+                          <Sparkles className="w-2.5 h-2.5 text-[#D4AF37]" /> Golden Hands Academy
+                        </span>
+                        <span className="text-[9px] text-slate-400 font-bold hidden sm:inline">• Bhubaneswar</span>
+                      </div>
+                      <h2 className="font-extrabold text-white text-base leading-snug tracking-tight">
+                        Drive with confidence,<br />
+                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-[#D4AF37]">
+                          master every road.
+                        </span>
+                      </h2>
+                      <p className="text-[10px] text-slate-300 mt-1 leading-relaxed">
+                        Step-by-step practical lessons with certified RTO driving masters.
+                      </p>
+
+                      {/* Quick Action Pills */}
+                      <div className="flex items-center gap-2 mt-3 pt-1">
+                        <button
+                          onClick={() => {
+                            setActiveTab('classes');
+                            setActiveSubPage(null);
+                          }}
+                          className="bg-[#6D3BFF] hover:bg-[#8F52FF] text-white text-[10px] font-extrabold px-3 py-1.5 rounded-xl transition-all shadow-md shadow-[#6D3BFF]/30 active:scale-95 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Calendar className="w-3 h-3" /> Book Slot
+                        </button>
+                        <button
+                          onClick={() => {
+                            setActiveTab('home');
+                            setActiveSubPage('mock-test');
+                          }}
+                          className="bg-white/10 hover:bg-white/15 text-slate-200 border border-white/10 text-[10px] font-bold px-3 py-1.5 rounded-xl transition-all active:scale-95 flex items-center gap-1 cursor-pointer"
+                        >
+                          <BookOpen className="w-3 h-3 text-[#D4AF37]" /> RTO Test
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="relative shrink-0 flex items-center justify-center">
+                      <div className="w-32 h-24 sm:w-36 sm:h-28 rounded-2xl bg-gradient-to-tr from-white/5 to-white/10 p-1 flex items-center justify-center border border-white/10 backdrop-blur-xs shadow-inner overflow-hidden">
+                        <img 
+                          src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Lamborghini_SC63.jpg/1280px-Lamborghini_SC63.jpg" 
+                          alt="Lamborghini SC63 LMDh Racer" 
+                          referrerPolicy="no-referrer"
+                          crossOrigin="anonymous"
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            if (!target.dataset.triedBackup) {
+                              target.dataset.triedBackup = "1";
+                              target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/2024_24_Hours_of_Le_Mans_%2854094300036%29.jpg/1280px-2024_24_Hours_of_Le_Mans_%2854094300036%29.jpg";
+                            } else if (target.dataset.triedBackup === "1") {
+                              target.dataset.triedBackup = "2";
+                              target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/2023_Lamborghini_SC63.jpg/1280px-2023_Lamborghini_SC63.jpg";
+                            }
+                          }}
+                          className="w-full h-full object-cover rounded-xl drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-500"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <img 
-                    src="https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=300" 
-                    alt="Sport Car" 
-                    className="w-24 object-contain"
-                  />
                 </div>
 
 
@@ -5996,120 +6948,6 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                     >
                       Book Class <ChevronRight className="w-3 h-3" />
                     </button>
-                  </div>
-                )}
-
-                {/* Course Progress Card & Weak Skills */}
-                <div className="bg-white border border-slate-100 rounded-3xl p-4 shadow-sm flex flex-col gap-3">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-black text-xs text-[#161623]">COURSE PROGRESS</h3>
-                    <span className="text-[#27AE60] text-[9px] font-bold bg-[#27AE60]/10 px-1.5 py-0.5 rounded-full">
-                      ↑ 12% last week
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    {/* Circle chart */}
-                    {(() => {
-                      const avgProgress = Math.round(
-                        ((progress.steering || 0) + 
-                         (progress.clutch || 0) + 
-                         (progress.brake || 0) + 
-                         (progress.hillStart || 0)) / 4
-                      ) || 0;
-                      const radius = 32;
-                      const circumference = 2 * Math.PI * radius;
-                      const strokeDashoffset = circumference - (avgProgress / 100) * circumference;
-                      return (
-                        <div className="relative w-20 h-20 flex items-center justify-center shrink-0">
-                          <svg className="w-full h-full transform -rotate-90">
-                            <circle
-                              cx="40"
-                              cy="40"
-                              r={radius}
-                              className="text-[#F1F3F9]"
-                              strokeWidth="6"
-                              stroke="currentColor"
-                              fill="transparent"
-                            />
-                            <circle
-                              cx="40"
-                              cy="40"
-                              r={radius}
-                              className="text-[#6D3BFF]"
-                              strokeWidth="6"
-                              stroke="currentColor"
-                              fill="transparent"
-                              strokeDasharray={circumference}
-                              strokeDashoffset={strokeDashoffset}
-                              strokeLinecap="round"
-                            />
-                          </svg>
-                          <span className="absolute text-sm font-black text-[#161623]">{avgProgress}%</span>
-                        </div>
-                      );
-                    })()}
-
-                    <div className="flex-1 flex flex-col gap-1.5">
-                      {[
-                        { label: "Steering Control", val: progress.steering },
-                        { label: "Clutch Control", val: progress.clutch, warn: true },
-                        { label: "Braking & Stopping", val: progress.brake },
-                        { label: "Hill Starts", val: progress.hillStart, warn: true }
-                      ].map((item, i) => (
-                        <div key={i}>
-                          <div className="flex justify-between items-center text-[9px] font-bold text-slate-600 mb-0.5">
-                            <span className={item.warn && item.val < 75 ? 'text-[#EB5757] flex items-center gap-0.5' : ''}>
-                              {item.label} {item.warn && item.val < 75 ? '⚠️' : ''}
-                            </span>
-                            <span>{item.val}%</span>
-                          </div>
-                          <div className="w-full h-1 bg-[#F1F3F9] rounded-full overflow-hidden">
-                            <div 
-                              className={`h-full rounded-full ${item.warn && item.val < 75 ? 'bg-[#EB5757]' : 'bg-[#6D3BFF]'}`} 
-                              style={{ width: `${item.val}%` }} 
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Dynamic Customized Course Agenda (Trainer Modified) */}
-                {student.courseName && (
-                  <div className="bg-gradient-to-r from-[#6D3BFF]/5 to-[#8F52FF]/5 border border-[#6D3BFF]/10 rounded-3xl p-4 shadow-sm flex flex-col gap-3">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <span className="text-[8px] uppercase tracking-wider font-extrabold text-[#6D3BFF]">Assigned Driving Course</span>
-                        <h3 className="font-extrabold text-xs text-[#161623]">{student.courseName}</h3>
-                      </div>
-                      <span className="text-[8px] bg-emerald-100 text-emerald-800 font-black px-2 py-0.5 rounded-full uppercase">
-                        Active
-                      </span>
-                    </div>
-
-                    {student.courseNotes && (
-                      <div className="bg-white/75 border border-[#6D3BFF]/15 p-3 rounded-2xl">
-                        <p className="text-[8px] uppercase font-bold text-slate-400">Custom Coach Focus Notes</p>
-                        <p className="text-[10px] text-slate-600 mt-1 leading-relaxed italic">
-                          "{student.courseNotes}"
-                        </p>
-                      </div>
-                    )}
-
-                    {student.courseSyllabus && student.courseSyllabus.length > 0 && (
-                      <div className="flex flex-col gap-1.5 mt-1">
-                        <span className="text-[8px] uppercase tracking-wider font-extrabold text-slate-400">Syllabus Focus Checklist</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {student.courseSyllabus.map((module, mIdx) => (
-                            <span key={mIdx} className="bg-white border border-slate-100 text-slate-700 font-extrabold text-[9px] px-2.5 py-1 rounded-xl shadow-sm flex items-center gap-1">
-                              <Check className="w-3 h-3 text-[#27AE60] stroke-[3]" /> {module}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -7224,6 +8062,117 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   </button>
                   <h3 className="font-extrabold text-sm text-[#161623] mt-1">{student.name}</h3>
                   <p className="text-[10px] text-slate-400">{student.email}</p>
+
+                  {/* Personal Information & Profile Details Card */}
+                  <div className="mt-3.5 w-full bg-[#F8F9FF] border border-slate-100 rounded-2xl p-3.5 text-left">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[9.5px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
+                        <User className="w-3.5 h-3.5 text-[#6D3BFF]" /> Personal Details
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isEditingProfile) {
+                            setProfileEditName(student.name || '');
+                            setProfileEditEmail(student.email || '');
+                            setProfileEditPhone(student.phone || '');
+                            setProfileEditLocation(student.location || 'Bhubaneswar, Odisha');
+                            setProfileEditError(null);
+                          }
+                          setIsEditingProfile(!isEditingProfile);
+                        }}
+                        className="text-[10px] font-bold text-[#6D3BFF] hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        <span>{isEditingProfile ? "Cancel" : "Edit Details"}</span>
+                      </button>
+                    </div>
+
+                    {isEditingProfile ? (
+                      <form onSubmit={handleSaveProfileInfo} className="flex flex-col gap-2.5 pt-1">
+                        {profileEditError && (
+                          <div className="bg-rose-50 border border-rose-200 text-rose-700 text-[10px] p-2 rounded-xl">
+                            {profileEditError}
+                          </div>
+                        )}
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Full Name *</label>
+                          <input 
+                            type="text" 
+                            value={profileEditName}
+                            onChange={(e) => setProfileEditName(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Email Address *</label>
+                          <input 
+                            type="email" 
+                            value={profileEditEmail}
+                            onChange={(e) => setProfileEditEmail(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 block mb-0.5">Mobile Phone *</label>
+                          <input 
+                            type="tel" 
+                            value={profileEditPhone}
+                            onChange={(e) => setProfileEditPhone(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 block mb-0.5">City / Location</label>
+                          <input 
+                            type="text" 
+                            value={profileEditLocation}
+                            onChange={(e) => setProfileEditLocation(e.target.value)}
+                            placeholder="e.g. Bhubaneswar, Odisha"
+                            className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-[#161623] focus:outline-none focus:border-[#6D3BFF]"
+                          />
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setIsEditingProfile(false)}
+                            className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 rounded-xl transition-all cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={profileEditLoading}
+                            className="flex-1 bg-[#6D3BFF] hover:bg-[#8F52FF] text-white font-bold text-xs py-2 rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                          >
+                            {profileEditLoading ? "Saving..." : "Save Changes"}
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex flex-col gap-1.5 text-[10.5px]">
+                        <div className="flex justify-between py-1 border-b border-slate-100/60">
+                          <span className="text-slate-400">Phone:</span>
+                          <span className="font-bold text-[#161623]">{student.phone || 'Not provided'}</span>
+                        </div>
+                        <div className="flex justify-between py-1 border-b border-slate-100/60">
+                          <span className="text-slate-400">Student ID:</span>
+                          <span className="font-mono font-bold text-slate-700">{student.id}</span>
+                        </div>
+                        <div className="flex justify-between py-1 border-b border-slate-100/60">
+                          <span className="text-slate-400">Location:</span>
+                          <span className="font-bold text-[#161623]">{student.location || 'Bhubaneswar, Odisha'}</span>
+                        </div>
+                        <div className="flex justify-between py-1">
+                          <span className="text-slate-400">Member Since:</span>
+                          <span className="font-bold text-slate-600">{new Date(student.joinedDate || Date.now()).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   
                   {/* STUDENT PORTAL CARD */}
                   <div className="mt-4 w-full bg-gradient-to-r from-[#161623] to-[#252538] text-white rounded-2xl p-4 border border-slate-800 text-left shadow-md">
@@ -7639,43 +8588,22 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   <p className="text-[9px] text-slate-500 mt-1">Share code <span className="font-extrabold text-[#6D3BFF] uppercase">{student.referralCode}</span> with friends & get ₹500 discount.</p>
                 </div>
 
-                {/* Account Deletion Status Banner or Button */}
-                {student.deletionRequested || student.deletionStatus === 'requested' ? (
-                  <div className="mt-4 bg-rose-50 border border-rose-200 rounded-3xl p-4 text-rose-800 shadow-sm animate-fadeIn">
-                    <div className="flex items-center gap-2 mb-1">
-                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                      <h4 className="font-extrabold text-xs text-rose-900">Account Deletion Requested</h4>
+                {/* Account Settings & Preferences Link */}
+                <div 
+                  onClick={() => setActiveSubPage('settings')}
+                  className="mt-4 bg-[#F8F9FF] hover:bg-[#6D3BFF]/5 border border-slate-100 hover:border-[#6D3BFF]/30 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer transition-all group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-slate-100 group-hover:bg-[#6D3BFF]/10 text-slate-600 group-hover:text-[#6D3BFF] flex items-center justify-center transition-colors">
+                      <Settings className="w-4 h-4" />
                     </div>
-                    <p className="text-[10px] leading-relaxed text-rose-700">
-                      Your deletion request has been submitted. Account erasure will be completed upon <strong>Admin approval</strong> or <strong>automatically after 15 days</strong> if you do not log in during this period.
-                    </p>
-                    {student.deletionRequestedAt && (
-                      <p className="text-[9px] text-rose-500 font-bold mt-1.5">
-                        Submitted: {new Date(student.deletionRequestedAt).toLocaleDateString()} at {new Date(student.deletionRequestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="mt-4 bg-rose-50/50 hover:bg-rose-50 border border-rose-100 rounded-3xl p-3.5 shadow-sm transition-all">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
-                          <Trash2 className="w-4 h-4 text-rose-600" />
-                        </div>
-                        <div>
-                          <h4 className="font-extrabold text-xs text-rose-900">Delete Account</h4>
-                          <p className="text-[9.5px] text-rose-600/80">Permanently erase profile & personal records</p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={handleOpenAccountDeletion}
-                        className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[10px] px-3 py-2 rounded-xl transition-all cursor-pointer shadow-sm active:scale-95 shrink-0 flex items-center gap-1"
-                      >
-                        <Trash2 className="w-3 h-3" /> Delete
-                      </button>
+                    <div>
+                      <h4 className="font-extrabold text-xs text-[#161623]">Account Settings & Preferences</h4>
+                      <p className="text-[9.5px] text-slate-400">Notifications, language, password & account options</p>
                     </div>
                   </div>
-                )}
+                  <span className="text-xs font-bold text-slate-400 group-hover:text-[#6D3BFF] transition-colors">→</span>
+                </div>
 
                 {/* Logout Button */}
                 <button
