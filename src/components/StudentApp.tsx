@@ -4156,18 +4156,18 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
             <div className="flex flex-col items-center">
               <div className="w-56 h-32 rounded-3xl bg-white/5 border border-white/10 p-1.5 backdrop-blur-md shadow-2xl mb-6 overflow-hidden">
                 <img 
-                  src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Lamborghini_SC63.jpg/1280px-Lamborghini_SC63.jpg" 
-                  alt="Lamborghini SC63 LMDh Racer" 
+                  src="https://images.unsplash.com/photo-1544829099-b9a0c07fad1a?auto=format&fit=crop&q=80&w=800" 
+                  alt="Lamborghini Supercar" 
                   referrerPolicy="no-referrer"
                   crossOrigin="anonymous"
                   onError={(e) => {
                     const target = e.currentTarget;
                     if (!target.dataset.triedBackup) {
                       target.dataset.triedBackup = "1";
-                      target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/2024_24_Hours_of_Le_Mans_%2854094300036%29.jpg/1280px-2024_24_Hours_of_Le_Mans_%2854094300036%29.jpg";
+                      target.src = "https://images.unsplash.com/photo-1617814076367-b759c7d7e738?auto=format&fit=crop&q=80&w=800";
                     } else if (target.dataset.triedBackup === "1") {
                       target.dataset.triedBackup = "2";
-                      target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/2023_Lamborghini_SC63.jpg/1280px-2023_Lamborghini_SC63.jpg";
+                      target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Lamborghini_SC63.jpg/1280px-Lamborghini_SC63.jpg";
                     }
                   }}
                   className="w-full h-full object-cover rounded-2xl drop-shadow-2xl"
@@ -6248,9 +6248,6 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         </span>
                       )}
                     </button>
-                    
-                    {/* BNP TECH Creator Logo Quick Button */}
-                    <BnpLogoButton size="sm" showLabel={false} className="h-9 rounded-2xl" />
 
                     {menuOpen && (
                       <div 
@@ -6484,16 +6481,6 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                               <p className="text-[9px] text-slate-400 font-normal">Chat with Odnex AI Bot</p>
                             </div>
                           </button>
-                        </div>
-
-                        {/* SECTION: CREATOR & DEVELOPER */}
-                        <div className="px-2 py-1">
-                          <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider">Creator & Developer</span>
-                        </div>
-                        <div className="flex flex-col gap-0.5 mb-2">
-                          <div className="p-1">
-                            <BnpLogoButton size="md" showLabel={true} className="w-full justify-between" />
-                          </div>
                         </div>
 
                         {/* SECTION 4: LOGOUT */}
@@ -6741,18 +6728,18 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                     <div className="relative shrink-0 flex items-center justify-center">
                       <div className="w-32 h-24 sm:w-36 sm:h-28 rounded-2xl bg-gradient-to-tr from-white/5 to-white/10 p-1 flex items-center justify-center border border-white/10 backdrop-blur-xs shadow-inner overflow-hidden">
                         <img 
-                          src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Lamborghini_SC63.jpg/1280px-Lamborghini_SC63.jpg" 
-                          alt="Lamborghini SC63 LMDh Racer" 
+                          src="https://images.unsplash.com/photo-1544829099-b9a0c07fad1a?auto=format&fit=crop&q=80&w=800" 
+                          alt="Lamborghini Supercar" 
                           referrerPolicy="no-referrer"
                           crossOrigin="anonymous"
                           onError={(e) => {
                             const target = e.currentTarget;
                             if (!target.dataset.triedBackup) {
                               target.dataset.triedBackup = "1";
-                              target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/2024_24_Hours_of_Le_Mans_%2854094300036%29.jpg/1280px-2024_24_Hours_of_Le_Mans_%2854094300036%29.jpg";
+                              target.src = "https://images.unsplash.com/photo-1617814076367-b759c7d7e738?auto=format&fit=crop&q=80&w=800";
                             } else if (target.dataset.triedBackup === "1") {
                               target.dataset.triedBackup = "2";
-                              target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/2023_Lamborghini_SC63.jpg/1280px-2023_Lamborghini_SC63.jpg";
+                              target.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Lamborghini_SC63.jpg/1280px-Lamborghini_SC63.jpg";
                             }
                           }}
                           className="w-full h-full object-cover rounded-xl drop-shadow-2xl transform group-hover:scale-105 transition-transform duration-500"
