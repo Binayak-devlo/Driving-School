@@ -89,6 +89,7 @@ import {
 import { downloadPaymentReceipt, downloadFileOrImage, downloadCSV } from "../utils/exportUtils";
 import { Download } from "lucide-react";
 import BnpLogoButton from "./BnpLogoButton";
+import RealDriverBadgeCard, { getStudentBadgeTier, RealBadgeMedallion } from "./RealDriverBadge";
 
 interface StudentAppProps {
   onStateChange: () => void; // call when state needs to refresh across other roles
@@ -6959,13 +6960,43 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   </div>
                 </div>
 
-                {/* Bottom Banner: Achievements */}
-                <div className="bg-[#FFEAA7] border border-[#F2C94C]/20 p-3.5 rounded-3xl flex items-center justify-between shadow-sm cursor-pointer hover:scale-95 transition-all">
-                  <div>
-                    <h4 className="font-extrabold text-xs text-[#161623]">Keep Learning, Keep Growing!</h4>
-                    <p className="text-[9px] text-slate-600 mt-0.5">Complete more classes to unlock your Safe Driver badge.</p>
+                {/* Bottom Banner: Achievements & Learning Goal */}
+                <div 
+                  onClick={() => {
+                    const el = document.getElementById('student-current-badge-card');
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }}
+                  className="bg-gradient-to-r from-[#FFF8E7] via-[#FFF3D6] to-[#FFEEC2] border border-[#F2C94C]/40 p-3.5 rounded-3xl flex items-center justify-between shadow-xs cursor-pointer hover:border-[#F2C94C] transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/25 flex items-center justify-center shrink-0 shadow-inner">
+                      <RealBadgeMedallion tier={getStudentBadgeTier(completedClassesCount)} size="sm" showAnimation={false} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <h4 className="font-extrabold text-xs text-[#161623]">Keep Learning, Keep Growing!</h4>
+                        <span className="text-[9px] font-black text-amber-800 bg-amber-200/80 px-1.5 py-0.5 rounded font-mono">
+                          Lvl {getStudentBadgeTier(completedClassesCount).level} Active
+                        </span>
+                      </div>
+                      <p className="text-[9.5px] text-slate-600 mt-0.5">
+                        {completedClassesCount >= 15 
+                          ? "Maximum Elite Certified Master Driver accreditation attained!"
+                          : `Complete ${Math.max(1, (getStudentBadgeTier(completedClassesCount).level === 1 ? 3 : getStudentBadgeTier(completedClassesCount).level === 2 ? 7 : getStudentBadgeTier(completedClassesCount).level === 3 ? 11 : 15) - completedClassesCount)} more ${Math.max(1, (getStudentBadgeTier(completedClassesCount).level === 1 ? 3 : getStudentBadgeTier(completedClassesCount).level === 2 ? 7 : getStudentBadgeTier(completedClassesCount).level === 3 ? 11 : 15) - completedClassesCount) === 1 ? 'class' : 'classes'} to advance to next official rank.`}
+                      </p>
+                    </div>
                   </div>
-                  <span className="text-2xl">🏆</span>
+                  <ChevronRight className="w-4 h-4 text-amber-800 shrink-0" />
+                </div>
+
+                {/* Real Driver Badge Section (Under Keep Learning in bottom) */}
+                <div id="student-current-badge-card" className="mt-3.5 mb-2">
+                  <RealDriverBadgeCard
+                    student={student}
+                    completedClasses={completedClassesCount}
+                    totalClasses={maxCourseClasses}
+                    onBookClass={() => setActiveTab('classes')}
+                  />
                 </div>
               </div>
             )}
@@ -8049,6 +8080,30 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   </button>
                   <h3 className="font-extrabold text-sm text-[#161623] mt-1">{student.name}</h3>
                   <p className="text-[10px] text-slate-400">{student.email}</p>
+
+                  {/* Current Active Driver Badge Pill */}
+                  <div 
+                    onClick={() => {
+                      setActiveTab('home');
+                      setTimeout(() => {
+                        const el = document.getElementById('student-current-badge-card');
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }, 100);
+                    }}
+                    className="mt-2 inline-flex items-center gap-2 bg-gradient-to-r from-slate-900 to-[#1E1E30] text-white px-3 py-1.5 rounded-full border border-[#D4AF37]/30 shadow-xs cursor-pointer hover:border-[#D4AF37] transition-all group"
+                    title="Click to view full verified driving badge"
+                  >
+                    <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                      <RealBadgeMedallion tier={getStudentBadgeTier(completedClassesCount)} size="sm" showAnimation={false} />
+                    </div>
+                    <span className="text-[10px] font-black text-amber-300 tracking-tight">
+                      {getStudentBadgeTier(completedClassesCount).title}
+                    </span>
+                    <span className="text-[8.5px] font-mono text-slate-400">
+                      • Lvl {getStudentBadgeTier(completedClassesCount).level}
+                    </span>
+                    <ChevronRight className="w-3 h-3 text-slate-400 group-hover:text-white transition-colors" />
+                  </div>
 
                   {/* Personal Information & Profile Details Card */}
                   <div className="mt-3.5 w-full bg-[#F8F9FF] border border-slate-100 rounded-2xl p-3.5 text-left">
