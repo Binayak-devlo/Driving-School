@@ -213,6 +213,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     return null;
   }); // 'ai-coach', 'mock-test', 'documents', 'payments', 'licence', 'licence-apply', 'change-password', 'settings', 'edit-profile', 'vault-files', 'vault-notes', 'vault-team'
   const [menuOpen, setMenuOpen] = useState(false);
+  const [quickActionView, setQuickActionView] = useState<'row' | 'grid'>('row');
+  const [showBadgeCard, setShowBadgeCard] = useState(false);
 
   // Change Password state
   const [changePassCurrent, setChangePassCurrent] = useState('');
@@ -6939,37 +6941,185 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   </div>
                 )}
 
-                {/* Quick Actions Panel */}
+                {/* Quick Actions Panel: Side-by-Side with All Tabs */}
                 <div>
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">QUICK ACTIONS</h3>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { icon: <Calendar className="w-5 h-5 text-[#6D3BFF]" />, label: "Book Class", onClick: () => { setActiveTab('classes'); } },
-                      { icon: <DollarSign className="w-5 h-5 text-[#27AE60]" />, label: "Payments", onClick: () => setActiveSubPage('payments') },
-                      { icon: <FileText className="w-5 h-5 text-amber-500" />, label: "Documents", onClick: () => setActiveSubPage('documents') }
-                    ].map((act, i) => (
-                      <button 
-                        key={i} 
-                        onClick={act.onClick}
-                        className="bg-white border border-slate-100 p-3 rounded-2xl flex flex-col items-center gap-1.5 hover:border-[#6D3BFF] cursor-pointer shadow-sm text-center"
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">QUICK ACTIONS</h3>
+                      <span className="text-[8.5px] font-black text-[#6D3BFF] bg-[#6D3BFF]/10 px-1.5 py-0.5 rounded-full font-mono">
+                        ALL TABS
+                      </span>
+                    </div>
+                    {/* View Switcher: Side-by-Side Row vs Side-by-Side Grid */}
+                    <div className="flex items-center gap-1 bg-slate-100/90 p-0.5 rounded-lg border border-slate-200/60">
+                      <button
+                        type="button"
+                        onClick={() => setQuickActionView('row')}
+                        className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                          quickActionView === 'row'
+                            ? 'bg-white text-[#6D3BFF] shadow-xs'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                        title="Side-by-side horizontal row"
                       >
-                        {act.icon}
-                        <span className="text-[9px] font-bold text-slate-700 leading-tight">{act.label}</span>
+                        <span>⇄ Row</span>
                       </button>
-                    ))}
+                      <button
+                        type="button"
+                        onClick={() => setQuickActionView('grid')}
+                        className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                          quickActionView === 'grid'
+                            ? 'bg-white text-[#6D3BFF] shadow-xs'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                        title="Side-by-side 2-column grid"
+                      >
+                        <span>⊞ Grid</span>
+                      </button>
+                    </div>
                   </div>
+
+                  {(() => {
+                    const allTabsList = [
+                      { 
+                        icon: <Calendar className="w-4 h-4 text-[#6D3BFF]" />, 
+                        label: "Book Class", 
+                        desc: "Slots & History",
+                        bgClass: "bg-[#6D3BFF]/10 text-[#6D3BFF]",
+                        badge: activeTab === 'classes' && !activeSubPage ? "Active" : undefined,
+                        onClick: () => { setActiveTab('classes'); setActiveSubPage(null); } 
+                      },
+                      { 
+                        icon: <Navigation className="w-4 h-4 text-[#D4AF37]" />, 
+                        label: "Track Coach", 
+                        desc: "Live GPS Map",
+                        bgClass: "bg-amber-500/10 text-amber-500",
+                        badge: activeTab === 'track' && !activeSubPage ? "Active" : undefined,
+                        onClick: () => { setActiveTab('track'); setActiveSubPage(null); } 
+                      },
+                      { 
+                        icon: <BookOpen className="w-4 h-4 text-emerald-600" />, 
+                        label: "Learn Center", 
+                        desc: "Videos & Rules",
+                        bgClass: "bg-emerald-500/10 text-emerald-600",
+                        badge: activeTab === 'learn' && !activeSubPage ? "Active" : undefined,
+                        onClick: () => { setActiveTab('learn'); setActiveSubPage(null); } 
+                      },
+                      { 
+                        icon: <Sliders className="w-4 h-4 text-purple-600" />, 
+                        label: "Modify Plan", 
+                        desc: "Upgrade & Syllabus",
+                        bgClass: "bg-purple-500/10 text-purple-600",
+                        badge: activeTab === 'modify' && !activeSubPage ? "Active" : undefined,
+                        onClick: () => { setActiveTab('modify'); setActiveSubPage(null); } 
+                      },
+                      { 
+                        icon: <CreditCard className="w-4 h-4 text-[#27AE60]" />, 
+                        label: "Fee Payments", 
+                        desc: "Receipts & Dues",
+                        bgClass: "bg-[#27AE60]/10 text-[#27AE60]",
+                        badge: activeSubPage === 'payments' ? "Active" : undefined,
+                        onClick: () => { setActiveTab('home'); setActiveSubPage('payments'); } 
+                      },
+                      { 
+                        icon: <FileText className="w-4 h-4 text-amber-500" />, 
+                        label: "Documents", 
+                        desc: "Aadhaar & LL Desk",
+                        bgClass: "bg-amber-500/10 text-amber-500",
+                        badge: activeSubPage === 'documents' ? "Active" : undefined,
+                        onClick: () => { setActiveTab('home'); setActiveSubPage('documents'); } 
+                      },
+                      { 
+                        icon: <FileCheck className="w-4 h-4 text-rose-500" />, 
+                        label: "Driving Licence", 
+                        desc: "RTO OD-02 Status",
+                        bgClass: "bg-rose-500/10 text-rose-500",
+                        badge: activeSubPage === 'licence' ? "Active" : undefined,
+                        onClick: () => { setActiveTab('home'); setActiveSubPage('licence'); } 
+                      },
+                      { 
+                        icon: <User className="w-4 h-4 text-indigo-600" />, 
+                        label: "My Profile", 
+                        desc: "Account & Badges",
+                        bgClass: "bg-indigo-500/10 text-indigo-600",
+                        badge: activeTab === 'profile' && !activeSubPage ? "Active" : undefined,
+                        onClick: () => { setActiveTab('profile'); setActiveSubPage(null); } 
+                      },
+                      { 
+                        icon: <Sparkles className="w-4 h-4 text-[#D4AF37]" />, 
+                        label: "Ask ODNEX", 
+                        desc: "AI Driving Coach",
+                        bgClass: "bg-[#D4AF37]/15 text-[#D4AF37]",
+                        badge: activeSubPage === 'ai-coach' ? "Active" : undefined,
+                        onClick: () => { setActiveTab('home'); setActiveSubPage('ai-coach'); } 
+                      },
+                      { 
+                        icon: <Award className="w-4 h-4 text-[#8F52FF]" />, 
+                        label: "Mock Test", 
+                        desc: "5 RTO Questions",
+                        bgClass: "bg-[#8F52FF]/10 text-[#8F52FF]",
+                        badge: activeSubPage === 'mock-test' ? "Active" : undefined,
+                        onClick: () => { setActiveTab('home'); setActiveSubPage('mock-test'); } 
+                      }
+                    ];
+
+                    return (
+                      <div 
+                        className={
+                          quickActionView === 'row'
+                            ? "flex items-stretch gap-2.5 overflow-x-auto pb-2 pt-0.5 no-scrollbar scrollable-touch -mx-1 px-1"
+                            : "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2"
+                        }
+                      >
+                        {allTabsList.map((tab, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={tab.onClick}
+                            className={`bg-white border border-slate-100 hover:border-[#6D3BFF]/40 active:border-[#6D3BFF] p-2.5 pr-3 rounded-2xl flex flex-row items-center gap-2.5 shadow-xs hover:shadow-md cursor-pointer transition-all active:scale-95 group text-left ${
+                              quickActionView === 'row' ? 'shrink-0 min-w-[142px]' : 'w-full'
+                            }`}
+                          >
+                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${tab.bgClass} group-hover:scale-105 transition-transform`}>
+                              {tab.icon}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1">
+                                <span className="text-[11px] font-extrabold text-slate-800 leading-tight block truncate group-hover:text-[#6D3BFF] transition-colors">
+                                  {tab.label}
+                                </span>
+                                {tab.badge && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="Active Screen" />
+                                )}
+                              </div>
+                              <span className="text-[8.5px] font-semibold text-slate-400 leading-tight block truncate mt-0.5">
+                                {tab.desc}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Bottom Banner: Achievements & Learning Goal */}
                 <div 
                   onClick={() => {
-                    const el = document.getElementById('student-current-badge-card');
-                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const nextState = !showBadgeCard;
+                    setShowBadgeCard(nextState);
+                    if (nextState) {
+                      setTimeout(() => {
+                        const el = document.getElementById('student-current-badge-card');
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }, 100);
+                    }
                   }}
-                  className="bg-gradient-to-r from-[#FFF8E7] via-[#FFF3D6] to-[#FFEEC2] border border-[#F2C94C]/40 p-3.5 rounded-3xl flex items-center justify-between shadow-xs cursor-pointer hover:border-[#F2C94C] transition-all"
+                  className="bg-gradient-to-r from-[#FFF8E7] via-[#FFF3D6] to-[#FFEEC2] border border-[#F2C94C]/40 p-3.5 rounded-3xl flex items-center justify-between shadow-xs cursor-pointer hover:border-[#F2C94C] transition-all group"
+                  title="Click to view or hide your official badge"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/25 flex items-center justify-center shrink-0 shadow-inner">
+                    <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/25 flex items-center justify-center shrink-0 shadow-inner group-hover:scale-105 transition-transform">
                       <RealBadgeMedallion tier={getStudentBadgeTier(completedClassesCount)} size="sm" showAnimation={false} />
                     </div>
                     <div>
@@ -6986,18 +7136,23 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                       </p>
                     </div>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-amber-800 shrink-0" />
+                  <div className="flex items-center gap-1 text-[9.5px] font-bold text-amber-800 shrink-0">
+                    <span className="hidden xs:inline">{showBadgeCard ? "Hide Badge" : "View Badge"}</span>
+                    <ChevronRight className={`w-4 h-4 text-amber-800 transition-transform duration-300 ${showBadgeCard ? 'rotate-90' : ''}`} />
+                  </div>
                 </div>
 
-                {/* Real Driver Badge Section (Under Keep Learning in bottom) */}
-                <div id="student-current-badge-card" className="mt-3.5 mb-2">
-                  <RealDriverBadgeCard
-                    student={student}
-                    completedClasses={completedClassesCount}
-                    totalClasses={maxCourseClasses}
-                    onBookClass={() => setActiveTab('classes')}
-                  />
-                </div>
+                {/* Real Driver Badge Section (Hidden until user clicks Keep Learning banner) */}
+                {showBadgeCard && (
+                  <div id="student-current-badge-card" className="mt-3.5 mb-2 animate-fadeIn">
+                    <RealDriverBadgeCard
+                      student={student}
+                      completedClasses={completedClassesCount}
+                      totalClasses={maxCourseClasses}
+                      onBookClass={() => setActiveTab('classes')}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -8085,6 +8240,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   <div 
                     onClick={() => {
                       setActiveTab('home');
+                      setShowBadgeCard(true);
                       setTimeout(() => {
                         const el = document.getElementById('student-current-badge-card');
                         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
