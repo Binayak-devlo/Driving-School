@@ -10,6 +10,7 @@ interface PullToRefreshProps {
   id?: string;
   pullThreshold?: number;
   maxPull?: number;
+  onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
 export default function PullToRefresh({
@@ -21,6 +22,7 @@ export default function PullToRefresh({
   id = "pull-to-refresh-container",
   pullThreshold = 65,
   maxPull = 120,
+  onScroll,
 }: PullToRefreshProps) {
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -255,6 +257,7 @@ export default function PullToRefresh({
     <div
       id={id}
       ref={containerRef}
+      onScroll={onScroll}
       style={{
         overscrollBehaviorY: "contain",
         touchAction: "pan-y pan-x",

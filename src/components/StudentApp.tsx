@@ -219,6 +219,66 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const [quickActionView, setQuickActionView] = useState<'row' | 'grid'>('row');
   const [showBadgeCard, setShowBadgeCard] = useState(false);
 
+  // Floating bottom navigation bar scroll gesture state
+  const [isBottomBarVisible, setIsBottomBarVisible] = useState(true);
+  const lastScrollTopRef = useRef(0);
+
+  const handleContainerScroll = useCallback((e: React.UIEvent<HTMLDivElement> | Event) => {
+    const target = (e.currentTarget || e.target) as HTMLElement | null;
+    if (!target) return;
+    const currentScrollTop = target.scrollTop;
+    const delta = currentScrollTop - lastScrollTopRef.current;
+
+    // At top of scroll area, keep navigation visible
+    if (currentScrollTop <= 20) {
+      setIsBottomBarVisible(true);
+      lastScrollTopRef.current = currentScrollTop;
+      return;
+    }
+
+    // Significant scroll threshold to prevent micro jitter
+    if (Math.abs(delta) > 8) {
+      if (delta > 0) {
+        // User scrolling down into content (swiping finger up) -> hide bottom bar
+        setIsBottomBarVisible(false);
+      } else {
+        // User scrolling up towards top (swiping finger down) -> reveal bottom bar
+        setIsBottomBarVisible(true);
+      }
+      lastScrollTopRef.current = currentScrollTop;
+    }
+  }, []);
+
+  // Ensure bottom bar is visible whenever tab or subpage changes
+  useEffect(() => {
+    setIsBottomBarVisible(true);
+  }, [activeTab, activeSubPage]);
+
+  // Direct native scroll listener attachment for high-frequency mobile gestures
+  useEffect(() => {
+    const el = document.getElementById('student-pull-to-refresh');
+    if (!el) return;
+    const onScroll = () => {
+      const currentScrollTop = el.scrollTop;
+      const delta = currentScrollTop - lastScrollTopRef.current;
+      if (currentScrollTop <= 20) {
+        setIsBottomBarVisible(true);
+        lastScrollTopRef.current = currentScrollTop;
+        return;
+      }
+      if (Math.abs(delta) > 8) {
+        if (delta > 0) {
+          setIsBottomBarVisible(false);
+        } else {
+          setIsBottomBarVisible(true);
+        }
+        lastScrollTopRef.current = currentScrollTop;
+      }
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [currentScreen]);
+
   // Change Password state
   const [changePassCurrent, setChangePassCurrent] = useState('');
   const [changePassNew, setChangePassNew] = useState('');
@@ -4609,6 +4669,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       <PullToRefresh
         id="student-pull-to-refresh"
         onRefresh={handlePullToRefresh}
+        onScroll={handleContainerScroll}
         disabled={activeSubPage === 'ai-coach' || activeSubPage === 'mock-test'}
         className="flex-1 overflow-y-auto scrollable-touch custom-scrollbar pb-24 pt-1"
       >
@@ -9364,7 +9425,11 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         <button
           id="floating-ai-coach-btn"
           onClick={() => setActiveSubPage('ai-coach')}
-          className="absolute bottom-20 right-6 bg-gradient-to-r from-[#6D3BFF] to-[#8F52FF] hover:brightness-110 text-white font-extrabold text-[10px] px-4 py-2.5 rounded-full flex items-center gap-1.5 shadow-xl shadow-[#6D3BFF]/35 hover:shadow-[#6D3BFF]/50 active:scale-95 hover:scale-105 transition-all z-40 cursor-pointer border border-[#6D3BFF]/20 animate-bounce-slow"
+          className={`absolute right-6 bg-gradient-to-r from-[#6D3BFF] to-[#8F52FF] hover:brightness-110 text-white font-extrabold text-[10px] px-4 py-2.5 rounded-full flex items-center gap-1.5 shadow-xl shadow-[#6D3BFF]/35 hover:shadow-[#6D3BFF]/50 active:scale-95 hover:scale-105 transition-all duration-300 ease-out transform z-40 cursor-pointer border border-[#6D3BFF]/20 animate-bounce-slow ${
+            isBottomBarVisible 
+              ? 'bottom-20 translate-y-0 opacity-100 pointer-events-auto' 
+              : 'bottom-6 translate-y-28 opacity-0 pointer-events-none'
+          }`}
           style={{ animationDuration: '4s' }}
         >
           <div className="relative flex h-2 w-2">
@@ -9378,7 +9443,11 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
       {/* Bottom Floating Navigation (Visible in main app screen) */}
       {currentScreen === 'app' && (
-        <div className="absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur-md py-2.5 px-2 border border-slate-100 flex justify-between items-center z-40 rounded-2xl shadow-xl shadow-slate-200/60">
+        <div className={`absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur-md py-2.5 px-2 border border-slate-100 flex justify-between items-center z-40 rounded-2xl shadow-xl shadow-slate-200/60 transition-all duration-300 ease-out transform ${
+          isBottomBarVisible 
+            ? 'translate-y-0 opacity-100 pointer-events-auto' 
+            : 'translate-y-28 opacity-0 pointer-events-none'
+        }`}>
           {[
             { id: 'home', label: 'Home', icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg> },
             { id: 'classes', label: 'Classes', icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg> },
