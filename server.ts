@@ -2043,25 +2043,19 @@ async function startServer() {
   // Helper to check if student has Premium package in database
   async function verifyStudentPremiumStatus(studentId: string): Promise<boolean> {
     if (!studentId) return false;
-    if (activeStreams.has(studentId) || studentId === "student_1" || studentId.startsWith("student_")) {
-      return true;
-    }
     try {
       const studentDoc = await getDoc(doc(db, "students", studentId));
       if (studentDoc.exists()) {
         const s = studentDoc.data();
         if (s.isPremium === true) return true;
-        if (s.parentLiveUnlocked === true || s.hasParentLiveView === true) return true;
         if (s.courseName && s.courseName.toLowerCase().includes("premium")) return true;
         if (s.totalCourseFee === 4000) return true;
         if (s.courseName && s.courseName.toLowerCase().includes("parent live")) return true;
-        return true;
       }
     } catch (err) {
       console.warn("Error verifying student premium status:", err);
     }
-    // Default allow for registered student sessions to ensure live video stream connects reliably
-    return true;
+    return false;
   }
 
   // Publish / Start Stream (Validates Premium Package backend constraint)

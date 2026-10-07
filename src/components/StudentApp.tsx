@@ -569,57 +569,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       } catch (firstErr: any) {
         console.warn("Specific camera constraints failed, attempting fallback { video: true }:", firstErr);
-        try {
-          // Fallback to basic video constraint
-          mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        } catch (secondErr: any) {
-          console.warn("Hardware camera unavailable, creating virtual in-car dashcam stream:", secondErr);
-          // If no physical camera hardware or permission blocked in sandboxed environment,
-          // create a high-fidelity synthetic in-car camera stream so Parent Portal always receives a video feed
-          const synthCanvas = document.createElement("canvas");
-          synthCanvas.width = 640;
-          synthCanvas.height = 360;
-          const sCtx = synthCanvas.getContext("2d")!;
-          let carX = 0;
-          const drawFrame = () => {
-            carX += 3;
-            // Sky & environment
-            sCtx.fillStyle = "#1e293b";
-            sCtx.fillRect(0, 0, 640, 160);
-            // Road
-            sCtx.fillStyle = "#0f172a";
-            sCtx.fillRect(0, 160, 640, 200);
-            // Road lane divider (moving animation)
-            sCtx.strokeStyle = "#fbbf24";
-            sCtx.lineWidth = 4;
-            sCtx.setLineDash([24, 24]);
-            sCtx.lineDashOffset = -carX;
-            sCtx.beginPath();
-            sCtx.moveTo(320, 160);
-            sCtx.lineTo(320, 360);
-            sCtx.stroke();
-            // Vehicle hood / in-car dashcam overlay
-            sCtx.fillStyle = "#111827";
-            sCtx.beginPath();
-            sCtx.moveTo(80, 360);
-            sCtx.lineTo(220, 280);
-            sCtx.lineTo(420, 280);
-            sCtx.lineTo(560, 360);
-            sCtx.fill();
-            // Telemetry HUD on dashcam
-            sCtx.fillStyle = "#22c55e";
-            sCtx.font = "bold 13px sans-serif";
-            sCtx.fillText("IN-CAR LIVE DASHCAM • GOLDEN HANDS", 20, 30);
-            sCtx.fillStyle = "#f59e0b";
-            sCtx.font = "12px monospace";
-            sCtx.fillText(`SPEED: ${24 + Math.floor(Math.sin(carX * 0.05) * 5)} KM/H | GPS: RASULGARH`, 20, 50);
-          };
-          setInterval(drawFrame, 33);
-          drawFrame();
-          if ((synthCanvas as any).captureStream) {
-            mediaStream = (synthCanvas as any).captureStream(30);
-          }
-        }
+        // Fallback to basic video constraint
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
       }
 
       if (!mediaStream) {
@@ -630,7 +581,6 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       MockDatabase.setActiveMediaStream(currentStud.id, mediaStream);
 
       if (studentVideoRef.current) {
-        studentVideoRef.current.muted = true;
         studentVideoRef.current.srcObject = mediaStream;
         studentVideoRef.current.play().catch(e => console.warn("Video element play err:", e));
       }

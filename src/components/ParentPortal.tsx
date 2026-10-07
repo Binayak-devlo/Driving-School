@@ -59,11 +59,12 @@ export default function ParentPortal({
   const [streamNotActiveNotice, setStreamNotActiveNotice] = useState<string | null>(null);
   const [isLiveStreamViewActive, setIsLiveStreamViewActive] = useState(false);
 
-  // Video canvas, element and image refs
+  // Video canvas, element and jitter buffer refs
   const videoContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoStreamElementRef = useRef<HTMLVideoElement>(null);
-  const currentRenderedImageRef = useRef<HTMLImageElement | null>(null);
+  const activeImageRef = useRef<HTMLImageElement>(new Image());
+  const frameBufferQueueRef = useRef<{ bitmap?: ImageBitmap; img?: HTMLImageElement; timestamp: number }[]>([]);
   const isPollingRef = useRef<boolean>(false);
   const lastDecodedFrameRef = useRef<string | null>(null);
   const lastFrameReceivedAtRef = useRef<number>(Date.now());
@@ -109,7 +110,18 @@ export default function ParentPortal({
     });
   };
 
-  // High-performance asynchronous continuous frame decoder (Zero main-thread jank, instant paint)
+  // Fallback image decode for environments without createImageBitmap
+  const fallbackDecode = (frameDataUri: string) => {
+    const img = activeImageRef.current;
+    img.onload = () => {
+      const queue = frameBufferQueueRef.current;
+      if (queue.length >= 3) queue.shift();
+      queue.push({ img, timestamp: Date.now() });
+    };
+    img.src = frameDataUri;
+  };
+
+  // High-performance asynchronous offscreen frame decoder (Zero main-thread jank)
   const handleIncomingFrame = (frameDataUri: string) => {
     if (!frameDataUri || frameDataUri === lastDecodedFrameRef.current) return;
     lastDecodedFrameRef.current = frameDataUri;
@@ -130,11 +142,28 @@ export default function ParentPortal({
     }
     lastFrameTimestampRef.current = now;
 
-    const img = new Image();
-    img.onload = () => {
-      currentRenderedImageRef.current = img;
-    };
-    img.src = frameDataUri;
+    // Use fast offscreen createImageBitmap decode for zero UI-thread lag
+    if (typeof window !== 'undefined' && 'createImageBitmap' in window) {
+      fetch(frameDataUri)
+        .then(res => res.blob())
+        .then(blob => createImageBitmap(blob))
+        .then(bitmap => {
+          const queue = frameBufferQueueRef.current;
+          // Enforce shallow ring buffer (max 3 frames) to keep real-time latency strictly < 65ms
+          if (queue.length >= 3) {
+            const stale = queue.shift();
+            if (stale?.bitmap) {
+              try { stale.bitmap.close(); } catch {}
+            }
+          }
+          queue.push({ bitmap, timestamp: Date.now() });
+        })
+        .catch(() => {
+          fallbackDecode(frameDataUri);
+        });
+    } else {
+      fallbackDecode(frameDataUri);
+    }
   };
 
   // Check and bind direct native MediaStream if active (Zero-latency hardware 60 FPS playback)
@@ -145,13 +174,11 @@ export default function ParentPortal({
     }
 
     const checkDirectStream = () => {
-      const mediaStream = MockDatabase.getActiveMediaStream(student.id) || 
-        (parent?.studentId ? MockDatabase.getActiveMediaStream(parent.studentId) : null);
+      const mediaStream = MockDatabase.getActiveMediaStream(student.id);
       if (mediaStream && mediaStream.active && mediaStream.getVideoTracks().some(t => t.readyState === 'live')) {
         setHasDirectMediaStream(true);
         if (videoStreamElementRef.current && videoStreamElementRef.current.srcObject !== mediaStream) {
           videoStreamElementRef.current.srcObject = mediaStream;
-          videoStreamElementRef.current.muted = true;
           videoStreamElementRef.current.play().catch(() => {});
         }
       } else {
@@ -162,9 +189,9 @@ export default function ParentPortal({
     checkDirectStream();
     const interval = setInterval(checkDirectStream, 1200);
     return () => clearInterval(interval);
-  }, [student?.id, parent?.studentId, isLiveStreamViewActive, streamSession?.isLive]);
+  }, [student?.id, isLiveStreamViewActive, streamSession?.isLive]);
 
-  // Continuous Render Clock (Locked stable 30-60 FPS real-time rendering)
+  // Continuous Jitter-Buffered Render Clock (Locked stable 30 FPS + health heartbeat monitor)
   useEffect(() => {
     if (!isLiveStreamViewActive) return;
 
@@ -179,7 +206,7 @@ export default function ParentPortal({
       frameCount++;
       if (now - fpsTimer >= 750) {
         const measuredFps = Math.round((frameCount * 1000) / (now - fpsTimer));
-        setLiveFps(Math.max(20, Math.min(60, measuredFps)));
+        setLiveFps(Math.max(18, Math.min(60, measuredFps)));
         frameCount = 0;
         fpsTimer = now;
 
@@ -195,51 +222,55 @@ export default function ParentPortal({
 
       // Check stream health / buffering state
       const idleTime = Date.now() - lastFrameReceivedAtRef.current;
-      if (idleTime > 2500 && streamSession?.isLive && !hasDirectMediaStream) {
+      if (idleTime > 1800 && streamSession?.isLive && !hasDirectMediaStream) {
         if (connectionStatus !== 'buffering' && connectionStatus !== 'reconnecting') {
           setConnectionStatus('buffering');
         }
       }
 
+      // Direct native video element handles painting if MediaStream is bound
+      if (hasDirectMediaStream) return;
+
+      // Draw from Jitter Buffer queue to Canvas
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext('2d', { alpha: false });
       if (!ctx) return;
 
-      // 1. Direct native video stream
-      if (videoStreamElementRef.current && hasDirectMediaStream && videoStreamElementRef.current.readyState >= 2) {
-        try {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'medium';
-          ctx.drawImage(videoStreamElementRef.current, 0, 0, canvas.width, canvas.height);
-        } catch {}
-      } 
-      // 2. Real-time Double-Buffered Frame Stream
-      else if (currentRenderedImageRef.current && currentRenderedImageRef.current.complete && currentRenderedImageRef.current.naturalWidth > 0) {
-        try {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'medium';
-          ctx.drawImage(currentRenderedImageRef.current, 0, 0, canvas.width, canvas.height);
-        } catch {}
+      const queue = frameBufferQueueRef.current;
+      if (queue.length > 0) {
+        const next = queue.shift();
+        if (next?.bitmap) {
+          try {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'medium';
+            ctx.drawImage(next.bitmap, 0, 0, canvas.width, canvas.height);
+          } catch {} finally {
+            try { next.bitmap.close(); } catch {}
+          }
+        } else if (next?.img && next.img.complete) {
+          ctx.drawImage(next.img, 0, 0, canvas.width, canvas.height);
+        }
+      } else {
+        // Queue empty, keep previous painted frame without flicker
+        const img = activeImageRef.current;
+        if (img && img.complete && img.naturalWidth > 0 && queue.length === 0) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
       }
     };
 
     animId = requestAnimationFrame(renderLoop);
     return () => {
       cancelAnimationFrame(animId);
+      frameBufferQueueRef.current.forEach(f => {
+        if (f.bitmap) {
+          try { f.bitmap.close(); } catch {}
+        }
+      });
+      frameBufferQueueRef.current = [];
     };
   }, [isLiveStreamViewActive, streamQualityMode, streamSession?.isLive, hasDirectMediaStream, connectionStatus]);
-
-  // Auto-activate live stream player view as soon as student camera starts broadcasting
-  useEffect(() => {
-    if (streamSession?.isLive) {
-      setIsLiveStreamViewActive(true);
-      setConnectionStatus('connected');
-      if (streamSession.latestFrame) {
-        handleIncomingFrame(streamSession.latestFrame);
-      }
-    }
-  }, [streamSession?.isLive]);
 
   // Load and sync parent's student data (with shallow equality checks to eliminate unnecessary UI re-renders)
   const loadParentStudentData = () => {
@@ -944,12 +975,9 @@ export default function ParentPortal({
                   <div className="mt-4 w-full flex flex-col sm:flex-row items-center justify-center gap-3">
                     <button
                       type="button"
-                      onClick={async () => {
-                        const sid = student?.id || parent?.studentId || "";
-                        // 1. Check local / in-memory active session
-                        let currentSession = MockDatabase.getLiveStreamSession(sid) || 
-                          MockDatabase.getLiveStreamSessions().find(s => s.isLive) || streamSession;
-                        
+                      onClick={() => {
+                        // Check if student has turned on live stream
+                        const currentSession = MockDatabase.getLiveStreamSession(student?.id || "") || streamSession;
                         if (currentSession && currentSession.isLive) {
                           setStreamNotActiveNotice(null);
                           setIsLiveStreamViewActive(true);
@@ -957,32 +985,11 @@ export default function ParentPortal({
                           if (currentSession.latestFrame) {
                             handleIncomingFrame(currentSession.latestFrame);
                           }
-                          return;
+                        } else {
+                          // Show notice asking student to turn on
+                          setIsLiveStreamViewActive(false);
+                          setStreamNotActiveNotice("Student has not turned on the live stream. Please ask student to turn on.");
                         }
-
-                        // 2. Query remote server endpoint to see if student stream is active remotely
-                        try {
-                          const res = await fetch(`/api/stream/session/${sid}?parentId=${parent?.id || ""}`);
-                          if (res.ok) {
-                            const data = await res.json();
-                            if (data.success && data.isLive) {
-                              updateStreamSessionIfChanged(data);
-                              setStreamNotActiveNotice(null);
-                              setIsLiveStreamViewActive(true);
-                              setConnectionStatus('connected');
-                              if (data.latestFrame) {
-                                handleIncomingFrame(data.latestFrame);
-                              }
-                              return;
-                            }
-                          }
-                        } catch (err) {
-                          console.warn("Stream check error:", err);
-                        }
-
-                        // Show notice asking student to turn on
-                        setIsLiveStreamViewActive(false);
-                        setStreamNotActiveNotice("Student has not turned on the live stream. Please ask student to turn on from their student app.");
                       }}
                       className={`w-full sm:w-auto px-6 py-3 rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xl active:scale-95 ${
                         streamSession?.isLive 
