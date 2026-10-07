@@ -4565,9 +4565,9 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   return (
     <div className="w-full h-full bg-[#F8F9FF] overflow-hidden relative flex flex-col font-sans select-none">
 
-      {/* Web App Brand Header */}
+      {/* Web App Brand Header - Hidden completely on mobile view */}
       {currentScreen === 'app' && (
-        <div className="bg-white px-3 sm:px-6 py-3 flex justify-between items-center z-50 border-b border-[#F1F3F9] shrink-0">
+        <div className="hidden sm:flex bg-white sm:px-6 py-3 justify-between items-center z-50 border-b border-[#F1F3F9] shrink-0">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-[#6D3BFF] flex items-center justify-center text-white font-black text-sm shadow-xs">
               GH
@@ -4586,7 +4586,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
       {/* Live Push Notification Banner */}
       {notificationMsg && (
-        <div className="absolute top-12 left-3 right-3 bg-gradient-to-r from-[#6D3BFF] to-[#8F52FF] text-white p-3 rounded-2xl shadow-xl flex items-start justify-between gap-2.5 z-50 animate-bounce text-xs">
+        <div className="absolute top-3 sm:top-12 left-3 right-3 bg-gradient-to-r from-[#6D3BFF] to-[#8F52FF] text-white p-3 rounded-2xl shadow-xl flex items-start justify-between gap-2.5 z-50 animate-bounce text-xs">
           <div className="flex items-start gap-2.5">
             <Bell className="w-4 h-4 shrink-0 mt-0.5 animate-pulse" />
             <div>
