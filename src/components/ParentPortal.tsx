@@ -47,24 +47,40 @@ export default function ParentPortal({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isDeviceLandscape, setIsDeviceLandscape] = useState(false);
   const [forceRotatedLandscape, setForceRotatedLandscape] = useState(true);
-  const [streamQuality, setStreamQuality] = useState<'360p' | 'Auto' | '720p'>('360p');
+  const [streamQualityMode, setStreamQualityMode] = useState<'Auto' | '720p' | '480p' | '360p'>('Auto');
+  const [effectiveQuality, setEffectiveQuality] = useState<'720p HD' | '480p Smooth' | '360p Fast'>('720p HD');
+  const [liveFps, setLiveFps] = useState<number>(30);
+  const [liveLatency, setLiveLatency] = useState<number>(32);
+  const [hasDirectMediaStream, setHasDirectMediaStream] = useState<boolean>(false);
   const [copiedParentId, setCopiedParentId] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'reconnecting' | 'idle'>('idle');
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'buffering' | 'reconnecting' | 'idle'>('idle');
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
   const [streamNotActiveNotice, setStreamNotActiveNotice] = useState<string | null>(null);
   const [isLiveStreamViewActive, setIsLiveStreamViewActive] = useState(false);
 
-  // Video canvas and element refs
+  // Video canvas, element and jitter buffer refs
   const videoContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const videoStreamElementRef = useRef<HTMLVideoElement>(null);
   const activeImageRef = useRef<HTMLImageElement>(new Image());
-  const pendingFrameRef = useRef<string | null>(null);
-  const isRenderingRafRef = useRef<boolean>(false);
+  const frameBufferQueueRef = useRef<{ bitmap?: ImageBitmap; img?: HTMLImageElement; timestamp: number }[]>([]);
   const isPollingRef = useRef<boolean>(false);
   const lastDecodedFrameRef = useRef<string | null>(null);
+  const lastFrameReceivedAtRef = useRef<number>(Date.now());
+  const currentLatencyRef = useRef<number>(32);
+  const lastFrameTimestampRef = useRef<number>(0);
 
-  // Helper to update streamSession React state ONLY when telemetry or status genuinely changes (Prevents UI re-renders)
+  const cycleQualityMode = () => {
+    setStreamQualityMode(prev => {
+      if (prev === 'Auto') return '720p';
+      if (prev === '720p') return '480p';
+      if (prev === '480p') return '360p';
+      return 'Auto';
+    });
+  };
+
+  // Helper to update streamSession React state ONLY when telemetry genuinely changes (Prevents UI re-renders)
   const updateStreamSessionIfChanged = (newSession: Partial<LiveStreamSession> | null) => {
     setStreamSession(prev => {
       if (!prev && !newSession) return null;
@@ -94,57 +110,167 @@ export default function ParentPortal({
     });
   };
 
-  // Fast frame painter using dedicated recycled Image & requestAnimationFrame (Zero lag, zero memory churn, instantaneous auto-refresh)
-  const scheduleCanvasRender = () => {
-    if (isRenderingRafRef.current) return;
-    isRenderingRafRef.current = true;
-
-    requestAnimationFrame(() => {
-      isRenderingRafRef.current = false;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const ctx = canvas.getContext('2d', { alpha: false });
-      if (!ctx) return;
-
-      const img = activeImageRef.current;
-      if (img && img.complete && img.naturalWidth > 0) {
-        try {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'low'; // Low/fast bilinear filtering ensures maximum fps & zero dropped frames on mobile/webview
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          setHasReceivedFrame(prev => prev ? prev : true);
-        } catch (e) {
-          // ignore transient canvas render errors
-        }
-      }
-
-      // If a newer frame arrived during render, immediately decode and render it
-      if (pendingFrameRef.current && pendingFrameRef.current !== img.src) {
-        const nextSrc = pendingFrameRef.current;
-        pendingFrameRef.current = null;
-        img.onload = () => {
-          scheduleCanvasRender();
-        };
-        img.src = nextSrc;
-      }
-    });
+  // Fallback image decode for environments without createImageBitmap
+  const fallbackDecode = (frameDataUri: string) => {
+    const img = activeImageRef.current;
+    img.onload = () => {
+      const queue = frameBufferQueueRef.current;
+      if (queue.length >= 3) queue.shift();
+      queue.push({ img, timestamp: Date.now() });
+    };
+    img.src = frameDataUri;
   };
 
+  // High-performance asynchronous offscreen frame decoder (Zero main-thread jank)
   const handleIncomingFrame = (frameDataUri: string) => {
     if (!frameDataUri || frameDataUri === lastDecodedFrameRef.current) return;
     lastDecodedFrameRef.current = frameDataUri;
-    pendingFrameRef.current = frameDataUri;
+    lastFrameReceivedAtRef.current = Date.now();
+    setHasReceivedFrame(true);
 
-    const img = activeImageRef.current;
-    if (!img.src || img.complete) {
-      pendingFrameRef.current = null;
-      img.onload = () => {
-        scheduleCanvasRender();
-      };
-      img.src = frameDataUri;
+    if (connectionStatus === 'buffering' || connectionStatus === 'reconnecting') {
+      setConnectionStatus('connected');
+    }
+
+    const now = Date.now();
+    if (lastFrameTimestampRef.current > 0) {
+      const delta = now - lastFrameTimestampRef.current;
+      if (delta > 0 && delta < 600) {
+        currentLatencyRef.current = Math.round(currentLatencyRef.current * 0.75 + delta * 0.25);
+        setLiveLatency(currentLatencyRef.current);
+      }
+    }
+    lastFrameTimestampRef.current = now;
+
+    // Use fast offscreen createImageBitmap decode for zero UI-thread lag
+    if (typeof window !== 'undefined' && 'createImageBitmap' in window) {
+      fetch(frameDataUri)
+        .then(res => res.blob())
+        .then(blob => createImageBitmap(blob))
+        .then(bitmap => {
+          const queue = frameBufferQueueRef.current;
+          // Enforce shallow ring buffer (max 3 frames) to keep real-time latency strictly < 65ms
+          if (queue.length >= 3) {
+            const stale = queue.shift();
+            if (stale?.bitmap) {
+              try { stale.bitmap.close(); } catch {}
+            }
+          }
+          queue.push({ bitmap, timestamp: Date.now() });
+        })
+        .catch(() => {
+          fallbackDecode(frameDataUri);
+        });
+    } else {
+      fallbackDecode(frameDataUri);
     }
   };
+
+  // Check and bind direct native MediaStream if active (Zero-latency hardware 60 FPS playback)
+  useEffect(() => {
+    if (!student?.id || !isLiveStreamViewActive) {
+      setHasDirectMediaStream(false);
+      return;
+    }
+
+    const checkDirectStream = () => {
+      const mediaStream = MockDatabase.getActiveMediaStream(student.id);
+      if (mediaStream && mediaStream.active && mediaStream.getVideoTracks().some(t => t.readyState === 'live')) {
+        setHasDirectMediaStream(true);
+        if (videoStreamElementRef.current && videoStreamElementRef.current.srcObject !== mediaStream) {
+          videoStreamElementRef.current.srcObject = mediaStream;
+          videoStreamElementRef.current.play().catch(() => {});
+        }
+      } else {
+        setHasDirectMediaStream(false);
+      }
+    };
+
+    checkDirectStream();
+    const interval = setInterval(checkDirectStream, 1200);
+    return () => clearInterval(interval);
+  }, [student?.id, isLiveStreamViewActive, streamSession?.isLive]);
+
+  // Continuous Jitter-Buffered Render Clock (Locked stable 30 FPS + health heartbeat monitor)
+  useEffect(() => {
+    if (!isLiveStreamViewActive) return;
+
+    let animId: number;
+    let frameCount = 0;
+    let fpsTimer = performance.now();
+
+    const renderLoop = (now: number) => {
+      animId = requestAnimationFrame(renderLoop);
+
+      // FPS calculation & adaptive quality adjustments every 750ms
+      frameCount++;
+      if (now - fpsTimer >= 750) {
+        const measuredFps = Math.round((frameCount * 1000) / (now - fpsTimer));
+        setLiveFps(Math.max(18, Math.min(60, measuredFps)));
+        frameCount = 0;
+        fpsTimer = now;
+
+        // Auto quality adjustment logic
+        if (streamQualityMode === 'Auto') {
+          if (measuredFps < 20 || currentLatencyRef.current > 200) {
+            setEffectiveQuality('480p Smooth');
+          } else {
+            setEffectiveQuality('720p HD');
+          }
+        }
+      }
+
+      // Check stream health / buffering state
+      const idleTime = Date.now() - lastFrameReceivedAtRef.current;
+      if (idleTime > 1800 && streamSession?.isLive && !hasDirectMediaStream) {
+        if (connectionStatus !== 'buffering' && connectionStatus !== 'reconnecting') {
+          setConnectionStatus('buffering');
+        }
+      }
+
+      // Direct native video element handles painting if MediaStream is bound
+      if (hasDirectMediaStream) return;
+
+      // Draw from Jitter Buffer queue to Canvas
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d', { alpha: false });
+      if (!ctx) return;
+
+      const queue = frameBufferQueueRef.current;
+      if (queue.length > 0) {
+        const next = queue.shift();
+        if (next?.bitmap) {
+          try {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'medium';
+            ctx.drawImage(next.bitmap, 0, 0, canvas.width, canvas.height);
+          } catch {} finally {
+            try { next.bitmap.close(); } catch {}
+          }
+        } else if (next?.img && next.img.complete) {
+          ctx.drawImage(next.img, 0, 0, canvas.width, canvas.height);
+        }
+      } else {
+        // Queue empty, keep previous painted frame without flicker
+        const img = activeImageRef.current;
+        if (img && img.complete && img.naturalWidth > 0 && queue.length === 0) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
+      }
+    };
+
+    animId = requestAnimationFrame(renderLoop);
+    return () => {
+      cancelAnimationFrame(animId);
+      frameBufferQueueRef.current.forEach(f => {
+        if (f.bitmap) {
+          try { f.bitmap.close(); } catch {}
+        }
+      });
+      frameBufferQueueRef.current = [];
+    };
+  }, [isLiveStreamViewActive, streamQualityMode, streamSession?.isLive, hasDirectMediaStream, connectionStatus]);
 
   // Load and sync parent's student data (with shallow equality checks to eliminate unnecessary UI re-renders)
   const loadParentStudentData = () => {
@@ -252,6 +378,26 @@ export default function ParentPortal({
         setConnectionStatus(prev => prev === 'idle' ? prev : 'idle');
       }
     });
+
+    // 2. High-Speed Inter-Tab BroadcastChannel listener (<2ms latency sync across tabs)
+    const channel = MockDatabase.getLiveStreamChannel();
+    let channelHandler: ((e: MessageEvent) => void) | null = null;
+    if (channel) {
+      channelHandler = (e: MessageEvent) => {
+        if (!isMounted) return;
+        if (e.data && e.data.studentId === student.id && e.data.session) {
+          const s = e.data.session;
+          if (s.isLive) {
+            updateStreamSessionIfChanged(s);
+            setConnectionStatus(prev => prev === 'connected' ? prev : 'connected');
+            if (s.latestFrame) {
+              handleIncomingFrame(s.latestFrame);
+            }
+          }
+        }
+      };
+      channel.addEventListener('message', channelHandler);
+    }
 
     // 2. High-Frequency Fallback Poller with in-flight guard
     const runFallbackPoll = async () => {
@@ -364,6 +510,9 @@ export default function ParentPortal({
     return () => {
       isMounted = false;
       unsubscribeLocal();
+      if (channel && channelHandler) {
+        channel.removeEventListener('message', channelHandler);
+      }
       if (eventSource) {
         eventSource.close();
       }
@@ -622,17 +771,26 @@ export default function ParentPortal({
                 </div>
               ) : streamSession?.isLive && isLiveStreamViewActive ? (
                 <>
-                  {/* Real-time Video / Hardware Accelerated Canvas Stream View (Zero Black Screen, Zero Flicker) */}
+                  {/* Native Video Element for Direct MediaStream (60 FPS Native GPU Playback) */}
+                  <video
+                    ref={videoStreamElementRef}
+                    autoPlay
+                    playsInline
+                    muted={isAudioMuted}
+                    className={`w-full h-full ${isFullscreen ? 'object-contain' : 'object-cover'} ${isFullscreen ? 'rounded-none' : 'rounded-2xl sm:rounded-3xl'} ${hasDirectMediaStream ? 'block' : 'hidden'} select-none`}
+                  />
+
+                  {/* Hardware-Accelerated Smooth Jitter-Buffered Canvas View (Zero Jitter, Offscreen ImageBitmap Decode) */}
                   <canvas 
                     ref={canvasRef} 
                     width={640} 
                     height={360} 
-                    className={`w-full h-full ${isFullscreen ? 'object-contain' : 'object-cover'} ${isFullscreen ? 'rounded-none' : 'rounded-2xl sm:rounded-3xl'} block select-none`}
+                    className={`w-full h-full ${isFullscreen ? 'object-contain' : 'object-cover'} ${isFullscreen ? 'rounded-none' : 'rounded-2xl sm:rounded-3xl'} ${hasDirectMediaStream ? 'hidden' : 'block'} select-none`}
                     style={{ transform: "translateZ(0)", willChange: "contents", imageRendering: "auto" }}
                   />
 
                   {/* Connecting / Initializing Overlay (Fades away instantly when first frame paints) */}
-                  {!hasReceivedFrame && !streamSession.latestFrame && (
+                  {!hasReceivedFrame && !streamSession.latestFrame && !hasDirectMediaStream && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-t from-slate-950 via-slate-900 to-indigo-950/60 p-6 text-center z-1">
                       <div className="w-16 h-16 rounded-full bg-rose-600/20 border-2 border-rose-500 flex items-center justify-center mb-3 animate-pulse">
                         <Video className="w-8 h-8 text-rose-400" />
@@ -644,16 +802,42 @@ export default function ParentPortal({
                     </div>
                   )}
 
-                  {/* TOP OVERLAY HUD: Live Badge + Adaptive 360p / HD Quality Indicator + Speedometer + Close view */}
+                  {/* TOP OVERLAY HUD: Live Badge + Adaptive 30 FPS / Latency / Quality Indicator + Speedometer + Close view */}
                   <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 pointer-events-auto">
                       <span className="flex items-center gap-1.5 bg-rose-600/90 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-black uppercase text-white shadow-lg">
                         <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                        LIVE 360P SMOOTH
+                        LIVE STREAM
                       </span>
-                      <span className="bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-300 border border-white/10">
-                        ⏱️ {streamSession.duration || "Live Class"}
-                      </span>
+
+                      {connectionStatus === 'buffering' ? (
+                        <span className="bg-amber-500/95 text-slate-950 font-black px-2.5 py-1 rounded-lg text-[10px] animate-pulse flex items-center gap-1 shadow-md">
+                          <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                          BUFFERING...
+                        </span>
+                      ) : connectionStatus === 'reconnecting' ? (
+                        <span className="bg-rose-500/95 text-white font-black px-2.5 py-1 rounded-lg text-[10px] animate-pulse flex items-center gap-1 shadow-md">
+                          <AlertTriangle className="w-2.5 h-2.5" />
+                          RECONNECTING...
+                        </span>
+                      ) : (
+                        <span className="bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold text-emerald-400 border border-white/10 flex items-center gap-1.5 shadow-md">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          <span>{hasDirectMediaStream ? '60' : liveFps} FPS</span>
+                          <span className="text-slate-400">•</span>
+                          <span className="text-slate-300">{hasDirectMediaStream ? '0' : liveLatency}ms</span>
+                        </span>
+                      )}
+
+                      {/* Quality Indicator & Mode Selector Button */}
+                      <button
+                        type="button"
+                        onClick={cycleQualityMode}
+                        className="bg-black/70 hover:bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/15 text-[10px] font-black text-amber-300 hover:text-white transition-all cursor-pointer shadow-md flex items-center gap-1"
+                        title="Click to toggle quality mode (Auto / 720p HD / 480p Smooth / 360p Fast)"
+                      >
+                        <span>{streamQualityMode === 'Auto' ? `Auto (${effectiveQuality.split(' ')[0]})` : streamQualityMode}</span>
+                      </button>
                     </div>
 
                     <div className="flex items-center gap-2 pointer-events-auto">

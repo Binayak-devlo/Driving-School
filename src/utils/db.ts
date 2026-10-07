@@ -1007,6 +1007,38 @@ export class MockDatabase {
 
   private static inMemoryStreams = new Map<string, LiveStreamSession>();
   private static streamListeners = new Map<string, Set<(session: LiveStreamSession) => void>>();
+  private static activeMediaStreams = new Map<string, MediaStream>();
+  private static liveStreamChannel: BroadcastChannel | null = null;
+
+  static getLiveStreamChannel(): BroadcastChannel | null {
+    if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
+      if (!this.liveStreamChannel) {
+        try {
+          this.liveStreamChannel = new BroadcastChannel("golden_hands_live_camera_stream");
+        } catch {}
+      }
+      return this.liveStreamChannel;
+    }
+    return null;
+  }
+
+  static setActiveMediaStream(studentId: string, stream: MediaStream | null): void {
+    if (!studentId) return;
+    if (stream && stream.active) {
+      this.activeMediaStreams.set(studentId, stream);
+    } else {
+      this.activeMediaStreams.delete(studentId);
+    }
+  }
+
+  static getActiveMediaStream(studentId: string): MediaStream | null {
+    if (!studentId) return null;
+    const stream = this.activeMediaStreams.get(studentId);
+    if (stream && stream.active && stream.getVideoTracks().some(t => t.readyState === 'live')) {
+      return stream;
+    }
+    return null;
+  }
 
   static subscribeToLiveStream(studentId: string, callback: (session: LiveStreamSession) => void): () => void {
     if (!studentId) return () => {};
@@ -1054,6 +1086,18 @@ export class MockDatabase {
         try { cb(session); } catch (err) {}
       }
     }
+
+    // Broadcast via inter-tab BroadcastChannel for zero-latency multi-tab sync
+    try {
+      const channel = this.getLiveStreamChannel();
+      if (channel) {
+        channel.postMessage({
+          type: "stream_update",
+          studentId: session.studentId,
+          session: session
+        });
+      }
+    } catch {}
 
     // Only persist to localStorage and Cloud if it's state change (start/stop), NOT every frame tick to prevent lag
     if (!isFrameOnly) {
