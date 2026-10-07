@@ -23,7 +23,12 @@
         "proposedCourseSyllabus": { "type": "array" },
         "proposedCourseFee": { "type": "number" },
         "modificationStatus": { "type": "string", "enum": ["none", "proposed", "paid_pending_approval", "rejected"] },
-        "emailVerified": { "type": "boolean" }
+        "emailVerified": { "type": "boolean" },
+        "isPremium": { "type": "boolean" },
+        "parentId": { "type": "string" },
+        "parentCode": { "type": "string" },
+        "parentAccessStatus": { "type": "string", "enum": ["active", "disabled", "inactive"] },
+        "parentCredentialsShown": { "type": "boolean" }
       },
       "required": ["id", "name", "phone", "email"]
     },
@@ -216,11 +221,15 @@
         "phone": { "type": "string" },
         "email": { "type": "string" },
         "password": { "type": "string" },
+        "parentCode": { "type": "string" },
         "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
         "plan": { "type": "string", "enum": ["Premium", "Standard"] },
-        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "status": { "type": "string", "enum": ["active", "inactive", "disabled"] },
         "streamAccessAllowed": { "type": "boolean" },
-        "lastLoginAt": { "type": "string" }
+        "lastLoginAt": { "type": "string" },
+        "regeneratedAt": { "type": "string" },
+        "regeneratedBy": { "type": "string" }
       },
       "required": ["id", "studentId", "name", "phone", "plan", "status"]
     },

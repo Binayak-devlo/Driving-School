@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { 
   Car, Compass, ShieldCheck, Phone, MapPin, Sparkles, Sliders, 
   ArrowLeft, Users, UserCheck, CreditCard, ChevronRight, Laptop, 
@@ -7,38 +7,94 @@ import {
 } from "lucide-react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "./utils/firebase";
-import StudentApp from "./components/StudentApp";
-import TrainerApp from "./components/TrainerApp";
-import AdminDashboard from "./components/AdminDashboard";
 import SplashScreen from "./components/SplashScreen";
 import UnifiedAuthPortal from "./components/UnifiedAuthPortal";
-import ParentPortal from "./components/ParentPortal";
 import PullToRefresh from "./components/PullToRefresh";
 import { MockDatabase } from "./utils/db";
 import { NavState } from "./types";
 
+// Dynamic lazy-loading to optimize bundle size and prevent main thread locks
+const StudentApp = lazy(() => import("./components/StudentApp"));
+const TrainerApp = lazy(() => import("./components/TrainerApp"));
+const AdminDashboard = lazy(() => import("./components/AdminDashboard"));
+const ParentPortal = lazy(() => import("./components/ParentPortal"));
+
+function PortalWorkspaceLoader({ label }: { label: string }) {
+  return (
+    <div className="w-full h-full flex flex-col items-center justify-center bg-[#0a0a0f] text-center p-8 min-h-[400px]">
+      <div className="w-12 h-12 relative mb-4">
+        <div className="absolute inset-0 border-4 border-amber-500/20 rounded-full" />
+        <div className="absolute inset-0 border-4 border-t-[#D4AF37] border-r-[#FFE073] rounded-full animate-spin" />
+      </div>
+      <h3 className="text-sm font-extrabold text-white tracking-tight">{label}</h3>
+      <p className="text-xs text-slate-400 mt-1 font-medium">Opening secure workspace...</p>
+    </div>
+  );
+}
+
 function getInitialNavState(): NavState {
-  // Default to 'portal' hub so application opens cleanly on main landing/auth portal
-  // Live server session validation will run on mount and confirm session with live backend if online
+  let initialView: 'portal' | 'student' | 'trainer' | 'admin' | 'parent' = 'portal';
+  let studentScreen: 'login' | 'app' = 'login';
+  let trainerLoggedIn = false;
+  let adminLoggedIn = false;
+  let parentLoggedIn = false;
+
+  try {
+    const rememberedRaw = localStorage.getItem("golden_hands_remember_user");
+    let remembered: any = null;
+    if (rememberedRaw) {
+      try { remembered = JSON.parse(rememberedRaw); } catch(e) {}
+    }
+    const currentStudentId = localStorage.getItem("golden_hands_current_student_id") || (remembered?.role === 'student' ? remembered.id : "");
+    const currentTrainerId = localStorage.getItem("golden_hands_current_trainer_id") || (remembered?.role === 'trainer' ? remembered.id : "");
+    const isAdmin = localStorage.getItem("golden_hands_admin_logged_in") === "true" || (remembered?.role === 'admin');
+    const currentParentId = localStorage.getItem("golden_hands_current_parent_id") || (remembered?.role === 'parent' ? remembered.id : "");
+
+    if (currentStudentId) {
+      initialView = 'student';
+      studentScreen = 'app';
+    } else if (currentTrainerId) {
+      initialView = 'trainer';
+      trainerLoggedIn = true;
+    } else if (isAdmin) {
+      initialView = 'admin';
+      adminLoggedIn = true;
+    } else if (currentParentId) {
+      initialView = 'parent';
+      parentLoggedIn = true;
+    }
+  } catch (e) {}
+
   return {
-    activeView: 'portal',
-    studentScreen: 'login',
+    activeView: initialView,
+    studentScreen,
     studentTab: 'home',
     studentSubPage: null,
-    trainerLoggedIn: false,
+    trainerLoggedIn,
     trainerTab: 'schedule',
     trainerSelectedBookingId: null,
-    adminLoggedIn: false,
+    adminLoggedIn,
     adminTab: 'analytics',
     adminPreviewDocId: null,
+    parentLoggedIn,
+    parentTab: 'overview',
     seq: 2
   };
 }
 
 export default function App() {
-  const [showSplash, setShowSplash] = useState(true);
+  const [showSplash, setShowSplash] = useState(() => {
+    try {
+      return sessionStorage.getItem("golden_hands_splash_seen") !== "true";
+    } catch {
+      return false;
+    }
+  });
 
   const handleSplashComplete = useCallback(() => {
+    try {
+      sessionStorage.setItem("golden_hands_splash_seen", "true");
+    } catch(e) {}
     setShowSplash(false);
   }, []);
   
@@ -46,18 +102,18 @@ export default function App() {
   const [dbRefreshKey, setDbRefreshKey] = useState(0);
 
   // Sync state stats
-  const [student, setStudent] = useState(MockDatabase.getStudent());
-  const [trainers, setTrainers] = useState(MockDatabase.getTrainers());
-  const [bookings, setBookings] = useState(MockDatabase.getBookings());
-  const [payments, setPayments] = useState(MockDatabase.getPayments());
-  const [progress, setProgress] = useState(MockDatabase.getProgress());
+  const [student, setStudent] = useState(() => MockDatabase.getStudent());
+  const [trainers, setTrainers] = useState(() => MockDatabase.getTrainers());
+  const [bookings, setBookings] = useState(() => MockDatabase.getBookings());
+  const [payments, setPayments] = useState(() => MockDatabase.getPayments());
+  const [progress, setProgress] = useState(() => MockDatabase.getProgress());
 
   // Cloud synchronization status
   const [cloudSyncing, setCloudSyncing] = useState(false);
 
   // Firebase connection status state
-  const [connStatus, setConnStatus] = useState<'connected' | 'connecting' | 'offline'>('connecting');
-  const [showConnectedBar, setShowConnectedBar] = useState(true);
+  const [connStatus, setConnStatus] = useState<'connected' | 'connecting' | 'offline'>('connected');
+  const [showConnectedBar, setShowConnectedBar] = useState(false);
 
   // Back navigation management states
   const [currentNavState, setCurrentNavState] = useState<NavState>(() => {
@@ -94,31 +150,26 @@ export default function App() {
     currentNavStateRef.current = currentNavState;
   }, [currentNavState]);
 
-  // Requirement 4 & 8: Validate startup session with live server and block offline cached auth restoration
+  // Non-blocking background synchronization on startup
   useEffect(() => {
-    const initAppOnAuthPortal = async () => {
-      // Clear cached auto-login session so user must log in through the database
-      localStorage.removeItem("golden_hands_current_student_id");
-      localStorage.removeItem("golden_hands_current_trainer_id");
-      localStorage.removeItem("golden_hands_admin_logged_in");
+    let isMounted = true;
+    MockDatabase.syncFromCloud()
+      .then(() => {
+        if (isMounted) {
+          setStudent(MockDatabase.getStudent());
+          setTrainers(MockDatabase.getTrainers());
+          setBookings(MockDatabase.getBookings());
+          setPayments(MockDatabase.getPayments());
+          setProgress(MockDatabase.getProgress());
+        }
+      })
+      .catch((err) => {
+        console.warn("Background cloud sync startup notice:", err);
+      });
 
-      setCurrentNavState(prev => ({
-        ...prev,
-        activeView: 'portal',
-        studentScreen: 'login',
-        trainerLoggedIn: false,
-        adminLoggedIn: false
-      }));
-
-      // Sync latest cloud data on load
-      try {
-        await MockDatabase.syncFromCloud();
-      } catch (err) {
-        console.warn("Cloud sync on app startup:", err);
-      }
+    return () => {
+      isMounted = false;
     };
-
-    initAppOnAuthPortal();
   }, []);
 
   const triggerAppToast = (msg: string) => {
@@ -207,7 +258,7 @@ export default function App() {
             ? navStackRef.current.findIndex(s => s.seq === poppedState.seq)
             : navStackRef.current.findIndex(s => isStateEqual(s, poppedState));
           if (stateIdx !== -1) {
-            navStackRef.current = navStackRef.current.slice(0, stateIdx + 1);
+            navStackRef.current = (navStackRef.current || []).slice(0, stateIdx + 1);
           } else {
             navStackRef.current.push(poppedState);
           }
@@ -291,6 +342,19 @@ export default function App() {
   // Listen to Firestore changes in real-time across all collections
   useEffect(() => {
     const unsubscribes: (() => void)[] = [];
+    let debounceTimer: any = null;
+
+    const triggerDebouncedUpdate = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        setStudent(MockDatabase.getStudent());
+        setTrainers(MockDatabase.getTrainers());
+        setBookings(MockDatabase.getBookings());
+        setPayments(MockDatabase.getPayments());
+        setProgress(MockDatabase.getProgress());
+        window.dispatchEvent(new CustomEvent("db-updated"));
+      }, 100);
+    };
 
     const collectionsToSync = [
       { name: "students", key: "registered_students_list" },
@@ -362,17 +426,10 @@ export default function App() {
             });
           }
 
-          // Trigger local state refreshes
-          setStudent(MockDatabase.getStudent());
-          setTrainers(MockDatabase.getTrainers());
-          setBookings(MockDatabase.getBookings());
-          setPayments(MockDatabase.getPayments());
-          setProgress(MockDatabase.getProgress());
-
-          // Dispatch global custom event for sub-portals
-          window.dispatchEvent(new CustomEvent("db-updated"));
+          // Trigger debounced local state refreshes without blocking UI
+          triggerDebouncedUpdate();
         }, (err) => {
-          console.warn(`Real-time listener for ${col.name} encountered errors (expected if rules limit or offline):`, err);
+          console.warn(`Real-time listener for ${col.name} notice:`, err);
         });
 
         unsubscribes.push(unsub);
@@ -382,6 +439,7 @@ export default function App() {
     });
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       unsubscribes.forEach(unsub => {
         try {
           unsub();
@@ -446,85 +504,14 @@ export default function App() {
     }
   }, [connStatus]);
 
-  // Run cloud sync on mount and when dbRefreshKey updates
-  useEffect(() => {
-    let retryTimer: any = null;
-    let isMounted = true;
-
-    async function performCloudSync(isBackgroundRetry = false) {
-      if (!isMounted) return;
-      try {
-        if (!isBackgroundRetry) {
-          setConnStatus('connecting');
-        }
-        const success = await MockDatabase.syncFromCloud();
-        
-        if (!success) {
-          throw new Error("syncFromCloud returned false");
-        }
-
-        // Clear simulated stale bookings on startup if they exist
-        const simCleared = localStorage.getItem("golden_hands_sim_cleared_v4");
-        if (!simCleared) {
-          const allB = MockDatabase.getAllBookings();
-          const filteredB = allB.filter(b => b && b.id && !b.id.startsWith("sim_completed_"));
-          if (allB.length !== filteredB.length) {
-            MockDatabase.saveBookings(filteredB);
-          }
-          
-          const stud = MockDatabase.getStudent();
-          if (stud && (stud.courseEnded || stud.planExtended || stud.llStatus === 'Driving Test')) {
-            const updatedStud = {
-              ...stud,
-              planExtended: false,
-              courseEnded: false,
-              licenceFeePaid: false,
-              llStatus: 'Applied' as const
-            };
-            MockDatabase.saveStudent(updatedStud);
-          }
-          localStorage.setItem("golden_hands_sim_cleared_v4", "true");
-        }
-
-        // Force refresh state values
-        if (isMounted) {
-          setStudent(MockDatabase.getStudent());
-          setTrainers(MockDatabase.getTrainers());
-          setBookings(MockDatabase.getBookings());
-          setPayments(MockDatabase.getPayments());
-          setProgress(MockDatabase.getProgress());
-          setConnStatus('connected');
-        }
-      } catch (err) {
-        console.error("Cloud sync failed, loading from local cache:", err);
-        if (isMounted) {
-          // Load local cache to keep the app fully functional offline
-          setStudent(MockDatabase.getStudent());
-          setTrainers(MockDatabase.getTrainers());
-          setBookings(MockDatabase.getBookings());
-          setPayments(MockDatabase.getPayments());
-          setProgress(MockDatabase.getProgress());
-          setConnStatus('offline');
-          
-          // Retry sync in 10 seconds in background to reconnect
-          if (retryTimer) clearTimeout(retryTimer);
-          retryTimer = setTimeout(() => {
-            performCloudSync(true);
-          }, 10000);
-        }
-      }
-    }
-    performCloudSync();
-
-    return () => {
-      isMounted = false;
-      if (retryTimer) clearTimeout(retryTimer);
-    };
-  }, [dbRefreshKey]);
-
-  const handleStateChange = () => {
-    setDbRefreshKey(prev => prev + 1);
-  };
+  // Local state update callback for sub-portals
+  const handleStateChange = useCallback(() => {
+    setStudent(MockDatabase.getStudent());
+    setTrainers(MockDatabase.getTrainers());
+    setBookings(MockDatabase.getBookings());
+    setPayments(MockDatabase.getPayments());
+    setProgress(MockDatabase.getProgress());
+  }, []);
 
   // Custom confirmation modal state
   const [confirmModal, setConfirmModal] = useState<{
@@ -548,17 +535,24 @@ export default function App() {
     });
   };
 
-  // Sync state continuously from localstorage for dashboard preview numbers
+  // Sync state cleanly on db-updated events
   useEffect(() => {
+    let timer: any = null;
     const handleStorageChange = () => {
-      setStudent(MockDatabase.getStudent());
-      setTrainers(MockDatabase.getTrainers());
-      setBookings(MockDatabase.getBookings());
-      setPayments(MockDatabase.getPayments());
-      setProgress(MockDatabase.getProgress());
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        setStudent(MockDatabase.getStudent());
+        setTrainers(MockDatabase.getTrainers());
+        setBookings(MockDatabase.getBookings());
+        setPayments(MockDatabase.getPayments());
+        setProgress(MockDatabase.getProgress());
+      }, 80);
     };
-    const interval = setInterval(handleStorageChange, 1500);
-    return () => clearInterval(interval);
+    window.addEventListener("db-updated", handleStorageChange);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("db-updated", handleStorageChange);
+    };
   }, []);
 
   const resetAllData = () => {
@@ -767,23 +761,25 @@ export default function App() {
             <div className="flex-1 flex flex-col overflow-hidden relative bg-[#F0F2FA]">
               {/* Centered Web App Layout */}
               <div className="w-full h-full">
-                <StudentApp 
-                  onStateChange={handleStateChange} 
-                  onLogout={() => {
-                    const fresh: NavState = {
-                      ...currentNavState,
-                      activeView: 'portal',
-                      studentScreen: 'login',
-                      studentTab: 'home',
-                      studentSubPage: null,
-                      seq: (currentNavState.seq || 2) + 1
-                    };
-                    navStackRef.current.push(fresh);
-                    setCurrentNavState(fresh);
-                    window.history.pushState(fresh, '');
-                  }} 
-                  navState={currentNavState} 
-                />
+                <Suspense fallback={<PortalWorkspaceLoader label="Golden Hands Student Portal" />}>
+                  <StudentApp 
+                    onStateChange={handleStateChange} 
+                    onLogout={() => {
+                      const fresh: NavState = {
+                        ...currentNavState,
+                        activeView: 'portal',
+                        studentScreen: 'login',
+                        studentTab: 'home',
+                        studentSubPage: null,
+                        seq: (currentNavState.seq || 2) + 1
+                      };
+                      navStackRef.current.push(fresh);
+                      setCurrentNavState(fresh);
+                      window.history.pushState(fresh, '');
+                    }} 
+                    navState={currentNavState} 
+                  />
+                </Suspense>
               </div>
             </div>
           </div>
@@ -796,7 +792,9 @@ export default function App() {
             <div className="flex-1 flex flex-col overflow-hidden relative bg-[#121217]">
               {/* Centered Web App Layout */}
               <div className="w-full h-full">
-                <TrainerApp onStateChange={handleStateChange} onLogout={() => changeView('portal')} navState={currentNavState} />
+                <Suspense fallback={<PortalWorkspaceLoader label="Trainer Portal Workspace" />}>
+                  <TrainerApp onStateChange={handleStateChange} onLogout={() => changeView('portal')} navState={currentNavState} />
+                </Suspense>
               </div>
             </div>
           </div>
@@ -805,7 +803,9 @@ export default function App() {
         {/* 3. Admin Full Screen Desktop View */}
         {activeView === 'admin' && (
           <div className="h-full">
-            <AdminDashboard onStateChange={handleStateChange} onLogout={() => changeView('portal')} navState={currentNavState} />
+            <Suspense fallback={<PortalWorkspaceLoader label="Admin Master Dashboard" />}>
+              <AdminDashboard onStateChange={handleStateChange} onLogout={() => changeView('portal')} navState={currentNavState} />
+            </Suspense>
           </div>
         )}
 
@@ -813,22 +813,24 @@ export default function App() {
         {activeView === 'parent' && (
           <div className="h-full flex flex-col overflow-hidden bg-slate-950">
             <div className="w-full h-full">
-              <ParentPortal 
-                onStateChange={handleStateChange} 
-                onLogout={() => {
-                  MockDatabase.logoutParent();
-                  const fresh: NavState = {
-                    ...currentNavState,
-                    activeView: 'portal',
-                    parentLoggedIn: false,
-                    seq: (currentNavState.seq || 2) + 1
-                  };
-                  navStackRef.current.push(fresh);
-                  setCurrentNavState(fresh);
-                  window.history.pushState(fresh, '');
-                }} 
-                navState={currentNavState} 
-              />
+              <Suspense fallback={<PortalWorkspaceLoader label="Parent Guardian Portal" />}>
+                <ParentPortal 
+                  onStateChange={handleStateChange} 
+                  onLogout={() => {
+                    MockDatabase.logoutParent();
+                    const fresh: NavState = {
+                      ...currentNavState,
+                      activeView: 'portal',
+                      parentLoggedIn: false,
+                      seq: (currentNavState.seq || 2) + 1
+                    };
+                    navStackRef.current.push(fresh);
+                    setCurrentNavState(fresh);
+                    window.history.pushState(fresh, '');
+                  }} 
+                  navState={currentNavState} 
+                />
+              </Suspense>
             </div>
           </div>
         )}
@@ -902,9 +904,19 @@ export default function App() {
             <CheckCircle2 className="w-8 h-8 text-emerald-500 animate-pulse" />
           </div>
           <h2 className="text-xl font-black text-white tracking-tight mb-2">Application Exited</h2>
-          <p className="text-xs text-slate-400 max-w-xs leading-relaxed font-medium">
+          <p className="text-xs text-slate-400 max-w-xs leading-relaxed font-medium mb-4">
             You have safely closed the session. You may now close this browser tab or window.
           </p>
+          <button
+            type="button"
+            onClick={() => {
+              setIsExited(false);
+              setCurrentNavState(getInitialNavState());
+            }}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#FFE073] text-black font-extrabold text-xs shadow-lg shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
+          >
+            Reopen Application
+          </button>
         </div>
       )}
 

@@ -752,19 +752,88 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
       if (studentToUpdate) {
         if (status === 'Success') {
           // Determine if this clears the first or second installment or a full fee
-          const isFinal = targetPayment.amount === 1500 || targetPayment.purpose.toLowerCase().includes("final") || targetPayment.purpose.toLowerCase().includes("remaining") || (studentToUpdate.amountPaid || 0) + targetPayment.amount >= 3500;
-          const newAmountPaid = isFinal ? 3500 : 2000;
-          const newRemaining = 3500 - newAmountPaid;
-          const newPaymentStatus = isFinal ? 'Paid' as const : 'Partial' as const;
+          const isCourseFeePayment = targetPayment.purpose.toLowerCase().includes("course") || targetPayment.purpose.toLowerCase().includes("installment");
+          const totalPackageFee = studentToUpdate.totalCourseFee || 3500;
+          let coursePaidAmount = studentToUpdate.coursePaidAmount !== undefined 
+            ? studentToUpdate.coursePaidAmount 
+            : Math.min(totalPackageFee, studentToUpdate.amountPaid || 0);
+          let courseRemainingAmount = studentToUpdate.courseRemainingAmount !== undefined 
+            ? studentToUpdate.courseRemainingAmount 
+            : Math.max(0, totalPackageFee - coursePaidAmount);
+          let upgradePaidAmount = studentToUpdate.upgradePaidAmount !== undefined ? studentToUpdate.upgradePaidAmount : 0;
+          let upgradePlanDetails = studentToUpdate.upgradePlanDetails || "";
+          let newPaymentStatus = studentToUpdate.paymentStatus || 'Unpaid';
+
+          if (isCourseFeePayment) {
+            const isFinal = targetPayment.amount === 1500 || targetPayment.purpose.toLowerCase().includes("final") || targetPayment.purpose.toLowerCase().includes("remaining") || coursePaidAmount + targetPayment.amount >= totalPackageFee;
+            coursePaidAmount = isFinal ? totalPackageFee : Math.min(totalPackageFee, coursePaidAmount + targetPayment.amount);
+            courseRemainingAmount = Math.max(0, totalPackageFee - coursePaidAmount);
+            newPaymentStatus = coursePaidAmount >= totalPackageFee ? 'Paid' as const : 'Partial' as const;
+          } else {
+            upgradePaidAmount += targetPayment.amount;
+          }
+
+          let parentLiveUnlocked = studentToUpdate.parentLiveUnlocked || studentToUpdate.hasParentLiveView || false;
+          let hasParentLiveView = studentToUpdate.hasParentLiveView || studentToUpdate.parentLiveUnlocked || false;
+          let isPremium = studentToUpdate.isPremium || false;
+          let totalSessions = studentToUpdate.totalSessions || 15;
+          let planExtended = studentToUpdate.planExtended || false;
+          let courseEnded = studentToUpdate.courseEnded || false;
+          let courseName = studentToUpdate.courseName || "Basic Package (15 Sessions)";
+
+          if (targetPayment.purpose.toLowerCase().includes("refresh") || targetPayment.purpose.toLowerCase().includes("7 extra") || (targetPayment.amount === 1750 && !targetPayment.purpose.toLowerCase().includes("extra practical"))) {
+            totalSessions = (studentToUpdate.totalSessions || 15) + 7;
+            planExtended = true;
+            courseEnded = false;
+            courseName = studentToUpdate.courseName ? `${studentToUpdate.courseName} (Refresh +7 Classes)` : "Refresh Training Season (7 Extra Classes)";
+            upgradePlanDetails = upgradePlanDetails ? `${upgradePlanDetails}, Refresh Training (+7 Classes)` : "Refresh Training Season (+7 Classes)";
+          } else if (targetPayment.purpose.toLowerCase().includes("extend") || targetPayment.purpose.toLowerCase().includes("pro driver") || targetPayment.amount === 2999) {
+            totalSessions = (studentToUpdate.totalSessions || 15) + 10;
+            planExtended = true;
+            courseEnded = false;
+            isPremium = true;
+            parentLiveUnlocked = true;
+            hasParentLiveView = true;
+            courseName = "Pro Driver Extend Plan (25 Classes + Premium)";
+            upgradePlanDetails = upgradePlanDetails ? `${upgradePlanDetails}, Pro Driver Extend (+10 Classes, Premium)` : "Pro Driver Extend Plan (+10 Classes, Premium, Live View)";
+          } else if (targetPayment.purpose.toLowerCase().includes("parent live") || (targetPayment.amount === 500 && !targetPayment.purpose.toLowerCase().includes("course"))) {
+            parentLiveUnlocked = true;
+            hasParentLiveView = true;
+            upgradePlanDetails = upgradePlanDetails ? `${upgradePlanDetails}, Parent Live View` : "Parent Live View (In-Car Streaming)";
+          }
+
+          // Check if student still needs to pay course fees based on completed classes
+          const studentBookings = MockDatabase.getAllBookings().filter(b => b.studentId === studentToUpdate.id && (b.status === 'completed'));
+          const completedCount = studentBookings.length;
+          let bookingLocked = false;
+          let lockedReason = "";
+          if (completedCount >= 1 && coursePaidAmount < 2000) {
+            bookingLocked = true;
+            lockedReason = "First class completed. Course installment of ₹2,000 required to book more classes.";
+          } else if (completedCount >= 5 && coursePaidAmount < totalPackageFee) {
+            bookingLocked = true;
+            lockedReason = `5 classes completed. Pending course balance of ₹${courseRemainingAmount.toLocaleString()} required to book classes beyond class 5.`;
+          }
 
           const updatedStudent = {
             ...studentToUpdate,
-            amountPaid: newAmountPaid,
-            remainingAmount: newRemaining,
+            courseName,
+            totalSessions,
+            planExtended,
+            courseEnded,
+            isPremium,
+            amountPaid: coursePaidAmount,
+            remainingAmount: courseRemainingAmount,
+            coursePaidAmount,
+            courseRemainingAmount,
+            upgradePaidAmount,
+            upgradePlanDetails,
             paymentStatus: newPaymentStatus,
             paymentApprovalStatus: 'Approved' as const,
-            bookingLocked: false,
-            lockedReason: ""
+            parentLiveUnlocked,
+            hasParentLiveView,
+            bookingLocked,
+            lockedReason
           };
           MockDatabase.saveStudent(updatedStudent, targetPayment.studentId);
           if (student.id === targetPayment.studentId) {
@@ -816,17 +885,25 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
         let firstClassCompleted = !!studentToUpdate.firstClassCompleted;
 
         if (status === 'completed') {
+          const totalFee = studentToUpdate.totalCourseFee || 3500;
+          const coursePaid = studentToUpdate.coursePaidAmount !== undefined 
+            ? studentToUpdate.coursePaidAmount 
+            : Math.min(totalFee, studentToUpdate.amountPaid || 0);
+          const courseRemaining = studentToUpdate.courseRemainingAmount !== undefined 
+            ? studentToUpdate.courseRemainingAmount 
+            : Math.max(0, totalFee - coursePaid);
+
           if (completedCount >= 1) {
             firstClassCompleted = true;
-            if ((studentToUpdate.amountPaid || 0) < 2000) {
+            if (coursePaid < 2000) {
               bookingLocked = true;
-              lockedReason = "First class completed. A payment of ₹2,000 is required to book additional classes.";
+              lockedReason = "First class completed. Course installment of ₹2,000 is required to book additional classes.";
             }
           }
           if (completedCount >= 5) {
-            if ((studentToUpdate.amountPaid || 0) < 3500) {
+            if (coursePaid < totalFee) {
               bookingLocked = true;
-              lockedReason = "5 classes completed. The remaining payment of ₹1,500 is required to book additional classes.";
+              lockedReason = `5 classes completed. Remaining course balance of ₹${courseRemaining.toLocaleString()} is required to book additional classes.`;
             }
           }
         }

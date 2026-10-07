@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" width="100%" height="100%">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@700&amp;family=Orbitron:wght@700;900&amp;family=Montserrat:wght@800&amp;display=swap');
+      .bnp-script {
+        font-family: 'Caveat', 'Brush Script MT', cursive;
+        font-size: 130px;
+        font-weight: 700;
+      }
+      .bnp-tech {
+        font-family: 'Orbitron', 'Montserrat', -apple-system, sans-serif;
+        font-size: 24px;
+        font-weight: 800;
+        letter-spacing: 0.38em;
+      }
+    </style>
+    <filter id="crisp-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+
+  <!-- Clean Background (transparent / white friendly) -->
+  <rect width="100%" height="100%" fill="transparent"/>
+
+  <!-- Stylized Bnp Calligraphic Group -->
+  <g transform="translate(45, 125)">
+    <!-- "B" - Deep Rich Black -->
+    <path d="M 40,-75 C 25,-40 10,-10 0,35 C -2,42 3,46 10,43 C 25,38 45,15 52,-15 C 55,-28 42,-32 30,-28 C 45,-42 62,-65 52,-78 C 42,-88 30,-80 40,-75 Z" fill="#111116" />
+    <path d="M 12,-72 C 35,-65 95,-45 92,-15 C 89,8 55,18 22,24 C 65,22 108,10 115,-18 C 120,-42 85,-78 22,-82 C 10,-83 5,-75 12,-72 Z" fill="#111116" />
+    
+    <!-- "n" - Distinctive Vibrant Electric Royal Blue -->
+    <path d="M 98,5 C 102,-18 118,-35 132,-35 C 146,-35 150,-18 146,8 C 142,32 128,45 138,45 C 148,45 162,25 170,-2 C 172,-8 165,-12 160,-6 C 152,12 142,22 138,18 C 134,14 140,-12 144,-24 C 150,-46 130,-52 115,-38 C 102,-26 95,2 92,18 C 90,26 96,30 102,28 C 102,20 100,10 98,5 Z" fill="#0052CC" />
+    
+    <!-- Accent Underline Blue Bar -->
+    <line x1="85" y1="58" x2="165" y2="58" stroke="#0052CC" stroke-width="4.5" stroke-linecap="round" />
+
+    <!-- "p" - Elegant Flowing Signature Stroke with long descender -->
+    <path d="M 172,-15 C 178,-35 192,-48 206,-48 C 220,-48 228,-32 222,-8 C 215,18 195,34 182,32 C 172,30 168,12 170,-15 L 155,75 C 153,84 162,88 168,82 L 180,18 C 190,22 208,12 216,-10 C 224,-32 212,-60 192,-58 C 175,-56 162,-35 158,-12 C 155,2 165,4 172,-15 Z" fill="#111116" />
+    
+    <!-- Extended Signature Flourish / Swash -->
+    <path d="M 195,5 C 220,-15 260,-28 310,-12 C 318,-9 320,-18 312,-20 C 255,-38 210,-22 185,-2 C 180,3 188,10 195,5 Z" fill="#111116" />
+  </g>
+
+  <!-- "BNP TECH" Subtitle -->
+  <g transform="translate(200, 205)" text-anchor="middle">
+    <!-- "BNP" in Blue/Black -->
+    <text x="-70" y="0" font-family="'Orbitron', 'Montserrat', sans-serif" font-size="20" font-weight="900" letter-spacing="7" fill="#0052CC">BNP</text>
+    
+    <!-- "T E C H" in Sleek Modern Black -->
+    <!-- T -->
+    <text x="35" y="0" font-family="'Orbitron', 'Montserrat', sans-serif" font-size="20" font-weight="900" fill="#111116">T</text>
+    
+    <!-- Stylized 3-bar "E" (≡) -->
+    <g transform="translate(68, -16)">
+      <line x1="0" y1="2" x2="16" y2="2" stroke="#111116" stroke-width="3" stroke-linecap="square"/>
+      <line x1="0" y1="8" x2="14" y2="8" stroke="#111116" stroke-width="3" stroke-linecap="square"/>
+      <line x1="0" y1="14" x2="16" y2="14" stroke="#111116" stroke-width="3" stroke-linecap="square"/>
+    </g>
+    
+    <!-- C -->
+    <text x="106" y="0" font-family="'Orbitron', 'Montserrat', sans-serif" font-size="20" font-weight="900" fill="#111116">C</text>
+    
+    <!-- H -->
+    <text x="138" y="0" font-family="'Orbitron', 'Montserrat', sans-serif" font-size="20" font-weight="900" fill="#111116">H</text>
+  </g>
+</svg>

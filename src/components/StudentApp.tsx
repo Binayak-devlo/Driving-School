@@ -50,7 +50,10 @@ import {
     ShieldCheck,
     HelpCircle,
     Globe,
-    Shield
+    Shield,
+    Crown,
+    Zap,
+    Radio
 } from "lucide-react";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion } from "motion/react";
@@ -3033,7 +3036,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
       (aadharDoc && aadharDoc.status === "Verified")
     );
     const compClassesCount = bookings.filter(b => b.status === 'Completed' || b.status === 'completed').length;
-    const isEnded = (student.courseEnded || compClassesCount >= 15) && !student.planExtended;
+    const maxAllowedClasses = student.totalSessions || 15;
+    const isEnded = compClassesCount >= maxAllowedClasses || (student.courseEnded && !student.planExtended);
 
     if (isEnded) {
       alert("Booking Locked: Your active course has ended. Please upgrade to Extra Classes or pay the Licence Processing Fee in the Modify tab to continue booking.");
@@ -3052,16 +3056,23 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         return;
       }
 
-      const firstInstallmentPaid = (student.amountPaid || 0) >= 2000;
-      const courseFullyPaid = (student.amountPaid || 0) >= 3500;
+      const curCoursePaid = student.coursePaidAmount !== undefined 
+        ? student.coursePaidAmount 
+        : Math.min(student.totalCourseFee || 3500, student.amountPaid || 0);
+      const curCourseRemaining = student.courseRemainingAmount !== undefined 
+        ? student.courseRemainingAmount 
+        : Math.max(0, (student.totalCourseFee || 3500) - curCoursePaid);
 
-      if (compClassesCount >= 1 && !firstInstallmentPaid) {
-        alert("Booking Locked: You have completed your first free class. To unlock further bookings, a package payment of ₹2,000 is required.");
+      const hasPaidFirstInstallment = curCoursePaid >= 2000;
+      const isCourseFeeFullyPaid = curCoursePaid >= (student.totalCourseFee || 3500);
+
+      if (compClassesCount >= 1 && !hasPaidFirstInstallment) {
+        alert("Booking Locked: You have completed your first free class. To unlock further bookings, a course installment payment of ₹2,000 is required.");
         return;
       }
 
-      if (compClassesCount >= 5 && !courseFullyPaid) {
-        alert("Booking Locked: You have completed 5 driving classes. To unlock remaining bookings, the final course fee of ₹1,500 must be approved.");
+      if (compClassesCount >= 5 && !isCourseFeeFullyPaid) {
+        alert(`Booking Locked: You have completed 5 driving classes under your partial course payment. Your pending course balance of ₹${curCourseRemaining.toLocaleString()} must be paid to unlock further classes. Upgrade payments do not clear course dues.`);
         return;
       }
     }
@@ -3736,38 +3747,435 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
     MockDatabase.savePayments(updatedPayments);
     setPayments(updatedPayments);
 
-    // Update student model immediately on successful simulated pay
-    let newAmountPaid = student.amountPaid || 0;
-    let newRemaining = student.remainingAmount !== undefined ? student.remainingAmount : 3500;
+    // Update student model immediately on successful simulated pay - COURSE FEE AND UPGRADE FEES KEPT COMPLETELY SEPARATE
+    const totalPackageFee = student.totalCourseFee || 3500;
+    let newCoursePaid = student.coursePaidAmount !== undefined 
+      ? student.coursePaidAmount 
+      : Math.min(totalPackageFee, student.amountPaid || 0);
+    let newCourseRemaining = student.courseRemainingAmount !== undefined 
+      ? student.courseRemainingAmount 
+      : Math.max(0, totalPackageFee - newCoursePaid);
+    let newUpgradePaid = student.upgradePaidAmount !== undefined ? student.upgradePaidAmount : 0;
+    let newUpgradeDetails = student.upgradePlanDetails || "";
     let newPaymentStatus = student.paymentStatus || 'Unpaid';
     let licenceFeePaid = !!student.licenceFeePaid;
 
-    if (paymentSelectedPurpose.includes("Course Fee") || paymentSelectedPurpose.includes("Installment")) {
-      newAmountPaid = Math.min(3500, newAmountPaid + paymentSelectedAmount);
-      newRemaining = Math.max(0, 3500 - newAmountPaid);
-      newPaymentStatus = newAmountPaid >= 3500 ? 'Paid' : 'Partial';
-    } else if (paymentSelectedPurpose.includes("Licence")) {
+    let parentLiveUnlocked = student.parentLiveUnlocked || student.hasParentLiveView || false;
+    let hasParentLiveView = student.hasParentLiveView || student.parentLiveUnlocked || false;
+    let isPremium = student.isPremium || false;
+    let parentId = student.parentId;
+    let parentAccessKey = student.parentAccessKey;
+    let planExtended = student.planExtended || false;
+    let courseEnded = false;
+    let totalSessions = student.totalSessions || 15;
+    let updatedCourseName = student.courseName;
+
+    const isCoursePayment = paymentSelectedPurpose.includes("Course Fee") || paymentSelectedPurpose.includes("Installment") || paymentSelectedPurpose.includes("Full Course");
+    const isParentLive = paymentSelectedPurpose.includes("Parent Live") || (paymentSelectedAmount === 500 && !isCoursePayment);
+    const isRefresh = paymentSelectedPurpose.includes("Refresh") || paymentSelectedPurpose.includes("7 Extra");
+    const isProDriverExtend = paymentSelectedPurpose.includes("Pro Driver") || paymentSelectedPurpose.includes("Extend") || paymentSelectedAmount === 2999;
+    const isLicenceFee = paymentSelectedPurpose.includes("Licence");
+
+    const completedClasses = bookings.filter(b => b.status === 'Completed' || b.status === 'completed').length;
+
+    if (isCoursePayment) {
+      // Course fee payments only affect course fee balance
+      newCoursePaid = Math.min(totalPackageFee, newCoursePaid + paymentSelectedAmount);
+      newCourseRemaining = Math.max(0, totalPackageFee - newCoursePaid);
+      newPaymentStatus = newCoursePaid >= totalPackageFee ? 'Paid' : 'Partial';
+    } else if (isLicenceFee) {
       licenceFeePaid = true;
+      newUpgradePaid += paymentSelectedAmount;
+      newUpgradeDetails = newUpgradeDetails ? `${newUpgradeDetails}, Licence Processing Fee` : "Licence Processing Fee";
+    } else if (isRefresh) {
+      // Refresh Training Season: ₹1,750 for 7 extra classes
+      // Keep course fee and upgrade fees completely separate!
+      // Do NOT deduct this from pending course balance.
+      newUpgradePaid += paymentSelectedAmount;
+      newUpgradeDetails = newUpgradeDetails ? `${newUpgradeDetails}, Refresh Training (+7 Classes)` : "Refresh Training Season (+7 Classes)";
+      totalSessions = Math.max(student.totalSessions || 15, completedClasses) + 7;
+      planExtended = true;
+      courseEnded = false;
+      updatedCourseName = student.courseName ? `${student.courseName} (Refresh +7 Classes)` : "Refresh Training Season (7 Extra Classes)";
+    } else if (isProDriverExtend) {
+      // Pro Driver Extend Plan: ₹2,999 for 10 extra classes + Premium
+      // Keep course fee and upgrade fees completely separate!
+      // Do NOT deduct this from pending course balance.
+      newUpgradePaid += paymentSelectedAmount;
+      newUpgradeDetails = newUpgradeDetails ? `${newUpgradeDetails}, Pro Driver Extend (+10 Classes, Premium)` : "Pro Driver Extend Plan (+10 Classes, Premium, Live View)";
+      totalSessions = Math.max(student.totalSessions || 15, completedClasses) + 10;
+      planExtended = true;
+      courseEnded = false;
+      isPremium = true;
+      parentLiveUnlocked = true;
+      hasParentLiveView = true;
+      if (!parentId) {
+        parentId = `PRNT-${student.phone ? student.phone.slice(-6) : student.id.slice(-6)}`;
+      }
+      if (!parentAccessKey) {
+        parentAccessKey = `GH-${Math.floor(100000 + Math.random() * 900000)}`;
+      }
+      const existingParent = MockDatabase.getParents().find(p => p.studentId === student.id || p.id === parentId);
+      if (!existingParent) {
+        MockDatabase.saveParent({
+          id: parentId,
+          studentId: student.id,
+          studentName: student.name,
+          studentPhone: student.phone || "9040040265",
+          name: student.parentName || `Parent of ${student.name}`,
+          phone: student.parentPhone || student.phone || "9040040265",
+          email: `${parentId.toLowerCase()}@goldenhands.com`,
+          password: parentAccessKey,
+          createdAt: new Date().toISOString().split("T")[0],
+          plan: "Premium",
+          status: "active",
+          streamAccessAllowed: true,
+          lastLoginAt: new Date().toISOString()
+        });
+      } else {
+        existingParent.plan = "Premium";
+        existingParent.streamAccessAllowed = true;
+        MockDatabase.saveParent(existingParent);
+      }
+      updatedCourseName = "Pro Driver Extend Plan (25 Classes + Premium)";
+    } else if (isParentLive) {
+      // Parent Live View: ₹500
+      // Keep course fee and upgrade fees completely separate!
+      // Do NOT deduct this from pending course balance.
+      newUpgradePaid += paymentSelectedAmount;
+      newUpgradeDetails = newUpgradeDetails ? `${newUpgradeDetails}, Parent Live View` : "Parent Live View (In-Car Streaming)";
+      parentLiveUnlocked = true;
+      hasParentLiveView = true;
+      if (!parentId) {
+        parentId = `PRNT-${student.phone ? student.phone.slice(-6) : student.id.slice(-6)}`;
+      }
+      if (!parentAccessKey) {
+        parentAccessKey = `GH-${Math.floor(100000 + Math.random() * 900000)}`;
+      }
+      const existingParent = MockDatabase.getParents().find(p => p.studentId === student.id || p.id === parentId);
+      if (!existingParent) {
+        MockDatabase.saveParent({
+          id: parentId,
+          studentId: student.id,
+          studentName: student.name,
+          studentPhone: student.phone || "9040040265",
+          name: student.parentName || `Parent of ${student.name}`,
+          phone: student.parentPhone || student.phone || "9040040265",
+          email: `${parentId.toLowerCase()}@goldenhands.com`,
+          password: parentAccessKey,
+          createdAt: new Date().toISOString().split("T")[0],
+          plan: "Premium",
+          status: "active",
+          streamAccessAllowed: true,
+          lastLoginAt: new Date().toISOString()
+        });
+      } else {
+        existingParent.streamAccessAllowed = true;
+        MockDatabase.saveParent(existingParent);
+      }
+    } else {
+      newUpgradePaid += paymentSelectedAmount;
     }
 
-    const updatedStudent = {
+    // Do NOT allow upgrade payments to bypass pending course payments
+    let shouldLockBooking = false;
+    let lockReason = "";
+    if (completedClasses >= 1 && newCoursePaid < 2000) {
+      shouldLockBooking = true;
+      lockReason = "First class completed. A course installment payment of ₹2,000 is required to book additional classes.";
+    } else if (completedClasses >= 5 && newCoursePaid < totalPackageFee) {
+      shouldLockBooking = true;
+      lockReason = `5 classes completed. Pending course balance of ₹${newCourseRemaining.toLocaleString()} must be paid to book further classes. Upgrade payments do not clear course dues.`;
+    }
+
+    const updatedStudent: Student = {
       ...student,
-      amountPaid: newAmountPaid,
-      remainingAmount: newRemaining,
+      courseName: updatedCourseName,
+      amountPaid: newCoursePaid, // strictly course paid
+      remainingAmount: newCourseRemaining, // strictly course remaining balance
+      coursePaidAmount: newCoursePaid,
+      courseRemainingAmount: newCourseRemaining,
+      upgradePaidAmount: newUpgradePaid,
+      upgradePlanDetails: newUpgradeDetails,
       paymentStatus: newPaymentStatus,
       paymentApprovalStatus: 'Approved' as const,
       licenceFeePaid,
-      bookingLocked: false,
-      lockedReason: ""
+      totalSessions,
+      planExtended,
+      courseEnded,
+      isPremium,
+      parentLiveUnlocked,
+      hasParentLiveView,
+      parentId,
+      parentAccessKey,
+      bookingLocked: shouldLockBooking,
+      lockedReason: lockReason
     };
     MockDatabase.saveStudent(updatedStudent, student.id);
+    setStudent(updatedStudent);
 
     setPaymentSuccess(true);
     onStateChange();
-    showNotification(`Payment of ₹${paymentSelectedAmount.toLocaleString()} successful! Invoice generated.`);
+    if (isCoursePayment) {
+      showNotification(`Course installment of ₹${paymentSelectedAmount.toLocaleString()} paid successfully! Remaining course balance: ₹${newCourseRemaining.toLocaleString()}`);
+    } else if (isRefresh) {
+      showNotification(`Payment of ₹1,750 successful! Refresh Training Season activated (+7 classes). Course balance remains ₹${newCourseRemaining.toLocaleString()}.`);
+    } else if (isProDriverExtend) {
+      showNotification(`Payment of ₹2,999 successful! Pro Driver Extend Plan activated (+10 classes & Premium). Course balance remains ₹${newCourseRemaining.toLocaleString()}.`);
+    } else if (isParentLive) {
+      showNotification(`Payment of ₹500 successful! Parent Live Streaming unlocked. Course balance remains ₹${newCourseRemaining.toLocaleString()}.`);
+    } else {
+      showNotification(`Payment of ₹${paymentSelectedAmount.toLocaleString()} successful! Invoice generated.`);
+    }
     setTimeout(() => {
       setPaymentSuccess(false);
     }, 3000);
+  };
+
+  // Helper to handle plan upgrade selection and navigate directly to payment page
+  const handleUpgradePlanSelect = (plan: { title: string; price: number; courseName?: string }) => {
+    setPaymentSelectedAmount(plan.price);
+    setPaymentSelectedPurpose(plan.title);
+    setActiveTab('home');
+    setActiveSubPage('payments');
+    showNotification(`Selected ${plan.title} (₹${plan.price.toLocaleString()}). Redirecting to payment checkout...`);
+    setTimeout(() => {
+      const container = document.getElementById('student-pull-to-refresh');
+      if (container) {
+        container.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }, 60);
+  };
+
+  // Reusable Plan Upgrade Section for Home and Modify Plan tabs
+  const renderPlanUpgradeSection = (sectionId = "student-plan-upgrade-section") => {
+    const isOriginalPremiumPlan = Boolean(
+      student.isPremium === true ||
+      (student.courseName && student.courseName.toLowerCase().includes("premium")) ||
+      (student.proposedCourseName && student.proposedCourseName.toLowerCase().includes("premium")) ||
+      student.totalCourseFee === 4000
+    );
+
+    const hasParentLiveUnlocked = Boolean(
+      student.parentLiveUnlocked === true ||
+      student.hasParentLiveView === true
+    );
+
+    return (
+      <div id={sectionId} className="bg-white border border-slate-100 rounded-3xl p-4 sm:p-5 shadow-sm flex flex-col gap-3.5 relative overflow-hidden">
+        {/* Subtle decorative background gradient */}
+        <div className="absolute top-0 right-0 w-44 h-44 bg-gradient-to-br from-[#6D3BFF]/10 via-[#D4AF37]/10 to-transparent rounded-full blur-2xl pointer-events-none" />
+
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 relative z-10">
+          <div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-[#6D3BFF] to-[#8F52FF] text-white px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                <Crown className="w-2.5 h-2.5" /> Plan Upgrade & Add-ons
+              </span>
+              <span className="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-200/60 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <Zap className="w-2.5 h-2.5 text-amber-500 fill-amber-500" /> Instant Access
+              </span>
+            </div>
+            <h3 className="font-black text-sm text-[#161623] tracking-tight">
+              Upgrade Your Driving Plan
+            </h3>
+            <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">
+              Level up your confidence with Refresh Training, Pro Driver Extension (+Premium), or parent live streaming.
+            </p>
+          </div>
+
+          {/* Active Plan Tag */}
+          <div className="bg-[#F8F9FF] border border-[#6D3BFF]/15 px-3 py-1.5 rounded-2xl flex items-center gap-2 self-start sm:self-auto shrink-0">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <div>
+              <span className="text-[8px] font-bold uppercase text-slate-400 block leading-tight">Active Plan</span>
+              <span className="text-[10px] font-extrabold text-[#161623] block leading-tight truncate max-w-[150px]">
+                {student.courseName || "Car Driving 15 Days (Light)"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Upgrade Packages Cards Grid */}
+        <div className={`grid grid-cols-1 ${!isOriginalPremiumPlan ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-3 relative z-10 pt-1`}>
+          {/* PLAN 1: Refresh Training Season */}
+          <div className="bg-[#F8F9FF] hover:bg-white border border-slate-200/80 hover:border-[#6D3BFF]/40 rounded-2xl p-3.5 flex flex-col justify-between shadow-xs hover:shadow-md transition-all group">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[9px] font-extrabold text-[#6D3BFF] bg-[#6D3BFF]/10 px-2 py-0.5 rounded-full">
+                  7 Extra Classes
+                </span>
+                <span className="text-sm font-black text-[#161623]">
+                  ₹1,750
+                </span>
+              </div>
+              <h4 className="font-extrabold text-xs text-[#161623] group-hover:text-[#6D3BFF] transition-colors">
+                Refresh Training Season
+              </h4>
+              <p className="text-[9.5px] text-slate-500 mt-0.5 leading-snug">
+                +7 Extra on-road practical driving classes.
+              </p>
+              <ul className="mt-2.5 space-y-1.5 text-[9.5px] text-slate-600 border-t border-slate-200/50 pt-2">
+                <li className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                  <span>7 extra on-road practical classes</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                  <span>Unlocks 7 classes even if past sessions completed</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                  <span>Highway speed & traffic confidence refresher</span>
+                </li>
+              </ul>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleUpgradePlanSelect({
+                title: "Refresh Training Season (7 Extra Classes)",
+                price: 1750,
+                courseName: "Refresh Training Season (7 Extra Classes)"
+              })}
+              className="mt-3.5 w-full bg-[#6D3BFF] hover:bg-[#5B30D6] active:scale-98 text-white font-black text-xs py-2.5 px-3 rounded-xl transition-all shadow-sm hover:shadow-[#6D3BFF]/25 flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <span>Upgrade to Refresh — ₹1,750</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* PLAN 2: Pro Driver Extend Plan (Featured) */}
+          <div className="bg-gradient-to-b from-[#161623] to-[#1E1E30] text-white border-2 border-[#D4AF37]/50 rounded-2xl p-3.5 flex flex-col justify-between shadow-lg relative overflow-hidden group">
+            <div className="absolute top-0 right-0 bg-gradient-to-l from-[#D4AF37] to-amber-500 text-black text-[8px] font-black uppercase px-2.5 py-0.5 rounded-bl-xl shadow-xs font-mono font-bold">
+              ⭐ Recommended
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[9px] font-extrabold text-[#D4AF37] bg-[#D4AF37]/15 px-2 py-0.5 rounded-full border border-[#D4AF37]/25 flex items-center gap-1">
+                  <Crown className="w-2.5 h-2.5 text-[#D4AF37]" /> Pro Driver Extend
+                </span>
+                <span className="text-sm font-black text-white">
+                  ₹2,999
+                </span>
+              </div>
+              <h4 className="font-extrabold text-xs text-white group-hover:text-[#D4AF37] transition-colors">
+                Pro Driver Extend Plan
+              </h4>
+              <p className="text-[9.5px] text-slate-300 mt-0.5 leading-snug">
+                10 Extra classes + Full Premium & Parent Live View.
+              </p>
+              <ul className="mt-2.5 space-y-1.5 text-[9.5px] text-slate-200 border-t border-white/10 pt-2">
+                <li className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3 h-3 text-[#D4AF37] shrink-0" />
+                  <span>10 Extra practical driving classes</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3 h-3 text-[#D4AF37] shrink-0" />
+                  <span>Full Premium features unlocked + Parent Live View</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3 h-3 text-[#D4AF37] shrink-0" />
+                  <span>Unlocks 10 classes even if past sessions completed</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3 h-3 text-[#D4AF37] shrink-0" />
+                  <span>Doorstep pickup & senior master instructor</span>
+                </li>
+              </ul>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleUpgradePlanSelect({
+                title: "Pro Driver Extend Plan (10 Classes + Premium)",
+                price: 2999,
+                courseName: "Pro Driver Extend Plan (10 Classes + Premium)"
+              })}
+              className="mt-3.5 w-full bg-gradient-to-r from-[#D4AF37] via-amber-400 to-[#D4AF37] hover:brightness-110 active:scale-98 text-slate-950 font-black text-xs py-2.5 px-3 rounded-xl transition-all shadow-md shadow-[#D4AF37]/20 flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Crown className="w-3.5 h-3.5" />
+              <span>Upgrade to Pro Driver Extend — ₹2,999</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* PLAN 3: Parent Live View (Available ONLY for Basic Plan students, hidden for Premium Plan students) */}
+          {!isOriginalPremiumPlan && (
+            <div className="bg-[#F8F9FF] hover:bg-white border border-slate-200/80 hover:border-amber-500/40 rounded-2xl p-3.5 flex flex-col justify-between shadow-xs hover:shadow-md transition-all group">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[9px] font-extrabold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <Radio className="w-2.5 h-2.5 text-rose-500 animate-pulse" /> Live Telemetry
+                  </span>
+                  <span className="text-sm font-black text-[#161623]">
+                    ₹500
+                  </span>
+                </div>
+                <h4 className="font-extrabold text-xs text-[#161623] group-hover:text-amber-600 transition-colors">
+                  Parent Live View
+                </h4>
+                <p className="text-[9.5px] text-slate-500 mt-0.5 leading-snug">
+                  Real-time in-car video stream & telemetry for parents.
+                </p>
+                <ul className="mt-2.5 space-y-1.5 text-[9.5px] text-slate-600 border-t border-slate-200/50 pt-2">
+                  <li className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                    <span>Real-time in-car camera live broadcast</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                    <span>Live vehicle speedometer & GPS route</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                    <span>Parent Guardian Portal access credentials</span>
+                  </li>
+                </ul>
+              </div>
+
+              {hasParentLiveUnlocked ? (
+                <div className="mt-3.5 w-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-800 font-extrabold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Live View Unlocked & Active</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleUpgradePlanSelect({
+                    title: "Parent Live View (In-Car Streaming)",
+                    price: 500
+                  })}
+                  className="mt-3.5 w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 active:scale-98 text-white font-black text-xs py-2.5 px-3 rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Radio className="w-3.5 h-3.5" />
+                  <span>Unlock Live View — ₹500</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Guaranteed Satisfaction Footer */}
+        <div className="bg-[#F8F9FF] border border-slate-100 rounded-xl px-3 py-2 flex flex-col sm:flex-row items-center justify-between text-[9.5px] text-slate-500 gap-1.5 relative z-10">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span>100% Secure Razorpay & UPI Verification • Government RTO OD-02 Authorized</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('home');
+              setActiveSubPage('payments');
+            }}
+            className="text-[#6D3BFF] font-extrabold hover:underline cursor-pointer flex items-center gap-0.5"
+          >
+            <span>View All Payment Packages</span>
+            <ChevronRight className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    );
   };
 
   // UPI Manual Proof Upload Payment Handler
@@ -4076,13 +4484,73 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   );
   const completedClassesCount = bookings.filter(b => b.status === 'Completed' || b.status === 'completed').length;
   const maxCourseClasses = student.totalSessions || 15;
-  const isCourseEnded = (student.courseEnded || completedClassesCount >= maxCourseClasses) && !student.planExtended;
+  const isCourseEnded = completedClassesCount >= maxCourseClasses || (student.courseEnded && !student.planExtended);
 
-  // Golden Hands Driving School workflows:
+  // Golden Hands Driving School workflows - Course & Upgrade Fees Kept Completely Separate:
   const totalBookingsCount = bookings.filter(b => b.studentId === student.id).length;
-  const firstInstallmentPaid = (student.amountPaid || 0) >= 2000;
   const totalPackageFee = student.totalCourseFee || 3500;
-  const courseFullyPaid = (student.amountPaid || 0) >= totalPackageFee;
+
+  // Calculate course payments vs upgrades from payments history or student record
+  const studentPayments = payments ? payments.filter(p => !p.studentId || p.studentId === student.id) : [];
+  let historyCoursePaid = 0;
+  let historyUpgradePaid = 0;
+  const activeUpgradesList: string[] = [];
+
+  studentPayments.forEach(p => {
+    const st = (p.status || '').toString().toLowerCase();
+    if (['success', 'approved', 'paid', 'completed'].includes(st)) {
+      const amt = Number(p.amount) || 0;
+      const purpose = (p.purpose || '').toLowerCase();
+      if (purpose.includes("parent live")) {
+        historyUpgradePaid += amt;
+        activeUpgradesList.push("Parent Live View");
+      } else if (purpose.includes("pro driver") || purpose.includes("extend")) {
+        historyUpgradePaid += amt;
+        activeUpgradesList.push("Pro Driver Extend (+10 Classes)");
+      } else if (purpose.includes("refresh") || purpose.includes("7 extra")) {
+        historyUpgradePaid += amt;
+        activeUpgradesList.push("Refresh Training (+7 Classes)");
+      } else if (purpose.includes("licence")) {
+        historyUpgradePaid += amt;
+        activeUpgradesList.push("Licence Fast-Track");
+      } else if (purpose.includes("extra practical")) {
+        historyUpgradePaid += amt;
+        activeUpgradesList.push("Extra Practical Session");
+      } else if (purpose.includes("course") || purpose.includes("installment")) {
+        historyCoursePaid += amt;
+      } else {
+        historyCoursePaid += amt;
+      }
+    }
+  });
+
+  const coursePaidAmount = student.coursePaidAmount !== undefined 
+    ? student.coursePaidAmount 
+    : Math.min(totalPackageFee, historyCoursePaid > 0 ? historyCoursePaid : (student.amountPaid || 0));
+
+  const courseRemainingBalance = student.courseRemainingAmount !== undefined 
+    ? student.courseRemainingAmount 
+    : Math.max(0, totalPackageFee - coursePaidAmount);
+
+  const upgradePaidAmount = student.upgradePaidAmount !== undefined 
+    ? student.upgradePaidAmount 
+    : historyUpgradePaid;
+
+  const upgradePlanDetails = student.upgradePlanDetails || (
+    activeUpgradesList.length > 0 
+      ? Array.from(new Set(activeUpgradesList)).join(", ") 
+      : (student.planExtended ? "Extended Driving Plan" : "None")
+  );
+
+  const firstInstallmentPaid = coursePaidAmount >= 2000;
+  const courseFullyPaid = coursePaidAmount >= totalPackageFee;
+
+  // Allowed class limit based on paid course amount:
+  // Paid 0 -> 1 class allowed
+  // Paid 2000 -> 5 classes allowed
+  // Fully Paid (3500) -> all allowed (15 + upgrades)
+  const maxAllowedClassesByCoursePayment = !firstInstallmentPaid ? 1 : !courseFullyPaid ? 5 : maxCourseClasses;
+  const coursePaymentClassLimitReached = completedClassesCount >= maxAllowedClassesByCoursePayment && !courseFullyPaid;
 
   const localWorkflowLock = 
     (completedClassesCount >= 1 && !firstInstallmentPaid) || 
@@ -4091,6 +4559,7 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   const canBookClass = 
     (isAadharVerified || !!student.adminManualUnlock) && 
     !isCourseEnded && 
+    !coursePaymentClassLimitReached &&
     (!!student.adminManualUnlock || (!student.bookingLocked && !localWorkflowLock));
 
   return (
@@ -4993,14 +5462,29 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   <div className="flex flex-col gap-2">
                     {(() => {
                       const list = [];
-                      const paid = student.amountPaid || 0;
-                      if (paid === 0) {
+                      const totalFee = student.totalCourseFee || 3500;
+                      const coursePaid = student.coursePaidAmount !== undefined 
+                        ? student.coursePaidAmount 
+                        : Math.min(totalFee, student.amountPaid || 0);
+                      const courseBal = Math.max(0, totalFee - coursePaid);
+                      if (coursePaid === 0) {
                         list.push({ title: "First Course Installment", details: "Required after first free class completed", price: 2000 });
-                        list.push({ title: "Full Course Fee (Complete)", details: "Full Basic Package (15 sessions)", price: 3500 });
-                      } else if (paid < 3500) {
-                        list.push({ title: "Final Course Installment", details: "Remaining driving course fee balance due", price: 3500 - paid });
+                        list.push({ title: "Full Course Fee (Complete)", details: "Full Basic Package (15 sessions)", price: totalFee });
+                      } else if (courseBal > 0) {
+                        list.push({ title: "Final Course Installment", details: `Remaining driving course fee balance due (₹${courseBal.toLocaleString()})`, price: courseBal });
                       } else {
-                        list.push({ title: "Full Course Fee (Paid)", details: "Basic Package (15 sessions) - fully paid", price: 3500 });
+                        list.push({ title: "Full Course Fee (Paid)", details: "Basic Package (15 sessions) - fully paid", price: totalFee });
+                      }
+                      list.push({ title: "Refresh Training Season (7 Extra Classes)", details: "7 extra practical classes, unlocks booking even if previous classes completed", price: 1750 });
+                      list.push({ title: "Pro Driver Extend Plan (10 Classes + Premium)", details: "10 extra practical classes + full Premium features & Parent Live View", price: 2999 });
+                      const isStudentPremiumPlan = Boolean(
+                        student.isPremium === true ||
+                        (student.courseName && student.courseName.toLowerCase().includes("premium")) ||
+                        (student.proposedCourseName && student.proposedCourseName.toLowerCase().includes("premium")) ||
+                        student.totalCourseFee === 4000
+                      );
+                      if (!isStudentPremiumPlan) {
+                        list.push({ title: "Parent Live View (In-Car Streaming)", details: "Real-time in-car video stream & live telemetry for parents", price: 500 });
                       }
                       list.push({ title: "Licence Fast-track Processing Fee", details: "RTO Licence applications & handling", price: 2500 });
                       list.push({ title: "Extra Practical Session", details: "1 hour master practice slot", price: 1750 });
@@ -5014,8 +5498,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                           setPaymentSelectedPurpose(pkg.title);
                         }}
                         className={`w-full p-3.5 rounded-2xl text-left border flex justify-between items-center transition-all cursor-pointer ${
-                          paymentSelectedAmount === pkg.price 
-                            ? 'bg-[#6D3BFF]/10 border-[#6D3BFF]' 
+                          paymentSelectedPurpose === pkg.title || (paymentSelectedAmount === pkg.price && (paymentSelectedPurpose.toLowerCase().includes(pkg.title.toLowerCase().slice(0, 6)) || pkg.title.toLowerCase().includes(paymentSelectedPurpose.toLowerCase().slice(0, 6))))
+                            ? 'bg-[#6D3BFF]/10 border-[#6D3BFF] ring-2 ring-[#6D3BFF]/20 shadow-xs' 
                             : 'bg-[#F8F9FF] border-slate-100 hover:border-slate-200'
                         }`}
                       >
@@ -7130,9 +7614,9 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                         </span>
                       </div>
                       <p className="text-[9.5px] text-slate-600 mt-0.5">
-                        {completedClassesCount >= 15 
+                        {completedClassesCount >= maxCourseClasses 
                           ? "Maximum Elite Certified Master Driver accreditation attained!"
-                          : `Complete ${Math.max(1, (getStudentBadgeTier(completedClassesCount).level === 1 ? 3 : getStudentBadgeTier(completedClassesCount).level === 2 ? 7 : getStudentBadgeTier(completedClassesCount).level === 3 ? 11 : 15) - completedClassesCount)} more ${Math.max(1, (getStudentBadgeTier(completedClassesCount).level === 1 ? 3 : getStudentBadgeTier(completedClassesCount).level === 2 ? 7 : getStudentBadgeTier(completedClassesCount).level === 3 ? 11 : 15) - completedClassesCount) === 1 ? 'class' : 'classes'} to advance to next official rank.`}
+                          : `Complete ${Math.max(1, (getStudentBadgeTier(completedClassesCount).level === 1 ? 3 : getStudentBadgeTier(completedClassesCount).level === 2 ? 7 : getStudentBadgeTier(completedClassesCount).level === 3 ? 11 : maxCourseClasses) - completedClassesCount)} more ${Math.max(1, (getStudentBadgeTier(completedClassesCount).level === 1 ? 3 : getStudentBadgeTier(completedClassesCount).level === 2 ? 7 : getStudentBadgeTier(completedClassesCount).level === 3 ? 11 : maxCourseClasses) - completedClassesCount) === 1 ? 'class' : 'classes'} to advance to next official rank.`}
                       </p>
                     </div>
                   </div>
@@ -7153,6 +7637,9 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                     />
                   </div>
                 )}
+
+                {/* PLAN UPGRADE SECTION */}
+                {renderPlanUpgradeSection("student-plan-upgrade-section")}
               </div>
             )}
 
@@ -8193,6 +8680,9 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                     ))}
                   </div>
                 </div>
+
+                {/* PLAN UPGRADE SECTION (ALSO IN MODIFY TAB) */}
+                {renderPlanUpgradeSection("modify-plan-upgrade-section")}
               </div>
             )}
 
@@ -8634,16 +9124,57 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                     const allStudentPayments = Array.from(mergedMap.values());
                     
                     const totalCourseFee = student.totalCourseFee || 3500;
-                    const calculatedPaid = allStudentPayments.reduce((sum, p) => {
+                    let calcCoursePaid = 0;
+                    let calcUpgradePaid = 0;
+                    const activeUpgradeBadges: string[] = [];
+
+                    allStudentPayments.forEach((p: any) => {
                       const st = (p.status || '').toString().toLowerCase();
                       if (st === 'success' || st === 'approved' || st === 'paid' || st === 'completed') {
-                        return sum + (Number(p.amount) || 0);
+                        const amt = Number(p.amount) || 0;
+                        const pur = (p.purpose || '').toLowerCase();
+                        if (pur.includes('parent live') || pur.includes('in-car streaming') || pur.includes('live telemetry')) {
+                          calcUpgradePaid += amt;
+                          activeUpgradeBadges.push("Parent Live View (₹500)");
+                        } else if (pur.includes('pro driver') || pur.includes('extend')) {
+                          calcUpgradePaid += amt;
+                          activeUpgradeBadges.push("Pro Driver Extend (+10 Classes, Premium)");
+                        } else if (pur.includes('refresh') || pur.includes('7 extra')) {
+                          calcUpgradePaid += amt;
+                          activeUpgradeBadges.push("Refresh Training (+7 Classes)");
+                        } else if (pur.includes('licence') || pur.includes('license')) {
+                          calcUpgradePaid += amt;
+                          activeUpgradeBadges.push("Licence Fast-Track");
+                        } else if (pur.includes('extra practical')) {
+                          calcUpgradePaid += amt;
+                          activeUpgradeBadges.push("Extra Practical Session");
+                        } else if (pur.includes('upgrade') || pur.includes('addon') || pur.includes('add-on')) {
+                          calcUpgradePaid += amt;
+                          activeUpgradeBadges.push(p.purpose || "Upgrade");
+                        } else {
+                          // Strictly course payment
+                          calcCoursePaid += amt;
+                        }
                       }
-                      return sum;
-                    }, 0);
-                    
-                    const totalPaid = Math.max(calculatedPaid, student.amountPaid || 0);
-                    const remainingBalance = Math.max(0, totalCourseFee - totalPaid);
+                    });
+
+                    const profileCoursePaid = student.coursePaidAmount !== undefined 
+                      ? student.coursePaidAmount 
+                      : (calcCoursePaid > 0 ? calcCoursePaid : Math.min(totalCourseFee, student.amountPaid || 0));
+
+                    const profileCourseRemaining = student.courseRemainingAmount !== undefined 
+                      ? student.courseRemainingAmount 
+                      : Math.max(0, totalCourseFee - profileCoursePaid);
+
+                    const profileUpgradePaid = student.upgradePaidAmount !== undefined 
+                      ? student.upgradePaidAmount 
+                      : calcUpgradePaid;
+
+                    const profileUpgradeDetails = student.upgradePlanDetails || (
+                      activeUpgradeBadges.length > 0 
+                        ? Array.from(new Set(activeUpgradeBadges)).join(", ") 
+                        : (student.planExtended ? "Extended Driving Plan" : "None")
+                    );
 
                     return (
                       <div className="w-full mt-4 text-left border-t border-slate-100 pt-3.5">
@@ -8652,25 +9183,37 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                             <h3 className="text-xs font-black text-[#161623] uppercase tracking-wider flex items-center gap-1.5">
                               <CreditCard className="w-4 h-4 text-[#6D3BFF]" /> Payment History
                             </h3>
-                            <p className="text-[9.5px] text-slate-400 font-medium">Real-time payment records & balance</p>
+                            <p className="text-[9.5px] text-slate-400 font-medium">Real-time payment records & course vs upgrade breakdown</p>
                           </div>
                           <span className="text-[8.5px] bg-[#6D3BFF]/10 text-[#6D3BFF] font-black px-2.5 py-0.5 rounded-full uppercase">
                             {allStudentPayments.length} {allStudentPayments.length === 1 ? 'Record' : 'Records'}
                           </span>
                         </div>
 
-                        {/* Financial Summary Banner */}
+                        {/* Separate Fields: Course Paid Amount | Course Remaining Balance | Upgrade Paid Amount | Upgrade/Plan Details */}
                         <div className="grid grid-cols-2 gap-2 mb-3">
-                          <div className="bg-[#F8F9FF] border border-slate-100 rounded-2xl p-2.5 flex flex-col">
-                            <span className="text-[8.5px] font-extrabold uppercase text-slate-400">Total Paid</span>
+                          <div className="bg-[#F8F9FF] border border-slate-100 rounded-2xl p-2.5 flex flex-col justify-between">
+                            <span className="text-[8px] font-extrabold uppercase text-slate-400 tracking-wider">Course Paid Amount</span>
                             <span className="text-sm font-black text-emerald-600 mt-0.5">
-                              ₹{totalPaid.toLocaleString()}
+                              ₹{profileCoursePaid.toLocaleString()}
                             </span>
                           </div>
-                          <div className="bg-[#F8F9FF] border border-slate-100 rounded-2xl p-2.5 flex flex-col">
-                            <span className="text-[8.5px] font-extrabold uppercase text-slate-400">Remaining Balance</span>
-                            <span className={`text-sm font-black mt-0.5 ${remainingBalance > 0 ? 'text-amber-600' : 'text-slate-700'}`}>
-                              ₹{remainingBalance.toLocaleString()}
+                          <div className="bg-[#F8F9FF] border border-slate-100 rounded-2xl p-2.5 flex flex-col justify-between">
+                            <span className="text-[8px] font-extrabold uppercase text-slate-400 tracking-wider">Course Remaining Balance</span>
+                            <span className={`text-sm font-black mt-0.5 ${profileCourseRemaining > 0 ? 'text-amber-600' : 'text-slate-700'}`}>
+                              ₹{profileCourseRemaining.toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="bg-[#F8F9FF] border border-slate-100 rounded-2xl p-2.5 flex flex-col justify-between">
+                            <span className="text-[8px] font-extrabold uppercase text-slate-400 tracking-wider">Upgrade Paid Amount</span>
+                            <span className="text-sm font-black text-[#6D3BFF] mt-0.5">
+                              ₹{profileUpgradePaid.toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="bg-[#F8F9FF] border border-slate-100 rounded-2xl p-2.5 flex flex-col justify-between">
+                            <span className="text-[8px] font-extrabold uppercase text-slate-400 tracking-wider">Upgrade/Plan Details</span>
+                            <span className="text-[10px] font-extrabold text-[#161623] mt-0.5 truncate" title={profileUpgradeDetails}>
+                              {profileUpgradeDetails}
                             </span>
                           </div>
                         </div>
@@ -8864,8 +9407,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         </div>
       )}
 
-      {/* 15 CLASSES COMPLETED PLAN EXTENSION POPUP */}
-      {bookings.filter(b => b.status === 'completed').length >= 15 && !student.planExtended && !extendModalDismissed && (
+      {/* CLASSES COMPLETED PLAN EXTENSION POPUP */}
+      {bookings.filter(b => b.status === 'completed').length >= maxCourseClasses && !student.planExtended && !extendModalDismissed && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white rounded-[32px] p-5 shadow-2xl border border-amber-100 max-w-[320px] text-center flex flex-col items-center animate-scaleUp">
             <div className="w-12 h-12 bg-amber-500/10 rounded-full flex items-center justify-center text-amber-500 mb-3">

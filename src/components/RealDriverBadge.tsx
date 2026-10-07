@@ -487,6 +487,7 @@ interface RealDriverBadgeCardProps {
   completedClasses: number;
   totalClasses?: number;
   onBookClass?: () => void;
+  onClose?: () => void;
 }
 
 /**
@@ -499,7 +500,8 @@ export default function RealDriverBadgeCard({
   student,
   completedClasses,
   totalClasses = 15,
-  onBookClass
+  onBookClass,
+  onClose
 }: RealDriverBadgeCardProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTierLevel, setSelectedTierLevel] = useState<number | null>(null);
@@ -560,9 +562,21 @@ export default function RealDriverBadgeCard({
             </span>
           </div>
           
-          <div className="flex items-center gap-1.5 text-[9px] font-mono text-slate-400 bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
-            <ShieldCheck className="w-3 h-3 text-emerald-400 shrink-0" />
-            <span>{credentialSerial}</span>
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 text-[9px] font-mono text-slate-400 bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
+              <ShieldCheck className="w-3 h-3 text-emerald-400 shrink-0" />
+              <span>{credentialSerial}</span>
+            </div>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-white/10 transition-colors cursor-pointer"
+                title="Hide badge card"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 

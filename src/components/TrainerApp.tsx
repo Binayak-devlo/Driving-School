@@ -388,36 +388,42 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
       setChats(MockDatabase.getChats(currentActiveId));
       setTrainers(MockDatabase.getTrainers());
     };
-    const interval = setInterval(handleStorageChange, 2000);
-    return () => clearInterval(interval);
+    handleStorageChange();
   }, [selectedStudentId, selectedBooking]);
 
-  // Listen to global real-time database updates
+  // Listen to global real-time database updates with debounce
   useEffect(() => {
+    let timer: any = null;
     const handleDbUpdated = () => {
-      const allBookings = MockDatabase.getAllBookings();
-      setBookings(allBookings);
-      
-      if (selectedBooking) {
-        const fresh = allBookings.find(b => b.id === selectedBooking.id);
-        if (fresh) {
-          setSelectedBooking(fresh);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const allBookings = MockDatabase.getAllBookings();
+        setBookings(allBookings);
+        
+        if (selectedBooking) {
+          const fresh = allBookings.find(b => b.id === selectedBooking.id);
+          if (fresh) {
+            setSelectedBooking(fresh);
+          }
         }
-      }
 
-      const studentsList = MockDatabase.getRegisteredStudents();
-      let currentActiveId = selectedStudentId;
-      if (!currentActiveId && studentsList.length > 0) {
-        currentActiveId = studentsList[0].id;
-        setSelectedStudentId(currentActiveId);
-      }
-      setStudent(MockDatabase.getStudent(currentActiveId));
-      setProgress(MockDatabase.getProgress(currentActiveId));
-      setChats(MockDatabase.getChats(currentActiveId));
-      setTrainers(MockDatabase.getTrainers());
+        const studentsList = MockDatabase.getRegisteredStudents();
+        let currentActiveId = selectedStudentId;
+        if (!currentActiveId && studentsList.length > 0) {
+          currentActiveId = studentsList[0].id;
+          setSelectedStudentId(currentActiveId);
+        }
+        setStudent(MockDatabase.getStudent(currentActiveId));
+        setProgress(MockDatabase.getProgress(currentActiveId));
+        setChats(MockDatabase.getChats(currentActiveId));
+        setTrainers(MockDatabase.getTrainers());
+      }, 80);
     };
     window.addEventListener("db-updated", handleDbUpdated);
-    return () => window.removeEventListener("db-updated", handleDbUpdated);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("db-updated", handleDbUpdated);
+    };
   }, [selectedStudentId, selectedBooking]);
 
   // Pull-to-refresh data sync handler for Trainer portal on mobile view
@@ -929,7 +935,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     setIsAuthLoading(true);
 
     setTimeout(() => {
-      const cleanPhone = phoneInput.replace(/\D/g, '').slice(-10);
+      const cleanPhone = (phoneInput || "").replace(/\D/g, '').slice(-10);
       const matched = trainers.find(t => {
         const tPhone = (t.phone || "").replace(/\D/g, '').slice(-10);
         return (cleanPhone && tPhone === cleanPhone) || t.phone === phoneInput;

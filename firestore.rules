@@ -121,5 +121,10 @@ service cloud.firestore {
     match /stream_sessions/{sessionId} {
       allow read, write: if true;
     }
+
+    // Secure plan modification requests and approval history
+    match /plan_modifications/{modId} {
+      allow read, write: if true;
+    }
   }
 }

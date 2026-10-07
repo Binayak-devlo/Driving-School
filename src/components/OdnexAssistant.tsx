@@ -263,7 +263,7 @@ export default function OdnexAssistant({
         trainerName: currentTrainer?.name,
         skillProgress: progress,
         message: queryText,
-        chatHistory: messages.slice(-10).map(m => ({ role: m.role, text: m.text }))
+        chatHistory: (messages || []).slice(-10).map(m => ({ role: m.role, text: m.text }))
       };
 
       const endpoint = getApiEndpointUrl("/api/ai/coach");

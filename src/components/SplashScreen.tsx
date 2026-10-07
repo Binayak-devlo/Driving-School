@@ -14,21 +14,47 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
   onCompleteRef.current = onComplete;
 
   useEffect(() => {
-    // Phase 1: Activate initial ambient glow and logo
-    const t1 = setTimeout(() => setStep(1), 100);
-    // Phase 2: Fade in main texts
-    const t2 = setTimeout(() => setStep(2), 600);
-    // Phase 3: Divine energy surges
-    const t3 = setTimeout(() => setStep(3), 1400);
-    
-    // Phase 4: Initiate elegant exit fade out slightly before 5 seconds
-    // to ensure the screen is completely cleared at exactly 5.0 seconds
-    const exitTimer = setTimeout(() => setStep(4), 4600);
-    
-    // Complete callback and unmount at exactly 5.0 seconds
-    const completeTimer = setTimeout(() => {
+    // If splash screen was already viewed in this browser session, exit immediately
+    try {
+      if (sessionStorage.getItem("golden_hands_splash_seen") === "true") {
+        onCompleteRef.current();
+        return;
+      }
+    } catch (e) {
       onCompleteRef.current();
-    }, 5000);
+      return;
+    }
+
+    const markSeen = () => {
+      try {
+        sessionStorage.setItem("golden_hands_splash_seen", "true");
+      } catch(e) {}
+    };
+
+    // Phase 1: Activate initial ambient glow and logo
+    const t1 = setTimeout(() => setStep(1), 30);
+    // Phase 2: Fade in main texts
+    const t2 = setTimeout(() => setStep(2), 150);
+    // Phase 3: Divine energy surges
+    const t3 = setTimeout(() => setStep(3), 300);
+    
+    // Phase 4: Initiate elegant exit fade out at 650ms
+    const exitTimer = setTimeout(() => {
+      setStep(4);
+      markSeen();
+    }, 650);
+    
+    // Complete callback and unmount at 900ms
+    const completeTimer = setTimeout(() => {
+      markSeen();
+      onCompleteRef.current();
+    }, 900);
+
+    // Absolute fallback: force unmount within 1200ms regardless of browser state
+    const safetyTimer = setTimeout(() => {
+      markSeen();
+      onCompleteRef.current();
+    }, 1200);
 
     return () => {
       clearTimeout(t1);
@@ -36,8 +62,18 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
       clearTimeout(t3);
       clearTimeout(exitTimer);
       clearTimeout(completeTimer);
+      clearTimeout(safetyTimer);
     };
   }, []);
+
+  const handleManualDismiss = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      sessionStorage.setItem("golden_hands_splash_seen", "true");
+    } catch(e) {}
+    setStep(4);
+    onCompleteRef.current();
+  };
 
   // Generate 15 premium floating background stars/sparkles with random positions
   const sparklesList = [
@@ -65,10 +101,21 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
           id="premium-splash-screen"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0, transition: { duration: 0.4, ease: "easeInOut" } }}
-          className="fixed inset-0 z-[10000] flex flex-col items-center justify-between py-12 px-6 overflow-hidden bg-gradient-to-b from-black via-[#040406] to-[#0a0a0f]"
+          exit={{ opacity: 0, transition: { duration: 0.3, ease: "easeInOut" } }}
+          onClick={() => handleManualDismiss()}
+          className="fixed inset-0 z-[10000] flex flex-col items-center justify-between py-8 px-6 overflow-hidden bg-gradient-to-b from-black via-[#040406] to-[#0a0a0f] cursor-pointer select-none"
         >
-          {/* Subtle Divine Light Rays (Ambient Background Pulse) */}
+          {/* Top Bar with Skip Button */}
+          <div className="w-full flex justify-end z-20">
+            <button
+              type="button"
+              onClick={(e) => handleManualDismiss(e)}
+              className="text-xs font-bold px-3.5 py-1.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 text-[#FFE073] border border-[#D4AF37]/30 backdrop-blur-md transition-all flex items-center gap-1.5 cursor-pointer shadow-lg shadow-black/40"
+            >
+              <span>Skip</span>
+              <span className="text-[10px] text-slate-300">→</span>
+            </button>
+          </div>
           <div className="absolute inset-0 pointer-events-none overflow-hidden flex items-center justify-center">
             {/* Deep gold ambient core */}
             <div className="absolute w-[550px] h-[550px] rounded-full bg-gradient-to-tr from-[#D4AF37]/8 via-transparent to-[#D4AF37]/3 blur-[100px] animate-pulse" style={{ animationDuration: "5s" }} />

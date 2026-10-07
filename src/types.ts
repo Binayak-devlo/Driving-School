@@ -33,6 +33,10 @@ export interface Student {
   totalSessions?: number;
   amountPaid?: number;
   remainingAmount?: number;
+  coursePaidAmount?: number;
+  courseRemainingAmount?: number;
+  upgradePaidAmount?: number;
+  upgradePlanDetails?: string;
   paymentStatus?: 'Unpaid' | 'Partial' | 'Paid';
   paymentApprovalStatus?: 'Pending Approval' | 'Approved' | 'Rejected' | 'None';
   firstClassCompleted?: boolean;
@@ -59,6 +63,8 @@ export interface Student {
 
   // Premium Parent Portal Linking
   isPremium?: boolean;
+  parentLiveUnlocked?: boolean;
+  hasParentLiveView?: boolean;
   parentId?: string;
   parentAccessKey?: string;
   parentPhone?: string;

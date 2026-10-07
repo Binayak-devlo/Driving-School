@@ -2085,12 +2085,6 @@ export default function UnifiedAuthPortal({
                   <option value="Premium Plan - ₹4,000 (15 practical classes + Parent Live Stream & Telemetry Portal)">
                     ⭐ Premium Plan - ₹4,000 (15 classes + Parent Live Stream & Telemetry)
                   </option>
-                  <option value="Refresher - ₹1,750 (7 practical classes on road, 30 mins each)">
-                    Refresher - ₹1,750 (7 practical classes on road, 30 mins each)
-                  </option>
-                  <option value="Extended - ₹5,250 (15+8 practical classes on road + 5 theory classes, 1 hr each)">
-                    Extended - ₹5,250 (15+8 practical classes on road + 5 theory classes, 1 hr each)
-                  </option>
                 </select>
 
                 {/* Premium Plan Pricing Breakdown Badge */}

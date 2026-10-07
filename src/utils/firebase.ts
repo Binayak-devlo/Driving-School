@@ -185,11 +185,11 @@ export async function loadCollectionFromCloud(collectionName: string): Promise<a
     try {
       querySnapshot = await withTimeout(
         getDocsFromServer(collection(db, collectionName)),
-        5000,
+        1500,
         `Loading collection ${collectionName} timed out`
       );
     } catch (serverErr) {
-      console.warn(`[Firebase] Server fetch for ${collectionName} timed out or offline, falling back to cached getDocs...`);
+      // Fast fallback to cached Firestore documents without blocking UI
       querySnapshot = await getDocs(collection(db, collectionName));
     }
 
@@ -197,10 +197,8 @@ export async function loadCollectionFromCloud(collectionName: string): Promise<a
     querySnapshot.forEach((doc) => {
       items.push({ id: doc.id, ...doc.data() });
     });
-    console.log(`[Firebase] Loaded ${items.length} items from ${collectionName}`);
     return items;
   } catch (error) {
-    console.warn(`[Firebase] Load collection fallback notice for ${collectionName}:`, error);
     handleFirestoreError(error, OperationType.LIST, collectionName);
     return [];
   }

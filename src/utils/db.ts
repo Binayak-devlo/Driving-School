@@ -495,6 +495,13 @@ export class MockDatabase {
       courseName,
       totalCourseFee,
       totalSessions,
+      amountPaid: 0,
+      remainingAmount: totalCourseFee,
+      coursePaidAmount: 0,
+      courseRemainingAmount: totalCourseFee,
+      upgradePaidAmount: 0,
+      upgradePlanDetails: "",
+      paymentStatus: 'Unpaid',
       courseSyllabus: defaultSyllabus,
       password: password || "golden123",
       isPremium: isPremiumPlan,
@@ -561,6 +568,7 @@ export class MockDatabase {
   static isStudentPremium(student?: Student | null): boolean {
     if (!student) return false;
     if (student.isPremium === true) return true;
+    if (student.parentLiveUnlocked === true || student.hasParentLiveView === true) return true;
     if (student.courseName && student.courseName.toLowerCase().includes("premium")) return true;
     if (student.totalCourseFee === 4000) return true;
     if (student.courseName && student.courseName.toLowerCase().includes("parent live")) return true;
