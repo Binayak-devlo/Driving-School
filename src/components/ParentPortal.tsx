@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { 
   Radio, Video, ShieldCheck, UserCheck, Calendar, Clock, MapPin, 
   Phone, AlertCircle, RefreshCw, CheckCircle2, ChevronRight, Award, 
-  Activity, Navigation, Eye, Zap, Volume2, VolumeX, Maximize2, 
+  Activity, Navigation, Eye, Zap, Volume2, VolumeX, Maximize2, Minimize2, RotateCw,
   FileText, Star, Share2, Copy, Check, ArrowLeft, LogOut, Car, AlertTriangle
 } from "lucide-react";
 import { MockDatabase } from "../utils/db";
@@ -45,6 +45,8 @@ export default function ParentPortal({
   // Video Player UI State
   const [isAudioMuted, setIsAudioMuted] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isDeviceLandscape, setIsDeviceLandscape] = useState(false);
+  const [forceRotatedLandscape, setForceRotatedLandscape] = useState(true);
   const [streamQuality, setStreamQuality] = useState<'360p' | 'Auto' | '720p'>('360p');
   const [copiedParentId, setCopiedParentId] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -394,16 +396,82 @@ export default function ParentPortal({
     setTimeout(() => setCopiedParentId(false), 2000);
   };
 
-  const toggleFullscreen = () => {
-    if (!videoContainerRef.current) return;
-    if (!document.fullscreenElement) {
-      videoContainerRef.current.requestFullscreen().catch(err => console.warn(err));
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen().catch(err => console.warn(err));
-      setIsFullscreen(false);
+  const enterLandscapeFullscreen = async () => {
+    setIsFullscreen(true);
+    setForceRotatedLandscape(true);
+    try {
+      if (videoContainerRef.current && (videoContainerRef.current as any).requestFullscreen && !document.fullscreenElement) {
+        await videoContainerRef.current.requestFullscreen().catch(() => {});
+      }
+    } catch {
+      // Fallback cleanly to CSS fixed fullscreen
+    }
+    try {
+      if (screen.orientation && (screen.orientation as any).lock) {
+        await (screen.orientation as any).lock('landscape').catch(() => {});
+      }
+    } catch {
+      // Orientation lock is optional across browsers
     }
   };
+
+  const exitLandscapeFullscreen = async () => {
+    setIsFullscreen(false);
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen().catch(() => {});
+      }
+    } catch {
+      // Ignore
+    }
+    try {
+      if (screen.orientation && (screen.orientation as any).unlock) {
+        (screen.orientation as any).unlock();
+      }
+    } catch {
+      // Ignore
+    }
+  };
+
+  const toggleLandscapeFullscreen = () => {
+    if (isFullscreen) {
+      exitLandscapeFullscreen();
+    } else {
+      enterLandscapeFullscreen();
+    }
+  };
+
+  // Fullscreen and Orientation change listeners
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        exitLandscapeFullscreen();
+      }
+    };
+    const handleOrientation = () => {
+      setIsDeviceLandscape(window.innerWidth > window.innerHeight);
+    };
+
+    handleOrientation();
+    window.addEventListener('resize', handleOrientation);
+    window.addEventListener('orientationchange', handleOrientation);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('resize', handleOrientation);
+      window.removeEventListener('orientationchange', handleOrientation);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
 
   // Next upcoming or ongoing class
   const activeBooking = bookings.find(b => b.status === "in_progress") || bookings.find(b => b.status === "confirmed") || bookings[0];
@@ -488,13 +556,55 @@ export default function ParentPortal({
                 <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
                   1:1 Secure Stream
                 </span>
+                <button
+                  type="button"
+                  onClick={toggleLandscapeFullscreen}
+                  className={`flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-full border transition-all cursor-pointer shadow-sm ${
+                    isFullscreen
+                      ? 'bg-amber-500 text-slate-950 border-amber-400'
+                      : 'bg-slate-800/80 hover:bg-slate-700/80 text-amber-300 border-white/10 hover:border-amber-400/40'
+                  }`}
+                  title={isFullscreen ? "Return to Portrait View" : "Fullscreen / Landscape Mode"}
+                >
+                  {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                  <span>{isFullscreen ? "Portrait View" : "Fullscreen / Landscape"}</span>
+                </button>
               </div>
             </div>
 
             {/* Video Player Box */}
             <div 
               ref={videoContainerRef}
-              className="relative bg-black rounded-2xl sm:rounded-3xl overflow-hidden border border-slate-800 shadow-2xl aspect-video flex items-center justify-center group"
+              className={`relative bg-black overflow-hidden flex items-center justify-center group transition-all duration-300 ${
+                isFullscreen
+                  ? 'fixed inset-0 z-[9999] rounded-none border-0 shadow-none'
+                  : 'rounded-2xl sm:rounded-3xl border border-slate-800 shadow-2xl aspect-video'
+              }`}
+              style={
+                isFullscreen
+                  ? (!isDeviceLandscape && forceRotatedLandscape
+                      ? {
+                          width: "100vh",
+                          height: "100vw",
+                          position: "fixed",
+                          top: "50%",
+                          left: "50%",
+                          transform: "translate(-50%, -50%) rotate(90deg)",
+                          transformOrigin: "center center",
+                          zIndex: 9999,
+                          maxWidth: "none",
+                          maxHeight: "none",
+                        }
+                      : {
+                          width: "100vw",
+                          height: "100vh",
+                          position: "fixed",
+                          top: 0,
+                          left: 0,
+                          zIndex: 9999,
+                        })
+                  : undefined
+              }
             >
               {!MockDatabase.isStudentPremium(student) ? (
                 /* Non-Premium Student Notice */
@@ -517,7 +627,7 @@ export default function ParentPortal({
                     ref={canvasRef} 
                     width={640} 
                     height={360} 
-                    className="w-full h-full object-cover rounded-2xl sm:rounded-3xl block select-none"
+                    className={`w-full h-full ${isFullscreen ? 'object-contain' : 'object-cover'} ${isFullscreen ? 'rounded-none' : 'rounded-2xl sm:rounded-3xl'} block select-none`}
                     style={{ transform: "translateZ(0)", willChange: "contents", imageRendering: "auto" }}
                   />
 
@@ -551,13 +661,25 @@ export default function ParentPortal({
                         <Zap className="w-3.5 h-3.5 text-amber-400" />
                         <span>{streamSession.currentSpeed || 24} KM/H</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsLiveStreamViewActive(false)}
-                        className="bg-black/80 hover:bg-slate-900 text-slate-300 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 text-[10px] font-bold transition-all cursor-pointer shadow-lg"
-                      >
-                        Minimize
-                      </button>
+                      {isFullscreen ? (
+                        <button
+                          type="button"
+                          onClick={toggleLandscapeFullscreen}
+                          className="bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 py-1.5 rounded-lg border border-amber-400 font-black text-xs transition-all cursor-pointer shadow-lg flex items-center gap-1.5"
+                          title="Return to Portrait View"
+                        >
+                          <Minimize2 className="w-3.5 h-3.5" />
+                          <span>Exit Landscape</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setIsLiveStreamViewActive(false)}
+                          className="bg-black/80 hover:bg-slate-900 text-slate-300 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 text-[10px] font-bold transition-all cursor-pointer shadow-lg"
+                        >
+                          Minimize
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -565,7 +687,7 @@ export default function ParentPortal({
                   <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between pointer-events-auto z-10">
                     <div className="bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 text-xs text-slate-300 flex items-center gap-2">
                       <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      <span className="truncate max-w-[200px] sm:max-w-xs text-[11px] font-bold text-white">
+                      <span className="truncate max-w-[140px] xs:max-w-[200px] sm:max-w-xs text-[11px] font-bold text-white">
                         {streamSession.location || "Rasulgarh Square, Bhubaneswar"}
                       </span>
                     </div>
@@ -580,13 +702,40 @@ export default function ParentPortal({
                         {isAudioMuted ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
                       </button>
 
+                      {/* Rotate orientation toggle button when in fullscreen portrait mode */}
+                      {isFullscreen && !isDeviceLandscape && (
+                        <button
+                          type="button"
+                          onClick={() => setForceRotatedLandscape(!forceRotatedLandscape)}
+                          className="p-2 rounded-xl bg-black/70 hover:bg-black/90 text-amber-400 backdrop-blur-md border border-white/10 transition-all cursor-pointer"
+                          title={forceRotatedLandscape ? "Switch to Vertical Fit" : "Rotate 90° Landscape"}
+                        >
+                          <RotateCw className="w-4 h-4" />
+                        </button>
+                      )}
+
+                      {/* Fullscreen / Landscape button */}
                       <button
                         type="button"
-                        onClick={toggleFullscreen}
-                        className="p-2 rounded-xl bg-black/70 hover:bg-black/90 text-white backdrop-blur-md border border-white/10 transition-all cursor-pointer"
-                        title="Fullscreen Mode"
+                        onClick={toggleLandscapeFullscreen}
+                        className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 backdrop-blur-md border transition-all cursor-pointer shadow-lg active:scale-95 ${
+                          isFullscreen
+                            ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-400 shadow-amber-500/30'
+                            : 'bg-black/70 hover:bg-black/90 text-white border-white/15 hover:border-amber-400/50 hover:text-amber-300'
+                        }`}
+                        title={isFullscreen ? "Return to Portrait View" : "Open Fullscreen / Landscape Mode"}
                       >
-                        <Maximize2 className="w-4 h-4" />
+                        {isFullscreen ? (
+                          <>
+                            <Minimize2 className="w-4 h-4" />
+                            <span className="hidden xs:inline">Return to Portrait</span>
+                          </>
+                        ) : (
+                          <>
+                            <Maximize2 className="w-4 h-4 text-amber-400" />
+                            <span>Fullscreen / Landscape</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>
@@ -666,6 +815,16 @@ export default function ParentPortal({
                     >
                       <Video className="w-4 h-4" />
                       <span>Click here to view live stream</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={toggleLandscapeFullscreen}
+                      className="w-full sm:w-auto px-5 py-3 rounded-xl bg-slate-800/90 hover:bg-slate-700/90 border border-white/10 hover:border-amber-400/40 text-white text-xs sm:text-sm font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md active:scale-95"
+                      title={isFullscreen ? "Return to Portrait View" : "Fullscreen / Landscape Mode"}
+                    >
+                      {isFullscreen ? <Minimize2 className="w-4 h-4 text-amber-400" /> : <Maximize2 className="w-4 h-4 text-amber-400" />}
+                      <span>{isFullscreen ? "Exit Landscape" : "Fullscreen / Landscape"}</span>
                     </button>
                   </div>
 
