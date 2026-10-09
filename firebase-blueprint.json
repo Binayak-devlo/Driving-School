@@ -258,6 +258,20 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["studentId", "isLive"]
+    },
+    "AuthSession": {
+      "title": "AuthSession",
+      "description": "Cross-portal backend session token storage for active user authentication",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string" },
+        "userId": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "trainer", "admin", "parent"] },
+        "createdAt": { "type": "number" },
+        "lastActiveAt": { "type": "number" },
+        "expiresAt": { "type": "number" }
+      },
+      "required": ["token", "userId", "role", "expiresAt"]
     }
   },
   "firestore": {
@@ -312,6 +326,10 @@
     "dl_applications/{appId}": {
       "schema": "DrivingLicenceApplication",
       "description": "Driving licence application records"
+    },
+    "auth_sessions/{token}": {
+      "schema": "AuthSession",
+      "description": "Active user backend authentication sessions"
     }
   }
 }

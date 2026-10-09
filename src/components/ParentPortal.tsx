@@ -6,6 +6,8 @@ import {
   FileText, Star, Share2, Copy, Check, ArrowLeft, LogOut, Car, AlertTriangle
 } from "lucide-react";
 import { MockDatabase } from "../utils/db";
+import { AuthSessionManager } from "../utils/authSession";
+import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import { Parent, Student, Trainer, Booking, SkillProgress, LiveStreamSession, NavState } from "../types";
 
 interface ParentPortalProps {
@@ -26,10 +28,10 @@ export default function ParentPortal({
   // Active parent user
   const [parent, setParent] = useState<Parent | null>(() => {
     if (propParentData) return propParentData;
+    const isParentAuth = AuthSessionManager.isRoleAuthenticated('parent');
+    if (!isParentAuth) return null;
     const current = MockDatabase.getCurrentParent();
-    if (current) return current;
-    const parents = MockDatabase.getParents();
-    return parents[0] || null;
+    return current || null;
   });
 
   // Active Bottom Tab: 'live' | 'progress' | 'schedule' | 'profile'
@@ -609,6 +611,28 @@ export default function ParentPortal({
     };
   }, [isFullscreen]);
 
+  if (!parent) {
+    return (
+      <div className="w-full h-full bg-[#0F1117] overflow-y-auto relative flex flex-col justify-center items-center font-sans text-white p-4 sm:p-6 select-none">
+        <div className="w-full max-w-md my-auto">
+          <UnifiedAuthPortal 
+            initialRole="parent"
+            embedded={true}
+            onCancel={onLogout}
+            onLoginSuccess={(role, userData) => {
+              if (role === 'parent' && userData) {
+                setParent(userData);
+                onStateChange?.();
+              } else {
+                onLogout();
+              }
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
   // Next upcoming or ongoing class
   const activeBooking = bookings.find(b => b.status === "in_progress") || bookings.find(b => b.status === "confirmed") || bookings[0];
   const completedClasses = bookings.filter(b => b.status === "completed").length;
@@ -650,7 +674,11 @@ export default function ParentPortal({
           
           <button
             type="button"
-            onClick={onLogout}
+            onClick={async () => {
+              await AuthSessionManager.logout('parent');
+              setParent(null);
+              onLogout();
+            }}
             title="Sign Out"
             className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 text-xs font-bold transition-all cursor-pointer"
           >
@@ -1386,7 +1414,11 @@ export default function ParentPortal({
 
             <button
               type="button"
-              onClick={onLogout}
+              onClick={async () => {
+                await AuthSessionManager.logout('parent');
+                setParent(null);
+                onLogout();
+              }}
               className="w-full bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs uppercase tracking-wider py-3.5 rounded-2xl transition-all cursor-pointer flex items-center justify-center gap-2"
             >
               <LogOut className="w-4 h-4" />

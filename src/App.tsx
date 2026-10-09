@@ -11,6 +11,7 @@ import SplashScreen from "./components/SplashScreen";
 import UnifiedAuthPortal from "./components/UnifiedAuthPortal";
 import PullToRefresh from "./components/PullToRefresh";
 import { MockDatabase } from "./utils/db";
+import { AuthSessionManager } from "./utils/authSession";
 import { NavState } from "./types";
 
 // Dynamic lazy-loading to optimize bundle size and prevent main thread locks
@@ -40,26 +41,21 @@ function getInitialNavState(): NavState {
   let parentLoggedIn = false;
 
   try {
-    const rememberedRaw = localStorage.getItem("golden_hands_remember_user");
-    let remembered: any = null;
-    if (rememberedRaw) {
-      try { remembered = JSON.parse(rememberedRaw); } catch(e) {}
-    }
-    const currentStudentId = localStorage.getItem("golden_hands_current_student_id") || (remembered?.role === 'student' ? remembered.id : "");
-    const currentTrainerId = localStorage.getItem("golden_hands_current_trainer_id") || (remembered?.role === 'trainer' ? remembered.id : "");
-    const isAdmin = localStorage.getItem("golden_hands_admin_logged_in") === "true" || (remembered?.role === 'admin');
-    const currentParentId = localStorage.getItem("golden_hands_current_parent_id") || (remembered?.role === 'parent' ? remembered.id : "");
+    const isStudent = AuthSessionManager.isRoleAuthenticated('student');
+    const isTrainer = AuthSessionManager.isRoleAuthenticated('trainer');
+    const isAdmin = AuthSessionManager.isRoleAuthenticated('admin');
+    const isParent = AuthSessionManager.isRoleAuthenticated('parent');
 
-    if (currentStudentId) {
+    if (isStudent) {
       initialView = 'student';
       studentScreen = 'app';
-    } else if (currentTrainerId) {
+    } else if (isTrainer) {
       initialView = 'trainer';
       trainerLoggedIn = true;
     } else if (isAdmin) {
       initialView = 'admin';
       adminLoggedIn = true;
-    } else if (currentParentId) {
+    } else if (isParent) {
       initialView = 'parent';
       parentLoggedIn = true;
     }
@@ -177,13 +173,42 @@ export default function App() {
     setTimeout(() => setAppToast(null), 2000);
   };
 
+  const handleUniversalLogout = useCallback(async (portalName?: string) => {
+    try {
+      await AuthSessionManager.logout(portalName);
+    } catch (e) {
+      console.warn("Logout notification error:", e);
+    }
+
+    const cleanState: NavState = {
+      activeView: 'portal',
+      studentScreen: 'login',
+      studentTab: 'home',
+      studentSubPage: null,
+      trainerLoggedIn: false,
+      trainerTab: 'schedule',
+      trainerSelectedBookingId: null,
+      adminLoggedIn: false,
+      adminTab: 'analytics',
+      adminPreviewDocId: null,
+      parentLoggedIn: false,
+      parentTab: 'overview',
+      seq: (currentNavStateRef.current?.seq || 2) + 1
+    };
+
+    navStackRef.current = [cleanState];
+    window.history.replaceState(cleanState, '');
+    setCurrentNavState(cleanState);
+    triggerAppToast("Logged out securely.");
+  }, []);
+
   const changeView = (view: 'portal' | 'student' | 'trainer' | 'admin' | 'parent') => {
     if (currentNavState.activeView === view) return;
 
-    const isStudentLoggedIn = !!localStorage.getItem("golden_hands_current_student_id");
-    const isTrainerLoggedIn = !!localStorage.getItem("golden_hands_current_trainer_id");
-    const isAdminLoggedIn = localStorage.getItem("golden_hands_admin_logged_in") === "true";
-    const isParentLoggedIn = !!MockDatabase.getCurrentParent() || !!localStorage.getItem("golden_hands_current_parent_id");
+    const isStudentLoggedIn = AuthSessionManager.isRoleAuthenticated('student');
+    const isTrainerLoggedIn = AuthSessionManager.isRoleAuthenticated('trainer');
+    const isAdminLoggedIn = AuthSessionManager.isRoleAuthenticated('admin');
+    const isParentLoggedIn = AuthSessionManager.isRoleAuthenticated('parent');
 
     let fresh: NavState = {
       ...currentNavState,
@@ -214,6 +239,16 @@ export default function App() {
   // Initialize and listen to popstate / reported changes
   useEffect(() => {
     const defaultState = getInitialNavState();
+
+    // Verify any stored session with the backend on app start
+    AuthSessionManager.verifySessionWithBackend().then(res => {
+      if (!res.valid) {
+        // If session was invalid or expired, ensure user is returned to clean login screen
+        if (currentNavStateRef.current.activeView !== 'portal') {
+          handleUniversalLogout();
+        }
+      }
+    });
 
     // Setup initial history entry buffer on load to capture first back-click on Home
     const existingState = window.history.state;
@@ -254,21 +289,65 @@ export default function App() {
           }
         } else {
           isNavigatingBackRef.current = true;
-          const stateIdx = poppedState.seq 
-            ? navStackRef.current.findIndex(s => s.seq === poppedState.seq)
-            : navStackRef.current.findIndex(s => isStateEqual(s, poppedState));
+          let safeState = { ...poppedState };
+
+          // Security check: Protect authenticated portals from unauthorized back-navigation after logout
+          if (safeState.activeView === 'student' && safeState.studentScreen === 'app') {
+            if (!AuthSessionManager.isRoleAuthenticated('student')) {
+              safeState = { ...safeState, activeView: 'portal', studentScreen: 'login' };
+            }
+          } else if (safeState.activeView === 'trainer' && safeState.trainerLoggedIn) {
+            if (!AuthSessionManager.isRoleAuthenticated('trainer')) {
+              safeState = { ...safeState, activeView: 'portal', trainerLoggedIn: false };
+            }
+          } else if (safeState.activeView === 'admin' && safeState.adminLoggedIn) {
+            if (!AuthSessionManager.isRoleAuthenticated('admin')) {
+              safeState = { ...safeState, activeView: 'portal', adminLoggedIn: false };
+            }
+          } else if (safeState.activeView === 'parent' && safeState.parentLoggedIn) {
+            if (!AuthSessionManager.isRoleAuthenticated('parent')) {
+              safeState = { ...safeState, activeView: 'portal', parentLoggedIn: false };
+            }
+          }
+
+          const stateIdx = safeState.seq 
+            ? navStackRef.current.findIndex(s => s.seq === safeState.seq)
+            : navStackRef.current.findIndex(s => isStateEqual(s, safeState));
           if (stateIdx !== -1) {
             navStackRef.current = (navStackRef.current || []).slice(0, stateIdx + 1);
           } else {
-            navStackRef.current.push(poppedState);
+            navStackRef.current.push(safeState);
           }
-          setCurrentNavState(poppedState);
+          setCurrentNavState(safeState);
           setTimeout(() => {
             isNavigatingBackRef.current = false;
           }, 800);
         }
       }
     };
+
+    // Centralized auth logout event listener
+    const handleAuthLogoutEvent = () => {
+      const cleanState: NavState = {
+        activeView: 'portal',
+        studentScreen: 'login',
+        studentTab: 'home',
+        studentSubPage: null,
+        trainerLoggedIn: false,
+        trainerTab: 'schedule',
+        trainerSelectedBookingId: null,
+        adminLoggedIn: false,
+        adminTab: 'analytics',
+        adminPreviewDocId: null,
+        parentLoggedIn: false,
+        parentTab: 'overview',
+        seq: (currentNavStateRef.current?.seq || 2) + 1
+      };
+      navStackRef.current = [cleanState];
+      window.history.replaceState(cleanState, '');
+      setCurrentNavState(cleanState);
+    };
+    window.addEventListener("golden_hands_auth_logout", handleAuthLogoutEvent);
 
     // reported change handler (triggered by children navigation changes)
     const handleNavReported = (e: Event) => {
@@ -330,6 +409,7 @@ export default function App() {
     });
 
     return () => {
+      window.removeEventListener("golden_hands_auth_logout", handleAuthLogoutEvent);
       window.removeEventListener('popstate', handlePopState);
       window.removeEventListener('app-nav-reported', handleNavReported);
       if (backButtonListener) {
@@ -764,19 +844,7 @@ export default function App() {
                 <Suspense fallback={<PortalWorkspaceLoader label="Golden Hands Student Portal" />}>
                   <StudentApp 
                     onStateChange={handleStateChange} 
-                    onLogout={() => {
-                      const fresh: NavState = {
-                        ...currentNavState,
-                        activeView: 'portal',
-                        studentScreen: 'login',
-                        studentTab: 'home',
-                        studentSubPage: null,
-                        seq: (currentNavState.seq || 2) + 1
-                      };
-                      navStackRef.current.push(fresh);
-                      setCurrentNavState(fresh);
-                      window.history.pushState(fresh, '');
-                    }} 
+                    onLogout={() => handleUniversalLogout('student')} 
                     navState={currentNavState} 
                   />
                 </Suspense>
@@ -793,7 +861,7 @@ export default function App() {
               {/* Centered Web App Layout */}
               <div className="w-full h-full">
                 <Suspense fallback={<PortalWorkspaceLoader label="Trainer Portal Workspace" />}>
-                  <TrainerApp onStateChange={handleStateChange} onLogout={() => changeView('portal')} navState={currentNavState} />
+                  <TrainerApp onStateChange={handleStateChange} onLogout={() => handleUniversalLogout('trainer')} navState={currentNavState} />
                 </Suspense>
               </div>
             </div>
@@ -804,7 +872,7 @@ export default function App() {
         {activeView === 'admin' && (
           <div className="h-full">
             <Suspense fallback={<PortalWorkspaceLoader label="Admin Master Dashboard" />}>
-              <AdminDashboard onStateChange={handleStateChange} onLogout={() => changeView('portal')} navState={currentNavState} />
+              <AdminDashboard onStateChange={handleStateChange} onLogout={() => handleUniversalLogout('admin')} navState={currentNavState} />
             </Suspense>
           </div>
         )}
@@ -816,18 +884,7 @@ export default function App() {
               <Suspense fallback={<PortalWorkspaceLoader label="Parent Guardian Portal" />}>
                 <ParentPortal 
                   onStateChange={handleStateChange} 
-                  onLogout={() => {
-                    MockDatabase.logoutParent();
-                    const fresh: NavState = {
-                      ...currentNavState,
-                      activeView: 'portal',
-                      parentLoggedIn: false,
-                      seq: (currentNavState.seq || 2) + 1
-                    };
-                    navStackRef.current.push(fresh);
-                    setCurrentNavState(fresh);
-                    window.history.pushState(fresh, '');
-                  }} 
+                  onLogout={() => handleUniversalLogout('parent')} 
                   navState={currentNavState} 
                 />
               </Suspense>

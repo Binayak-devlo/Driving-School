@@ -8,6 +8,7 @@ import {
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../utils/firebase";
 import { MockDatabase } from "../utils/db";
+import { AuthSessionManager } from "../utils/authSession";
 import { Booking, Student, SkillProgress, ChatMessage, Trainer, NavState, TrackingSession, TrackingStatus } from "../types";
 import { calculateDistanceKm, DEFAULT_BHUBANESWAR_LOCATION, getCoordinatesFromLocation } from "../utils/geo";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
@@ -50,6 +51,8 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
   const [chats, setChats] = useState(MockDatabase.getChats(selectedStudentId));
   const [trainers, setTrainers] = useState(MockDatabase.getTrainers());
   const [currentTrainerId, setCurrentTrainerId] = useState<string>(() => {
+    const isTrainerAuth = AuthSessionManager.isRoleAuthenticated('trainer');
+    if (!isTrainerAuth) return "";
     return localStorage.getItem("golden_hands_current_trainer_id") || "";
   });
   const currentTrainer = trainers.find(t => t.id === currentTrainerId) || trainers[0] || { id: "", name: "No Trainer", rating: 5, reviewsCount: 0, photoUrl: "", carName: "", carPlate: "" };
@@ -84,14 +87,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
 
   // Active Session Management & Multi-Device Control
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
-    let sess = localStorage.getItem("golden_hands_trainer_session_id");
-    const trId = localStorage.getItem("golden_hands_current_trainer_id") || "trainer_1";
-    if (!sess) {
-      sess = `sess_tr_${trId}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      localStorage.setItem("golden_hands_trainer_session_id", sess);
-      MockDatabase.saveTrainerSession(trId, sess);
-    }
-    return sess;
+    return localStorage.getItem("golden_hands_trainer_session_id") || "";
   });
   const currentSessionIdRef = useRef<string>(currentSessionId);
   useEffect(() => {
@@ -1436,8 +1432,8 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    localStorage.removeItem("golden_hands_current_trainer_id");
+                  onClick={async () => {
+                    await AuthSessionManager.logout('trainer');
                     setCurrentTrainerId("");
                     if (onLogout) onLogout();
                     onStateChange();

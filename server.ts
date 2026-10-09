@@ -196,8 +196,137 @@ async function startServer() {
   app.use(express.json());
 
   // ==========================================
-  // SECURE AUTHENTICATION & EMAIL VERIFICATION
+  // SECURE AUTHENTICATION & SESSION MANAGEMENT
   // ==========================================
+
+  interface BackendSession {
+    token: string;
+    userId: string;
+    role: 'student' | 'trainer' | 'admin' | 'parent';
+    createdAt: number;
+    lastActiveAt: number;
+    expiresAt: number;
+  }
+
+  const activeServerSessions = new Map<string, BackendSession>();
+
+  async function createBackendSession(
+    role: 'student' | 'trainer' | 'admin' | 'parent', 
+    userId: string, 
+    remember: boolean = false
+  ): Promise<BackendSession> {
+    const safeId = String(userId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'user';
+    const randHex = crypto.randomBytes(24).toString('hex');
+    const token = `gh_sess_${role}_${safeId}_${randHex}`;
+    const now = Date.now();
+    // 30 days if remember is true, 24 hours if false
+    const duration = remember ? (30 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000);
+    const session: BackendSession = {
+      token,
+      userId,
+      role,
+      createdAt: now,
+      lastActiveAt: now,
+      expiresAt: now + duration
+    };
+
+    activeServerSessions.set(token, session);
+
+    try {
+      await setDoc(doc(db, "auth_sessions", token), session);
+    } catch (err) {
+      console.warn("[Backend Session] Notice persisting session to Firestore:", err);
+    }
+
+    return session;
+  }
+
+  async function invalidateBackendSession(token?: string, userId?: string, role?: string): Promise<void> {
+    if (token) {
+      activeServerSessions.delete(token);
+      try {
+        await deleteDoc(doc(db, "auth_sessions", token));
+      } catch (err) {
+        console.warn("[Backend Session] Error removing session doc:", err);
+      }
+    }
+
+    if (userId) {
+      for (const [t, s] of activeServerSessions.entries()) {
+        if (s.userId === userId && (!role || s.role === role)) {
+          activeServerSessions.delete(t);
+          try {
+            await deleteDoc(doc(db, "auth_sessions", t));
+          } catch (e) {}
+        }
+      }
+
+      try {
+        const q = query(
+          collection(db, "auth_sessions"),
+          where("userId", "==", userId)
+        );
+        const snaps = await getDocs(q);
+        for (const d of snaps.docs) {
+          const data = d.data();
+          if (!role || data.role === role) {
+            await deleteDoc(d.ref);
+            activeServerSessions.delete(d.id);
+          }
+        }
+      } catch (err) {
+        console.warn("[Backend Session] Error cleaning sessions for user:", err);
+      }
+    }
+  }
+
+  async function verifyBackendSession(
+    token: string, 
+    role: string, 
+    userId: string
+  ): Promise<{ valid: boolean; session?: BackendSession; error?: string }> {
+    if (!token || !role || !userId) {
+      return { valid: false, error: "Missing required session parameters." };
+    }
+
+    let session = activeServerSessions.get(token);
+    if (!session) {
+      try {
+        const docSnap = await getDoc(doc(db, "auth_sessions", token));
+        if (docSnap.exists()) {
+          session = docSnap.data() as BackendSession;
+          activeServerSessions.set(token, session);
+        }
+      } catch (err) {
+        console.warn("[Backend Session] Firestore session check notice:", err);
+      }
+    }
+
+    if (!session) {
+      return { valid: false, error: "Session token not found or invalidated on server." };
+    }
+
+    if (session.role !== role) {
+      return { valid: false, error: "Session role mismatch. Access denied across portal boundaries." };
+    }
+
+    if (session.userId !== userId) {
+      return { valid: false, error: "Session user identity mismatch." };
+    }
+
+    if (Date.now() > session.expiresAt) {
+      activeServerSessions.delete(token);
+      try {
+        await deleteDoc(doc(db, "auth_sessions", token));
+      } catch (e) {}
+      return { valid: false, error: "Session expired. Please log in again." };
+    }
+
+    session.lastActiveAt = Date.now();
+    activeServerSessions.set(token, session);
+
+    return { valid: true, session };
+  }
 
   // 1. Send OTP for Mobile Registration
   app.post("/api/auth/otp/send-register", async (req, res) => {
@@ -473,9 +602,14 @@ async function startServer() {
       // Invalidate OTP
       await updateDoc(doc(db, "phone_otps", otpId), { used: true });
 
+      // Create secure backend session
+      const backendSession = await createBackendSession('student', studentId, false);
+
       return res.json({
         success: true,
         message: "Account registered successfully!",
+        token: backendSession.token,
+        role: "student",
         student: newStudent,
         parentInfo: isPremium ? { parentId, plan: "Premium" } : null
       });
@@ -651,7 +785,7 @@ async function startServer() {
   // 7. Student Login Endpoint (Mobile Number + Password)
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const { phoneOrEmail, password } = req.body;
+      const { phoneOrEmail, password, rememberMe } = req.body;
       
       if (!phoneOrEmail || !password) {
         return res.status(400).json({ error: "Missing Mobile Number / Email or Password." });
@@ -738,9 +872,15 @@ async function startServer() {
         }, { merge: true });
       }
 
+      // Create secure backend session
+      const backendSession = await createBackendSession('student', student.id, !!rememberMe);
+
       return res.json({
         success: true,
-        student
+        student,
+        token: backendSession.token,
+        role: "student",
+        expiresAt: backendSession.expiresAt
       });
 
     } catch (error: any) {
@@ -1305,7 +1445,7 @@ async function startServer() {
   // Trainer Live Authentication Endpoint
   app.post("/api/auth/verify-trainer", async (req, res) => {
     try {
-      const { identifier, password } = req.body;
+      const { identifier, password, rememberMe } = req.body;
       if (!identifier || !password) {
         return res.status(400).json({ error: "Missing phone/name or password." });
       }
@@ -1379,9 +1519,14 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid trainer details or password." });
       }
 
+      const backendSession = await createBackendSession('trainer', foundTrainer.id, !!rememberMe);
+
       return res.json({
         success: true,
-        trainer: foundTrainer
+        trainer: foundTrainer,
+        token: backendSession.token,
+        role: "trainer",
+        expiresAt: backendSession.expiresAt
       });
     } catch (error: any) {
       console.error("Trainer auth endpoint error:", error);
@@ -1392,7 +1537,7 @@ async function startServer() {
   // Admin Live Authentication Endpoint
   app.post("/api/auth/verify-admin", async (req, res) => {
     try {
-      const { identifier, password } = req.body;
+      const { identifier, password, rememberMe } = req.body;
       if (!identifier || !password) {
         return res.status(400).json({ error: "Missing admin identifier or passcode." });
       }
@@ -1408,9 +1553,14 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid admin username or passcode." });
       }
 
+      const backendSession = await createBackendSession('admin', 'admin', !!rememberMe);
+
       return res.json({
         success: true,
-        admin: { id: "admin", role: "admin" }
+        admin: { id: "admin", role: "admin" },
+        token: backendSession.token,
+        role: "admin",
+        expiresAt: backendSession.expiresAt
       });
     } catch (error: any) {
       console.error("Admin auth endpoint error:", error);
@@ -1418,51 +1568,78 @@ async function startServer() {
     }
   });
 
-  // Live Session Verification Endpoint (Startup / Online check)
+  // Centralized Session Invalidation Endpoint (Logout)
+  app.post("/api/auth/logout", async (req, res) => {
+    try {
+      const { token, role, id } = req.body;
+      await invalidateBackendSession(token, id, role);
+      return res.json({ success: true, message: "Active session invalidated on server." });
+    } catch (error: any) {
+      console.error("Logout endpoint error:", error);
+      res.status(500).json({ error: "Failed to invalidate session on server." });
+    }
+  });
+
+  // Live Session Verification Endpoint (Startup / Online check / Navigation Guard)
   app.post("/api/auth/verify-session", async (req, res) => {
     try {
-      const { role, id } = req.body;
-      if (!role || !id) {
-        return res.status(400).json({ valid: false, error: "Missing role or user ID." });
+      const { token, role, id } = req.body;
+      if (!token || !role || !id) {
+        return res.status(401).json({ valid: false, error: "Missing session token, role, or user ID." });
+      }
+
+      const check = await verifyBackendSession(token, role, id);
+      if (!check.valid || !check.session) {
+        return res.status(401).json({ valid: false, error: check.error || "Session is invalid or expired." });
       }
 
       if (role === "student") {
         const docSnap = await getDoc(doc(db, "students", id));
-        if (docSnap.exists()) {
-          const data = docSnap.data() as any;
-          return res.json({ valid: true, user: { id: docSnap.id, ...data } });
+        let studentData = docSnap.exists() ? { id: docSnap.id, ...docSnap.data() } : null;
+        if (!studentData) {
+          studentData = await getStudentByEmailOrPhone(id);
         }
-        const student = await getStudentByEmailOrPhone(id);
-        if (student) {
-          return res.json({ valid: true, user: student });
+        if (!studentData) {
+          await invalidateBackendSession(token, id, role);
+          return res.status(401).json({ valid: false, error: "User session not found on live server." });
         }
-        return res.status(401).json({ valid: false, error: "User session not found on live server." });
+        return res.json({ valid: true, role: 'student', userId: id, user: studentData });
 
       } else if (role === "trainer") {
         const docSnap = await getDoc(doc(db, "trainers", id));
-        if (!docSnap.exists()) {
+        let trainerData: any = docSnap.exists() ? { id: docSnap.id, ...docSnap.data() } : null;
+        if (!trainerData) {
           const initialTrainers = ["trainer_1", "trainer_2", "trainer_3"];
           if (initialTrainers.includes(id)) {
-            return res.json({ valid: true, id });
+            trainerData = { id, name: "Trainer " + id, role: "trainer" };
           }
+        }
+        if (!trainerData) {
+          await invalidateBackendSession(token, id, role);
           return res.status(401).json({ valid: false, error: "Trainer session not found on live server." });
         }
-        return res.json({ valid: true, user: { id, ...docSnap.data() } });
+        return res.json({ valid: true, role: 'trainer', userId: id, user: trainerData });
 
       } else if (role === "admin") {
-        if (id === "admin") {
-          return res.json({ valid: true, id: "admin" });
+        if (id !== "admin") {
+          return res.status(401).json({ valid: false, error: "Admin session invalid." });
         }
-        return res.status(401).json({ valid: false, error: "Admin session invalid." });
+        return res.json({ valid: true, role: 'admin', userId: 'admin', user: { id: "admin", role: "admin" } });
+
       } else if (role === "parent") {
         const docSnap = await getDoc(doc(db, "parents", id));
         if (docSnap.exists()) {
-          return res.json({ valid: true, user: { id, ...docSnap.data() } });
+          const parentData = docSnap.data() as any;
+          if (parentData.status === 'disabled' || parentData.status === 'inactive') {
+            await invalidateBackendSession(token, id, role);
+            return res.status(401).json({ valid: false, error: "Parent Guardian account has been deactivated." });
+          }
+          return res.json({ valid: true, role: 'parent', userId: id, user: { id, ...parentData } });
         }
-        return res.json({ valid: true, id });
+        return res.json({ valid: true, role: 'parent', userId: id, user: { id } });
       }
 
-      return res.status(400).json({ valid: false, error: "Unknown role." });
+      return res.status(401).json({ valid: false, error: "Unknown portal role." });
     } catch (error: any) {
       console.error("Session verification error:", error);
       res.status(500).json({ valid: false, error: "Unable to reach authentication server." });
@@ -1625,7 +1802,7 @@ async function startServer() {
   // Parent Live Authentication Endpoint (Strictly 6-digit Parent ID + 4-digit Parent Code)
   app.post("/api/auth/verify-parent", async (req, res) => {
     try {
-      const { parentId, parentCode, identifier, password } = req.body;
+      const { parentId, parentCode, identifier, password, rememberMe } = req.body;
       const cleanId = (parentId || identifier || "").trim();
       const cleanCode = (parentCode || password || "").trim();
 
@@ -1712,10 +1889,15 @@ async function startServer() {
         lastLoginAt: new Date().toISOString()
       }, { merge: true });
 
+      const backendSession = await createBackendSession('parent', foundParent.id, !!rememberMe);
+
       return res.json({
         success: true,
         parent: foundParent,
-        student: sData
+        student: sData,
+        token: backendSession.token,
+        role: "parent",
+        expiresAt: backendSession.expiresAt
       });
     } catch (error: any) {
       console.error("Parent auth endpoint error:", error);

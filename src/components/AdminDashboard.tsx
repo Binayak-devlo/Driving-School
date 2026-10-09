@@ -12,6 +12,7 @@ import {
   BarChart, Bar, Legend, PieChart, Pie, Cell, ComposedChart, Line
 } from "recharts";
 import { MockDatabase } from "../utils/db";
+import { AuthSessionManager } from "../utils/authSession";
 import { Student, Trainer, Booking, Document, Payment, SkillProgress, Review, SlotDay, NavState, DrivingLicenceApplication, DrivingLicenceDocumentItem } from "../types";
 import { compressImageIfNeeded, STUDENT_AVATAR_PRESETS, TRAINER_AVATAR_PRESETS, CAR_AVATAR_PRESETS } from "../utils/imageUtils";
 import { downloadCSV, downloadFileOrImage } from "../utils/exportUtils";
@@ -52,10 +53,7 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
     return 'analytics';
   });
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
-    if (navState && navState.activeView === 'admin' && navState.adminLoggedIn !== undefined) {
-      return navState.adminLoggedIn;
-    }
-    return false;
+    return AuthSessionManager.isRoleAuthenticated('admin');
   });
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPasswordInput, setAdminPasswordInput] = useState("");
@@ -71,17 +69,33 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
 
     setIsAuthLoading(true);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       if ((userLower === "admin" || userLower === "admin@goldenhands.com") && pass === "admin123") {
+        let adminToken = "";
+        try {
+          const res = await fetch('/api/auth/verify-admin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier: userLower, password: pass })
+          });
+          const d = await res.json().catch(() => null);
+          if (d?.token) adminToken = d.token;
+        } catch (e) {}
+
+        AuthSessionManager.saveSession({
+          role: 'admin',
+          userId: 'admin',
+          token: adminToken || `gh_sess_admin_${Date.now()}`,
+          user: { id: "admin", role: "admin" }
+        });
         setIsAdminLoggedIn(true);
-        localStorage.setItem("golden_hands_admin_logged_in", "true");
         showToast("Access Granted! Welcome to the Admin Command Deck.");
         setIsAuthLoading(false);
       } else {
         setLoginError("Invalid Username or Passcode.");
         setIsAuthLoading(false);
       }
-    }, 1200);
+    }, 600);
   };
 
   const [previewDoc, setPreviewDoc] = useState<Document | null>(() => {
@@ -1636,10 +1650,11 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
           </div>
 
           <button 
-            onClick={() => {
+            onClick={async () => {
+              await AuthSessionManager.logout('admin');
               setIsAdminLoggedIn(false);
-              localStorage.removeItem("golden_hands_admin_logged_in");
               showToast("Logged out of Admin Portal successfully.");
+              if (onLogout) onLogout();
             }}
             className="hidden md:flex p-2.5 px-3 bg-rose-50 hover:bg-rose-100 rounded-xl text-rose-600 font-bold text-xs items-center justify-center gap-1.5 transition-all cursor-pointer border border-rose-100 min-h-[40px]"
             title="Log out of admin session"
@@ -2028,11 +2043,12 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                 {/* Drawer Footer Actions */}
                 <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2 shrink-0">
                   <button
-                    onClick={() => {
+                    onClick={async () => {
+                      await AuthSessionManager.logout('admin');
                       setIsAdminLoggedIn(false);
-                      localStorage.removeItem("golden_hands_admin_logged_in");
                       setMobileMenuOpen(false);
                       showToast("Signed out of Admin Portal.");
+                      if (onLogout) onLogout();
                     }}
                     className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-xs py-2.5 rounded-xl border border-rose-100 flex items-center justify-center gap-1.5 cursor-pointer"
                   >

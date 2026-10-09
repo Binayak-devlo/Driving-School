@@ -60,6 +60,7 @@ import { motion } from "motion/react";
 import { Booking, ChatMessage, Document, MockTestAttempt, Payment, SlotDay, NavState, Student, Trainer, TrackingSession, TrackingStatus, DrivingLicenceApplication, DrivingLicenceDocumentItem } from "../types";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import { MOCK_TEST_QUESTIONS, MockDatabase } from "../utils/db";
+import { AuthSessionManager } from "../utils/authSession";
 import { LiveTrackingMap } from "./LiveTrackingMap";
 import PullToRefresh from "./PullToRefresh";
 import { calculateDistanceKm, calculateEtaMinutes, formatTimeAgo, DEFAULT_BHUBANESWAR_LOCATION, getCoordinatesFromLocation } from "../utils/geo";
@@ -178,14 +179,14 @@ const videos = [
 export default function StudentApp({ onStateChange, onLogout, navState }: StudentAppProps) {
   // Navigation & States
   const [currentScreen, setCurrentScreen] = useState<'splash' | 'onboarding' | 'login' | 'register' | 'otp' | 'app' | 'verify'>(() => {
-    const currentId = localStorage.getItem("golden_hands_current_student_id");
+    const isStudentAuth = AuthSessionManager.isRoleAuthenticated('student');
+    if (!isStudentAuth) {
+      return 'login';
+    }
     if (navState && navState.activeView === 'student' && navState.studentScreen) {
-      if (!currentId && (navState.studentScreen === 'app' || navState.studentScreen === 'otp' || navState.studentScreen === 'verify')) {
-        return 'login';
-      }
       return navState.studentScreen;
     }
-    return 'login';
+    return 'app';
   });
   
   // Email Verification & Advanced Authentication States
@@ -1876,11 +1877,10 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        // If there's no current student ID in localStorage, it means the user explicitly logged out
-        // or wants to log in fresh. Do NOT automatically log them in; clear the Firebase session instead.
-        // BUT don't do this if an active auth login or register flow is currently in progress.
-        const currentId = localStorage.getItem("golden_hands_current_student_id");
-        if (!currentId && !isAuthLoadingRef.current) {
+        // If there's no valid student session in AuthSessionManager, do NOT automatically log them in;
+        // clear the Firebase session instead.
+        const isStudentAuth = AuthSessionManager.isRoleAuthenticated('student');
+        if (!isStudentAuth && !isAuthLoadingRef.current) {
           setFirebaseUser(null);
           setCurrentScreen('login');
           try {
@@ -1959,11 +1959,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
         }
       } else {
         setFirebaseUser(null);
-        // Do NOT automatically log out or redirect to login screen if a valid active session 
-        // exists in localStorage. This prevents auto-logout during temporary background state shifts, 
-        // network interruptions, camera permission prompts, or camera intent actions.
-        const currentId = localStorage.getItem("golden_hands_current_student_id");
-        if (!currentId) {
+        const isStudentAuth = AuthSessionManager.isRoleAuthenticated('student');
+        if (!isStudentAuth) {
           setCurrentScreen(prev => (prev === 'app' ? 'login' : prev));
         }
       }
@@ -2576,6 +2573,13 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
           return;
         }
         // Authenticate locally using the returned student
+        AuthSessionManager.saveSession({
+          role: 'student',
+          userId: student.id,
+          token: data.token || `gh_sess_student_${student.id}_${Date.now()}`,
+          user: student,
+          remember: false
+        });
         MockDatabase.setCurrentStudentId(student.id);
         refreshLocalState(student.id);
         
@@ -2958,11 +2962,10 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
 
   const performLogout = async () => {
     try {
-      await signOut(auth);
+      await AuthSessionManager.logout('student');
     } catch (err) {
-      console.error("Firebase SignOut Error:", err);
+      console.error("Logout Error:", err);
     }
-    localStorage.removeItem("golden_hands_current_student_id");
     setCurrentScreen('login');
     setPhoneInput("");
     setNameInput("");

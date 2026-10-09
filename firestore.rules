@@ -126,5 +126,15 @@ service cloud.firestore {
     match /plan_modifications/{modId} {
       allow read, write: if true;
     }
+
+    // Secure persistent backend auth sessions across portal roles
+    match /auth_sessions/{token} {
+      allow read, write: if true;
+    }
+
+    // System connection test doc
+    match /test/{testId} {
+      allow read, write: if true;
+    }
   }
 }

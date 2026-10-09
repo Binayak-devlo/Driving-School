@@ -13,6 +13,7 @@ import {
 import { auth, db, cleanFirestoreData } from "../utils/firebase";
 import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
 import { MockDatabase } from "../utils/db";
+import { AuthSessionManager } from "../utils/authSession";
 import { Student, Trainer } from "../types";
 
 declare global {
@@ -194,12 +195,13 @@ export default function UnifiedAuthPortal({
     foundStudent.deletionRequested = false;
     foundStudent.deletionStatus = 'rejected';
 
-    MockDatabase.setCurrentStudentId(foundStudent.id);
-    localStorage.setItem("golden_hands_current_student_id", foundStudent.id);
-    localStorage.setItem("golden_hands_current_role", "student");
-    if (rememberMe) {
-      localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "student", id: foundStudent.id }));
-    }
+    AuthSessionManager.saveSession({
+      role: 'student',
+      userId: foundStudent.id,
+      token: `gh_sess_student_${foundStudent.id}_${Date.now()}`,
+      user: foundStudent,
+      remember: rememberMe
+    });
 
     setShowDeletionWarningModal(false);
     setPendingDeletionStudent(null);
@@ -289,6 +291,7 @@ export default function UnifiedAuthPortal({
         let foundStudent: Student | null = null;
         let authSuccess = false;
         let is401Unauthenticated = false;
+        let studentToken = "";
 
         try {
           const res = await fetch('/api/auth/login', {
@@ -296,7 +299,8 @@ export default function UnifiedAuthPortal({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               phoneOrEmail: rawId,
-              password: rawPass
+              password: rawPass,
+              rememberMe
             })
           });
 
@@ -307,6 +311,7 @@ export default function UnifiedAuthPortal({
           } else if (res.ok && data?.success && data?.student) {
             foundStudent = data.student;
             authSuccess = true;
+            studentToken = data.token || "";
           } else if (res.ok && data && !data.success) {
             if (data.unverified) {
               setIsLoading(false);
@@ -373,13 +378,13 @@ export default function UnifiedAuthPortal({
         }
 
         // Successful student login
-        MockDatabase.setCurrentStudentId(foundStudent.id);
-        MockDatabase.saveStudent(foundStudent);
-        localStorage.setItem("golden_hands_current_student_id", foundStudent.id);
-        localStorage.setItem("golden_hands_current_role", "student");
-        if (rememberMe) {
-          localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "student", id: foundStudent.id }));
-        }
+        AuthSessionManager.saveSession({
+          role: 'student',
+          userId: foundStudent.id,
+          token: studentToken || `gh_sess_student_${foundStudent.id}_${Date.now()}`,
+          user: foundStudent,
+          remember: rememberMe
+        });
 
         setIsLoading(false);
         setSuccessMessage(`Welcome back, ${foundStudent.name}!`);
@@ -389,6 +394,7 @@ export default function UnifiedAuthPortal({
         let foundTrainer: Trainer | null = null;
         let authSuccess = false;
         let is401Unauthenticated = false;
+        let trainerToken = "";
 
         try {
           const res = await fetch('/api/auth/verify-trainer', {
@@ -396,7 +402,8 @@ export default function UnifiedAuthPortal({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               identifier: rawId,
-              password: rawPass
+              password: rawPass,
+              rememberMe
             })
           });
 
@@ -407,6 +414,7 @@ export default function UnifiedAuthPortal({
           } else if (res.ok && data?.success && data?.trainer) {
             foundTrainer = data.trainer;
             authSuccess = true;
+            trainerToken = data.token || "";
           }
         } catch (apiErr) {
           console.warn("[Trainer Auth Fallback] Server API endpoint unreachable, attempting direct check...", apiErr);
@@ -445,13 +453,14 @@ export default function UnifiedAuthPortal({
 
         // Successful trainer login
         const newSessionId = `sess_tr_${foundTrainer.id}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        localStorage.setItem("golden_hands_current_trainer_id", foundTrainer.id);
-        localStorage.setItem("golden_hands_trainer_session_id", newSessionId);
-        localStorage.setItem("golden_hands_current_role", "trainer");
         MockDatabase.saveTrainerSession(foundTrainer.id, newSessionId);
-        if (rememberMe) {
-          localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "trainer", id: foundTrainer.id }));
-        }
+        AuthSessionManager.saveSession({
+          role: 'trainer',
+          userId: foundTrainer.id,
+          token: trainerToken || `gh_sess_trainer_${foundTrainer.id}_${Date.now()}`,
+          user: foundTrainer,
+          remember: rememberMe
+        });
 
         setIsLoading(false);
         setSuccessMessage(`Welcome, Trainer ${foundTrainer.name}!`);
@@ -460,6 +469,7 @@ export default function UnifiedAuthPortal({
       } else if (selectedRole === 'admin') {
         let authSuccess = false;
         let is401Unauthenticated = false;
+        let adminToken = "";
 
         try {
           const res = await fetch('/api/auth/verify-admin', {
@@ -467,7 +477,8 @@ export default function UnifiedAuthPortal({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               identifier: rawId,
-              password: rawPass
+              password: rawPass,
+              rememberMe
             })
           });
 
@@ -477,6 +488,7 @@ export default function UnifiedAuthPortal({
             is401Unauthenticated = true;
           } else if (res.ok && data?.success) {
             authSuccess = true;
+            adminToken = data.token || "";
           }
         } catch (apiErr) {
           console.warn("[Admin Auth Fallback] Direct admin verification...", apiErr);
@@ -510,11 +522,13 @@ export default function UnifiedAuthPortal({
         }
 
         // Successful admin login
-        localStorage.setItem("golden_hands_admin_logged_in", "true");
-        localStorage.setItem("golden_hands_current_role", "admin");
-        if (rememberMe) {
-          localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "admin", id: "admin" }));
-        }
+        AuthSessionManager.saveSession({
+          role: 'admin',
+          userId: 'admin',
+          token: adminToken || `gh_sess_admin_${Date.now()}`,
+          user: { id: "admin", role: "admin" },
+          remember: rememberMe
+        });
 
         setIsLoading(false);
         setSuccessMessage("Admin authentication verified!");
@@ -524,6 +538,7 @@ export default function UnifiedAuthPortal({
         let foundParent: any = null;
         let is401Unauthenticated = false;
         let authErrorMessage = "";
+        let parentToken = "";
 
         try {
           const res = await fetch('/api/auth/verify-parent', {
@@ -531,7 +546,8 @@ export default function UnifiedAuthPortal({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               identifier: rawId,
-              password: rawPass
+              password: rawPass,
+              rememberMe
             })
           });
 
@@ -546,6 +562,7 @@ export default function UnifiedAuthPortal({
             authErrorMessage = data?.error || "Incorrect password. Please try again.";
           } else if (res.ok && data?.success && data?.parent) {
             foundParent = data.parent;
+            parentToken = data.token || "";
           }
         } catch (apiErr) {
           console.warn("[Parent Auth Fallback] Direct parent verification...", apiErr);
@@ -580,11 +597,13 @@ export default function UnifiedAuthPortal({
         }
 
         // Successful parent login
-        MockDatabase.setCurrentParent(foundParent);
-        localStorage.setItem("golden_hands_current_role", "parent");
-        if (rememberMe) {
-          localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "parent", id: foundParent.id }));
-        }
+        AuthSessionManager.saveSession({
+          role: 'parent',
+          userId: foundParent.id,
+          token: parentToken || `gh_sess_parent_${foundParent.id}_${Date.now()}`,
+          user: foundParent,
+          remember: rememberMe
+        });
 
         setIsLoading(false);
         setSuccessMessage(`Welcome, ${foundParent.name || "Parent"}!`);
@@ -748,11 +767,13 @@ export default function UnifiedAuthPortal({
         await MockDatabase.syncFromCloud();
       } catch (e) {}
 
-      MockDatabase.setCurrentParent(registeredParent);
-      localStorage.setItem("golden_hands_current_role", "parent");
-      if (rememberMe) {
-        localStorage.setItem("golden_hands_remember_user", JSON.stringify({ role: "parent", id: registeredParent.id }));
-      }
+      AuthSessionManager.saveSession({
+        role: 'parent',
+        userId: registeredParent.id,
+        token: `gh_sess_parent_${registeredParent.id}_${Date.now()}`,
+        user: registeredParent,
+        remember: rememberMe
+      });
 
       setIsLoading(false);
       setSuccessMessage(`Parent Account Created Successfully! Welcome, ${registeredParent.name}!`);
@@ -978,25 +999,37 @@ export default function UnifiedAuthPortal({
         MockDatabase.createOrUpdateParentForStudent(uid, regName.trim(), phoneDigits, cleanEmail, regPassword.trim());
       }
 
-      // Save on server database
-      fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: uid,
-          name: regName.trim(),
-          phone: phoneDigits,
-          email: cleanEmail,
-          password: regPassword.trim(),
-          courseName: regPackage,
-          firebaseUid: uid
-        })
-      }).catch(err => console.warn("Backend sync notice:", err));
+      // Save on server database and get session
+      let regToken = "";
+      try {
+        const regRes = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: uid,
+            name: regName.trim(),
+            phone: phoneDigits,
+            email: cleanEmail,
+            password: regPassword.trim(),
+            courseName: regPackage,
+            firebaseUid: uid
+          })
+        });
+        const regData = await regRes.json().catch(() => null);
+        if (regData?.token) {
+          regToken = regData.token;
+        }
+      } catch (err) {
+        console.warn("Backend register notice:", err);
+      }
 
-      MockDatabase.setCurrentStudentId(uid);
-      MockDatabase.saveStudent(newStudentData);
-      localStorage.setItem("golden_hands_current_student_id", uid);
-      localStorage.setItem("golden_hands_current_role", "student");
+      AuthSessionManager.saveSession({
+        role: 'student',
+        userId: uid,
+        token: regToken || `gh_sess_student_${uid}_${Date.now()}`,
+        user: newStudentData,
+        remember: false
+      });
 
       setIsLoading(false);
       setSuccessMessage(`Registration complete! Welcome to Golden Hands, ${newStudentData.name}!`);
