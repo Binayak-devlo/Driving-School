@@ -2034,6 +2034,9 @@ async function startServer() {
     for (const res of clients) {
       try {
         res.write(payload);
+        if (typeof (res as any).flush === "function") {
+          (res as any).flush();
+        }
       } catch (err) {
         clients.delete(res);
       }

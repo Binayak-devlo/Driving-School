@@ -650,28 +650,32 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
             quality: isHighLatency ? '480p-adaptive' : '720p-smooth'
           });
 
-          // Upload frame to remote server rate-limited to ~15-20 FPS without blocking the local 30 FPS loop
+          // Upload frame to remote server rate-limited to ~12-15 FPS without blocking the local 30 FPS loop
           const now = Date.now();
-          if (!isUploadingFrameRef.current && (now - lastNetworkUploadTime > 65)) {
+          if (!isUploadingFrameRef.current && (now - lastNetworkUploadTime > 80)) {
             isUploadingFrameRef.current = true;
             lastNetworkUploadTime = now;
             const uploadStart = Date.now();
+            const abortCtrl = new AbortController();
+            const timeoutId = setTimeout(() => abortCtrl.abort(), 1200);
 
             fetch("/api/stream/frame", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
+              signal: abortCtrl.signal,
               body: JSON.stringify({
                 studentId: currentStud.id,
                 frame: frameData,
                 speed,
                 location: currentStud.location || "Rasulgarh, Bhubaneswar",
                 trainerName: currentStud.assignedTrainerName || "Certified Instructor",
-                quality: isHighLatency ? "480p-adaptive" : "720p-smooth"
+                quality: isHighLatency ? "360p-adaptive" : "480p-smooth"
               })
             }).then(() => {
+              clearTimeout(timeoutId);
               lastLatencyRef.current = Date.now() - uploadStart;
-            }).catch(e => {
-              console.warn("Frame upload failed:", e);
+            }).catch(() => {
+              clearTimeout(timeoutId);
             }).finally(() => {
               isUploadingFrameRef.current = false;
             });
