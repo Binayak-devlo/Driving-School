@@ -18,6 +18,7 @@ import { compressImageIfNeeded, STUDENT_AVATAR_PRESETS, TRAINER_AVATAR_PRESETS, 
 import { downloadCSV, downloadFileOrImage } from "../utils/exportUtils";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import PullToRefresh from "./PullToRefresh";
+import AppLockToggle from "./AppLockToggle";
 
 export type AdminTabType = 
   | 'analytics' 
@@ -5936,6 +5937,17 @@ export default function AdminDashboard({ onStateChange, onLogout, navState }: Ad
                     <Database className="w-3.5 h-3.5 text-[#D4AF37]" /> Force Immediate Cloud Sync
                   </button>
                 </div>
+              </div>
+
+              {/* Section 5: Device Security & App Lock */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+                <span className="text-[10px] font-black uppercase text-[#6D3BFF] tracking-wider block border-b border-slate-100 pb-2">
+                  5. Administrator Device Security & App Lock
+                </span>
+                <p className="text-xs text-slate-500">
+                  Enforce your phone's system screen lock (fingerprint, face unlock, PIN, pattern, or password) whenever the Academy Admin Portal is reopened or returns from the background.
+                </p>
+                <AppLockToggle role="admin" theme="light" />
               </div>
             </div>
           )}

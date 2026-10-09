@@ -1,4 +1,4 @@
-import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay, TrackingSession, TrainerSession, DrivingLicenceApplication, DrivingLicenceDocumentItem, Parent, LiveStreamSession } from "../types";
+import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay, TrackingSession, TrainerSession, DrivingLicenceApplication, DrivingLicenceDocumentItem, Parent, LiveStreamSession, SecurityLockConfig, SecurityLockType } from "../types";
 import { saveToCloud, deleteFromCloud, loadCollectionFromCloud } from "./firebase";
 
 
@@ -1221,6 +1221,34 @@ export class MockDatabase {
       list.push(student);
     }
     this.saveRegisteredStudents(list);
+  }
+
+  static getSecurityLock(studentId?: string): SecurityLockConfig {
+    const sId = studentId || this.getCurrentStudentId();
+    return this.getStored<SecurityLockConfig>(`security_lock_${sId}`, {
+      enabled: false,
+      lockType: 'fingerprint',
+      pinCode: '',
+      requireOnResume: true,
+      configuredAt: undefined,
+      targetPlatform: 'android',
+      androidBiometricClass: 'androidx.biometric.BiometricPrompt'
+    });
+  }
+
+  static saveSecurityLock(config: SecurityLockConfig, studentId?: string) {
+    const sId = studentId || this.getCurrentStudentId();
+    this.setStored(`security_lock_${sId}`, config);
+    if (sId) {
+      const student = this.getStudent(sId);
+      if (student) {
+        student.securityLockEnabled = config.enabled;
+        student.securityLockType = config.lockType;
+        student.securityLockPin = config.pinCode;
+        student.securityLockConfiguredAt = config.configuredAt;
+        this.saveStudent(student, sId);
+      }
+    }
   }
 
   static getTrainers(): Trainer[] {

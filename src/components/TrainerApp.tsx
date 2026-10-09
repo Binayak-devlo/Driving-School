@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { 
   Menu, Bell, Navigation, Car, Calendar, Sliders, Award, MapPin, Check, 
   MessageSquare, Star, Sparkles, RefreshCw, Clock, Compass, Phone, CheckCircle2, AlertCircle,
-  LogOut, Lock, Unlock
+  LogOut, Lock, Unlock, Fingerprint, Shield, X
 } from "lucide-react";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../utils/firebase";
@@ -15,6 +15,7 @@ import UnifiedAuthPortal from "./UnifiedAuthPortal";
 import { LiveTrackingMap } from "./LiveTrackingMap";
 import PullToRefresh from "./PullToRefresh";
 import OdnexAssistant from "./OdnexAssistant";
+import AppLockToggle from "./AppLockToggle";
 
 interface TrainerAppProps {
   onStateChange: () => void; // Sync changes with other views
@@ -56,6 +57,7 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
     return localStorage.getItem("golden_hands_current_trainer_id") || "";
   });
   const currentTrainer = trainers.find(t => t.id === currentTrainerId) || trainers[0] || { id: "", name: "No Trainer", rating: 5, reviewsCount: 0, photoUrl: "", carName: "", carPlate: "" };
+  const [securityModalOpen, setSecurityModalOpen] = useState(false);
 
   // Login inputs state
   const [phoneInput, setPhoneInput] = useState("");
@@ -1426,6 +1428,14 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSecurityModalOpen(true)}
+                  title="Security & App Lock Settings"
+                  className="w-8 h-8 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full flex items-center justify-center text-amber-400 transition-all cursor-pointer"
+                >
+                  <Fingerprint className="w-4 h-4" />
+                </button>
                 <div className="w-8 h-8 bg-white/5 rounded-full flex items-center justify-center text-slate-300 relative border border-white/5">
                   <Bell className="w-4 h-4" />
                   <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-amber-500 rounded-full" />
@@ -1951,6 +1961,11 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
                     )}
                   </div>
                 </div>
+
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-4 flex flex-col gap-2">
+                  <h4 className="font-bold text-xs text-[#D4AF37]">Trainer Security & App Lock</h4>
+                  <AppLockToggle role="trainer" theme="dark" />
+                </div>
               </div>
             )}
           </div>
@@ -2010,6 +2025,37 @@ export default function TrainerApp({ onStateChange, onLogout, navState }: Traine
             <Sparkles className="w-4.5 h-4.5 animate-pulse text-[#D4AF37]" />
             <span className="text-[8px] font-extrabold text-[#D4AF37]">ODNEX</span>
           </button>
+        </div>
+      )}
+
+      {/* TRAINER SECURITY & APP LOCK MODAL */}
+      {securityModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-[#161822] border border-slate-800 rounded-3xl p-5 w-full max-w-sm shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Fingerprint className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm font-black text-white">Trainer Security Settings</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSecurityModalOpen(false)}
+                className="w-7 h-7 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <AppLockToggle role="trainer" theme="dark" />
+
+            <button
+              type="button"
+              onClick={() => setSecurityModalOpen(false)}
+              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
         </div>
       )}
     </div>

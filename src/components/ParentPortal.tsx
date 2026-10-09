@@ -8,6 +8,7 @@ import {
 import { MockDatabase } from "../utils/db";
 import { AuthSessionManager } from "../utils/authSession";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
+import AppLockToggle from "./AppLockToggle";
 import { Parent, Student, Trainer, Booking, SkillProgress, LiveStreamSession, NavState } from "../types";
 
 interface ParentPortalProps {
@@ -1383,6 +1384,14 @@ export default function ParentPortal({
                   </p>
                 </div>
               </div>
+            </div>
+
+            {/* Device Security & App Lock Card */}
+            <div className="bg-[#161822] border border-slate-800 p-5 rounded-3xl flex flex-col gap-3">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">
+                Device Security & Screen Lock
+              </h3>
+              <AppLockToggle role="parent" theme="dark" />
             </div>
 
             {/* School Contact Helpline Card */}

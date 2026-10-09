@@ -66,6 +66,7 @@ import PullToRefresh from "./PullToRefresh";
 import { calculateDistanceKm, calculateEtaMinutes, formatTimeAgo, DEFAULT_BHUBANESWAR_LOCATION, getCoordinatesFromLocation } from "../utils/geo";
 import { auth, db } from "../utils/firebase";
 import OdnexAssistant from "./OdnexAssistant";
+import AppLockToggle from "./AppLockToggle";
 import {
   collection,
   doc,
@@ -6651,6 +6652,8 @@ export default function StudentApp({ onStateChange, onLogout, navState }: Studen
                   </div>
 
                   <div className="flex flex-col gap-2">
+                    <AppLockToggle role="student" theme="light" />
+
                     <div 
                       onClick={() => setActiveSubPage('change-password')}
                       className="flex items-center justify-between p-3 bg-[#F8F9FF] hover:bg-[#6D3BFF]/5 border border-slate-100 hover:border-[#6D3BFF]/30 rounded-2xl cursor-pointer transition-all group"

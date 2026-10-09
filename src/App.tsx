@@ -8,10 +8,12 @@ import {
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "./utils/firebase";
 import SplashScreen from "./components/SplashScreen";
+import SystemLockGate from "./components/SystemLockGate";
 import UnifiedAuthPortal from "./components/UnifiedAuthPortal";
 import PullToRefresh from "./components/PullToRefresh";
 import { MockDatabase } from "./utils/db";
 import { AuthSessionManager } from "./utils/authSession";
+import { AppLockManager } from "./utils/appLock";
 import { NavState } from "./types";
 
 // Dynamic lazy-loading to optimize bundle size and prevent main thread locks
@@ -144,6 +146,11 @@ export default function App() {
   // Keep ref in sync for use in event listeners
   useEffect(() => {
     currentNavStateRef.current = currentNavState;
+    if (currentNavState.activeView !== 'portal') {
+      AppLockManager.setActiveRole(currentNavState.activeView as any);
+    } else {
+      AppLockManager.setActiveRole(null);
+    }
   }, [currentNavState]);
 
   // Non-blocking background synchronization on startup
@@ -976,6 +983,9 @@ export default function App() {
           </button>
         </div>
       )}
+
+      {/* SYSTEM SCREEN LOCK & BIOMETRIC GATE */}
+      <SystemLockGate onSignOut={handleUniversalLogout} />
 
       {/* PREMIUM SPLASH / WELCOME SCREEN ANIMATION */}
       {showSplash && <SplashScreen onComplete={handleSplashComplete} />}
