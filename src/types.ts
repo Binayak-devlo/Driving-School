@@ -70,24 +70,6 @@ export interface Student {
   parentPhone?: string;
   parentEmail?: string;
   parentName?: string;
-
-  // Security Lock & Biometrics (Android Studio Ready)
-  securityLockEnabled?: boolean;
-  securityLockType?: SecurityLockType;
-  securityLockPin?: string;
-  securityLockConfiguredAt?: string;
-}
-
-export type SecurityLockType = 'pin' | 'fingerprint' | 'biometric_or_pin';
-
-export interface SecurityLockConfig {
-  enabled: boolean;
-  lockType: SecurityLockType;
-  pinCode?: string;
-  requireOnResume?: boolean;
-  configuredAt?: string;
-  targetPlatform?: 'android' | 'web';
-  androidBiometricClass?: string;
 }
 
 export interface Parent {
@@ -97,11 +79,13 @@ export interface Parent {
   studentPhone: string;
   name: string;
   phone: string;
-  email: string;
+  email?: string;
   password?: string;
+  mpin?: string;
+  parentCode?: string;
   createdAt: string;
   plan: 'Premium' | 'Standard';
-  status: 'active' | 'inactive';
+  status: 'active' | 'inactive' | 'disabled';
   streamAccessAllowed: boolean;
   lastLoginAt?: string;
 }

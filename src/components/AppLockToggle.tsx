@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Fingerprint, ShieldCheck, Shield, Lock, Smartphone, CheckCircle2, AlertCircle } from "lucide-react";
+import { Fingerprint, ShieldCheck, Shield, Lock, Smartphone, CheckCircle2, AlertCircle, HardDrive } from "lucide-react";
 import { AppLockManager, PortalRole } from "../utils/appLock";
 
 interface AppLockToggleProps {
@@ -41,7 +41,7 @@ export default function AppLockToggle({ role, theme = 'light', onStatusChange }:
         setEnabled(true);
         setFeedback({
           type: 'success',
-          message: "App Lock activated. Your phone's screen lock will be required when reopening or returning from background."
+          message: "App Lock activated for this device's local cache. Your phone's screen lock will be required when reopening or returning from background on this device."
         });
         if (onStatusChange) onStatusChange(true);
       } else {
@@ -94,7 +94,7 @@ export default function AppLockToggle({ role, theme = 'light', onStatusChange }:
             {enabled ? <Fingerprint className="w-5 h-5 animate-pulse" /> : <Lock className="w-5 h-5" />}
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h4 className={`text-xs font-black tracking-tight ${isDark ? 'text-white' : 'text-[#161623]'}`}>
                 App Lock (Phone Screen Lock)
               </h4>
@@ -105,9 +105,17 @@ export default function AppLockToggle({ role, theme = 'light', onStatusChange }:
               }`}>
                 {enabled ? "ON" : "OFF"}
               </span>
+              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 ${
+                isDark ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-50 text-amber-700 border border-amber-200'
+              }`}>
+                <HardDrive className="w-2.5 h-2.5" /> Local Device Cache Only
+              </span>
             </div>
-            <p className={`text-[10px] mt-0.5 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+            <p className={`text-[10px] mt-1 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
               Require your phone's system screen lock (fingerprint, face unlock, PIN, pattern, or password) whenever the app is reopened or returns from the background.
+            </p>
+            <p className={`text-[9.5px] mt-1 font-medium ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+              🔒 Stored strictly in this device's local cache. If you log in from another phone or computer, it will open normally unless you enable this feature on that device as well.
             </p>
           </div>
         </div>

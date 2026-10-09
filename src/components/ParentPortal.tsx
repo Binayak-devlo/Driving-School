@@ -8,7 +8,6 @@ import {
 import { MockDatabase } from "../utils/db";
 import { AuthSessionManager } from "../utils/authSession";
 import UnifiedAuthPortal from "./UnifiedAuthPortal";
-import AppLockToggle from "./AppLockToggle";
 import { Parent, Student, Trainer, Booking, SkillProgress, LiveStreamSession, NavState } from "../types";
 
 interface ParentPortalProps {
@@ -658,7 +657,7 @@ export default function ParentPortal({
               </span>
             </div>
             <p className="text-[11px] text-slate-400 font-medium">
-              Linked Student: <span className="text-white font-bold">{student?.name || parent?.studentName || "Student"}</span> (ID: {student?.id?.slice(-6) || "Active"})
+              Linked Student: <span className="text-white font-bold">{student?.name || parent?.studentName || "Student"}</span> (ID: {student?.id?.slice(-6) || "Active"}) • Parent ID: <span className="font-mono text-amber-400 font-bold">{parent?.id}</span>
             </p>
           </div>
         </div>
@@ -1352,7 +1351,7 @@ export default function ParentPortal({
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between p-3 bg-slate-900/80 rounded-2xl border border-slate-800">
                   <div>
-                    <p className="text-[10px] font-bold text-slate-400">Parent Identifier</p>
+                    <p className="text-[10px] font-bold text-slate-400">6-Digit Parent Login ID</p>
                     <p className="text-sm font-mono font-black text-amber-400 mt-0.5">{parent?.id || "PARENT_ID"}</p>
                   </div>
                   <button
@@ -1366,9 +1365,14 @@ export default function ParentPortal({
                 </div>
 
                 <div className="p-3 bg-slate-900/80 rounded-2xl border border-slate-800">
+                  <p className="text-[10px] font-bold text-slate-400">Registered Parent Mobile</p>
+                  <p className="text-sm font-mono font-black text-white mt-0.5">+91 {parent?.phone || "—"}</p>
+                </div>
+
+                <div className="p-3 bg-slate-900/80 rounded-2xl border border-slate-800">
                   <p className="text-[10px] font-bold text-slate-400">Linked Student</p>
                   <p className="text-sm font-black text-white mt-0.5">{student?.name || parent?.studentName || "Student"}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Mobile: +91 {student?.phone || parent?.studentPhone || "9040040265"}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Student ID: {student?.id || parent?.studentId || "—"} • Mobile: +91 {student?.phone || parent?.studentPhone || "—"}</p>
                 </div>
 
                 <div className="p-3 bg-slate-900/80 rounded-2xl border border-slate-800">
@@ -1384,14 +1388,6 @@ export default function ParentPortal({
                   </p>
                 </div>
               </div>
-            </div>
-
-            {/* Device Security & App Lock Card */}
-            <div className="bg-[#161822] border border-slate-800 p-5 rounded-3xl flex flex-col gap-3">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">
-                Device Security & Screen Lock
-              </h3>
-              <AppLockToggle role="parent" theme="dark" />
             </div>
 
             {/* School Contact Helpline Card */}

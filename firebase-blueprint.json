@@ -222,6 +222,7 @@
         "email": { "type": "string" },
         "password": { "type": "string" },
         "parentCode": { "type": "string" },
+        "mpin": { "type": "string" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" },
         "plan": { "type": "string", "enum": ["Premium", "Standard"] },

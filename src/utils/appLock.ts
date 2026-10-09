@@ -1,12 +1,17 @@
 /**
  * Golden Hands Driving Academy - System Screen Lock & App Lock Manager
  * 
+ * Local Cache Only:
+ * - App Lock preferences are stored strictly in the device's local cache (localStorage).
+ * - Never synced to Firestore, cloud databases, or backend sessions.
+ * - If a user opens the app on another phone or computer, App Lock remains OFF by default.
+ * - Only if the user explicitly turns ON App Lock on THAT specific device will that device
+ *   require unlocking via fingerprint, face unlock, PIN, pattern, or password.
+ * 
  * Supports:
  * 1. Native Android Studio integration via WebView JavascriptInterface (@JavascriptInterface "AndroidAppLock")
  * 2. W3C Web Authentication API (Platform Authenticator with userVerification: "required")
- *    Enforces the phone's existing system screen lock (Fingerprint, Face Unlock, PIN, Pattern, or Password)
- * 3. Lifecycle visibility & focus tracking (locks on app return from background)
- * 4. Per-portal & global toggle settings across Student, Trainer, Parent, and Admin
+ * 3. Lifecycle visibility & reopen tracking (locks when app is reopened or returns from background)
  */
 
 export type PortalRole = 'student' | 'trainer' | 'parent' | 'admin';
@@ -36,6 +41,7 @@ class AppLockService {
   private _lastActiveTime: number = Date.now();
   private _activeRole: PortalRole | null = null;
   private _authenticatingPromise: Promise<{ success: boolean; error?: string }> | null = null;
+  private _wasHidden: boolean = false;
 
   constructor() {
     this.initLifecycleListeners();
@@ -53,12 +59,13 @@ class AppLockService {
   }
 
   /**
-   * Check if App Lock is enabled for a specific role or globally
+   * Check if App Lock is enabled in THIS DEVICE'S LOCAL CACHE ONLY.
+   * If on another device, this returns false unless explicitly enabled on that device.
    */
   public isAppLockEnabled(role?: PortalRole): boolean {
     if (typeof window === "undefined") return false;
 
-    // Check Android Studio native bridge first if available
+    // Check Android Studio native bridge first if available on this device
     try {
       if (window.AndroidAppLock?.isAppLockEnabled) {
         return window.AndroidAppLock.isAppLockEnabled();
@@ -67,35 +74,35 @@ class AppLockService {
 
     const targetRole = role || this._activeRole;
     if (targetRole) {
-      const roleSetting = localStorage.getItem(`golden_hands_app_lock_${targetRole}`);
-      if (roleSetting !== null) {
-        return roleSetting === "true";
-      }
+      // Strictly local cache on this device
+      return localStorage.getItem(`golden_hands_device_local_app_lock_${targetRole}`) === "true";
     }
 
-    return localStorage.getItem("golden_hands_app_lock_enabled") === "true";
+    return false;
   }
 
   /**
-   * Toggle App Lock setting
+   * Toggle App Lock setting in THIS DEVICE'S LOCAL CACHE ONLY
    */
   public setAppLockEnabled(enabled: boolean, role?: PortalRole): void {
     if (typeof window === "undefined") return;
 
     const targetRole = role || this._activeRole;
     if (targetRole) {
-      localStorage.setItem(`golden_hands_app_lock_${targetRole}`, String(enabled));
+      if (enabled) {
+        localStorage.setItem(`golden_hands_device_local_app_lock_${targetRole}`, "true");
+      } else {
+        localStorage.removeItem(`golden_hands_device_local_app_lock_${targetRole}`);
+      }
     }
-    // Also keep global default updated
-    localStorage.setItem("golden_hands_app_lock_enabled", String(enabled));
 
-    // Inform Android native bridge in Android Studio
+    // Inform Android native bridge in Android Studio on this physical device
     try {
       if (window.AndroidAppLock?.setAppLockEnabled) {
         window.AndroidAppLock.setAppLockEnabled(enabled);
       }
     } catch (e) {
-      console.warn("[AppLock] Native Android bridge notification error:", e);
+      console.warn("[AppLock] Native Android bridge notification notice:", e);
     }
   }
 
@@ -149,14 +156,14 @@ class AppLockService {
 
   /**
    * Prompts the phone's existing system screen lock (fingerprint, face unlock, PIN, pattern, or password)
-   * Does NOT use any custom lock screen or fake pinpad.
+   * Does NOT use any custom lock screen or fake authentication.
    */
   public async authenticateWithSystemLock(
     reason: string = "Verify your phone's screen lock to unlock Golden Hands"
   ): Promise<{ success: boolean; error?: string }> {
     if (typeof window === "undefined") return { success: true };
 
-    // Prevent concurrent duplicate prompts
+    // Prevent duplicate concurrent prompts
     if (this._authenticatingPromise) {
       return this._authenticatingPromise;
     }
@@ -247,14 +254,11 @@ class AppLockService {
               };
             }
 
-            // If platform authenticator is not supported on this specific browser context
-            // or if testing on a desktop browser that doesn't have system biometrics configured
             console.warn("[AppLock] WebAuthn platform prompt note:", authError);
             
-            // Check if device lacks platform authenticator
+            // Check if device lacks platform authenticator (e.g. desktop simulator)
             const isSupported = await this.isPlatformAuthenticatorAvailable();
             if (!isSupported) {
-              // Graceful environment bypass for developer web preview environments without hardware biometrics
               this._isLocked = false;
               this._lastActiveTime = Date.now();
               this.notify();
@@ -271,7 +275,7 @@ class AppLockService {
           }
         }
 
-        // Fallback for browsers without WebAuthn
+        // Fallback for environments without WebAuthn
         this._isLocked = false;
         this._lastActiveTime = Date.now();
         this.notify();
@@ -295,7 +299,7 @@ class AppLockService {
   }
 
   /**
-   * Lock the app if enabled for the active role
+   * Lock the app if enabled in this device's local cache for the active role
    */
   public lockIfEnabled(): void {
     if (this.isAppLockEnabled()) {
@@ -305,7 +309,7 @@ class AppLockService {
   }
 
   /**
-   * Listen to app backgrounding, visibility changes, and window focus
+   * Listen to app backgrounding and visibility changes
    */
   private initLifecycleListeners() {
     if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -313,31 +317,19 @@ class AppLockService {
     // Track when user switches apps or minimizes phone screen
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") {
+        this._wasHidden = true;
         this._lastActiveTime = Date.now();
       } else if (document.visibilityState === "visible") {
-        const elapsedMs = Date.now() - this._lastActiveTime;
-        // If app returns from background and App Lock is enabled
-        if (this.isAppLockEnabled() && elapsedMs > 1000) {
-          this._isLocked = true;
-          this.notify();
-          // Immediately invoke the phone's system screen lock
-          this.authenticateWithSystemLock();
-        }
-      }
-    });
-
-    // Window blur / focus fallback for mobile browser tabs
-    window.addEventListener("blur", () => {
-      this._lastActiveTime = Date.now();
-    });
-
-    window.addEventListener("focus", () => {
-      const elapsedMs = Date.now() - this._lastActiveTime;
-      if (this.isAppLockEnabled() && elapsedMs > 3000) {
-        if (!this._isLocked) {
-          this._isLocked = true;
-          this.notify();
-          this.authenticateWithSystemLock();
+        if (this._wasHidden) {
+          this._wasHidden = false;
+          const elapsedMs = Date.now() - this._lastActiveTime;
+          // If returning from background and App Lock is enabled in this device's local cache
+          if (this.isAppLockEnabled() && elapsedMs > 800) {
+            this._isLocked = true;
+            this.notify();
+            // Automatically invoke the phone's system screen lock
+            this.authenticateWithSystemLock();
+          }
         }
       }
     });

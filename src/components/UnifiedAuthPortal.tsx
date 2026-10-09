@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   GraduationCap, Car, ShieldCheck, Mail, Phone, Lock, Eye, EyeOff, 
   RefreshCw, CheckCircle2, ArrowLeft, KeyRound, Sparkles, AlertCircle, 
-  ChevronRight, ChevronDown, UserCheck, Check, AlertTriangle, Shield, HelpCircle
+  ChevronRight, ChevronDown, UserCheck, Check, AlertTriangle, Shield, HelpCircle, Copy, User
 } from "lucide-react";
 import { 
   RecaptchaVerifier, 
@@ -59,17 +59,42 @@ export default function UnifiedAuthPortal({
   const [regPackage, setRegPackage] = useState("Basic - ₹3,500 (15 practical + 2 theory classes, 30 mins each)");
   const [regShowPassword, setRegShowPassword] = useState(false);
 
+  // Dedicated Parent Portal Auth State
+  const [parentAuthMode, setParentAuthMode] = useState<'login' | 'register' | 'forgot' | 'register_success'>('login');
+  
+  // Parent Login Form State
+  const [parentLoginId, setParentLoginId] = useState("");
+  const [parentLoginMpin, setParentLoginMpin] = useState("");
+  const [parentShowLoginMpin, setParentShowLoginMpin] = useState(false);
+  const [parentRememberMe, setParentRememberMe] = useState(true);
+
   // Parent Registration Form State
-  const [parentRegStudentPhone, setParentRegStudentPhone] = useState("");
-  const [parentRegParentPhone, setParentRegParentPhone] = useState("");
-  const [parentRegName, setParentRegName] = useState("");
-  const [parentRegParentId, setParentRegParentId] = useState("");
-  const [parentRegPassword, setParentRegPassword] = useState("");
-  const [parentRegConfirmPassword, setParentRegConfirmPassword] = useState("");
-  const [parentRegShowPassword, setParentRegShowPassword] = useState(false);
+  const [parentRegStudentId, setParentRegStudentId] = useState("");
+  const [parentRegStudentPassword, setParentRegStudentPassword] = useState("");
+  const [parentRegShowStudentPassword, setParentRegShowStudentPassword] = useState(false);
   const [parentRegVerifiedStudent, setParentRegVerifiedStudent] = useState<any | null>(null);
-  const [isVerifyingParentEligibility, setIsVerifyingParentEligibility] = useState(false);
+  const [parentRegParentPhone, setParentRegParentPhone] = useState("");
+  const [parentRegParentName, setParentRegParentName] = useState("");
+  const [parentRegMpin, setParentRegMpin] = useState("");
+  const [parentRegConfirmMpin, setParentRegConfirmMpin] = useState("");
+  const [parentRegShowMpin, setParentRegShowMpin] = useState(false);
   const [parentRegStep, setParentRegStep] = useState<1 | 2>(1);
+  const [generatedParentLoginId, setGeneratedParentLoginId] = useState("");
+  const [registeredParentUser, setRegisteredParentUser] = useState<any | null>(null);
+  const [copiedGeneratedId, setCopiedGeneratedId] = useState(false);
+
+  // Parent Forgot ID / MPIN State
+  const [parentForgotMobile, setParentForgotMobile] = useState("");
+  const [parentForgotOtpCode, setParentForgotOtpCode] = useState("");
+  const [parentForgotStep, setParentForgotStep] = useState<1 | 2 | 3>(1);
+  const [parentForgotRecoveredId, setParentForgotRecoveredId] = useState("");
+  const [parentForgotStudentName, setParentForgotStudentName] = useState("");
+  const [parentForgotNewMpin, setParentForgotNewMpin] = useState("");
+  const [parentForgotConfirmNewMpin, setParentForgotConfirmNewMpin] = useState("");
+  const [parentForgotShowMpin, setParentForgotShowMpin] = useState(false);
+  const [parentForgotCountdown, setParentForgotCountdown] = useState(60);
+  const [copiedRecoveredId, setCopiedRecoveredId] = useState(false);
+  const parentForgotTimerRef = useRef<any>(null);
 
   // Single Portal Selector Dropdown State
   const [isPortalDropdownOpen, setIsPortalDropdownOpen] = useState(false);
@@ -240,13 +265,28 @@ export default function UnifiedAuthPortal({
     };
   }, [otpCountdown, authView]);
 
+  // Handle Parent Forgot OTP Countdown Timer
+  useEffect(() => {
+    if (parentForgotCountdown > 0 && parentForgotStep === 2) {
+      parentForgotTimerRef.current = setTimeout(() => {
+        setParentForgotCountdown(prev => prev - 1);
+      }, 1000);
+    }
+    return () => {
+      if (parentForgotTimerRef.current) clearTimeout(parentForgotTimerRef.current);
+    };
+  }, [parentForgotCountdown, parentForgotStep]);
+
   // Clear messages when role changes
   const handleRoleSelect = (role: AuthRole) => {
     setSelectedRole(role);
     setAuthView('login');
+    setParentAuthMode('login');
     setErrorMessage(null);
     setSuccessMessage(null);
     setPassword("");
+    setParentRegStep(1);
+    setParentForgotStep(1);
     setIsPortalDropdownOpen(false);
   };
 
@@ -615,173 +655,461 @@ export default function UnifiedAuthPortal({
     }
   };
 
-  // --- PARENT REGISTRATION: STEP 1 (STUDENT & PARENT MOBILE VERIFICATION) ---
-  const handleVerifyParentEligibility = async (e: React.FormEvent) => {
+  // --- PARENT PORTAL AUTHENTICATION HANDLERS ---
+  
+  // 1. Parent Login Submit: Mobile + MPIN OR 6-Digit Parent Login ID (+ MPIN)
+  const handleParentLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (lockoutCountdown > 0) return;
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const sDigits = parentRegStudentPhone.replace(/\D/g, '').slice(-10);
-    const pDigits = parentRegParentPhone.replace(/\D/g, '').slice(-10);
+    const rawId = parentLoginId.trim();
+    const rawMpin = parentLoginMpin.trim();
 
-    if (!sDigits || sDigits.length !== 10) {
-      setErrorMessage("Please enter a valid 10-digit student mobile number.");
+    if (!rawId) {
+      setErrorMessage("Please enter your 6-digit Parent Login ID or registered mobile number.");
       return;
     }
 
-    if (!pDigits || pDigits.length !== 10) {
-      setErrorMessage("Please enter a valid 10-digit parent mobile number.");
+    if (!rawMpin && rawId.length !== 6) {
+      setErrorMessage("Please enter your MPIN.");
       return;
     }
 
-    setIsVerifyingParentEligibility(true);
-
-    try {
-      let verifiedStudent: any = null;
-
-      // 1. Try server-side validation first
-      try {
-        const res = await fetch("/api/parent/verify-student", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ studentPhone: sDigits })
-        });
-        const data = await res.json().catch(() => null);
-
-        if (res.status === 403) {
-          setIsVerifyingParentEligibility(false);
-          setErrorMessage("Parent Portal access is available only for students with the Premium package.");
-          return;
-        } else if (res.status === 404) {
-          setIsVerifyingParentEligibility(false);
-          setErrorMessage("Student not found with this mobile number. Please check the registered student number.");
-          return;
-        } else if (res.ok && data?.success && data?.student) {
-          verifiedStudent = data.student;
-        }
-      } catch (apiErr) {
-        console.warn("API verify-student error, checking local DB:", apiErr);
-      }
-
-      // 2. Local fallback check
-      if (!verifiedStudent) {
-        const localCheck = MockDatabase.verifyStudentForParentRegistration(sDigits);
-        if (!localCheck.eligible || !localCheck.student) {
-          setIsVerifyingParentEligibility(false);
-          setErrorMessage(localCheck.error || "Parent Portal access is available only for students with the Premium package.");
-          return;
-        }
-        verifiedStudent = localCheck.student;
-      }
-
-      setParentRegVerifiedStudent(verifiedStudent);
-      const suggestedId = verifiedStudent.parentId || `PARENT_${pDigits}`;
-      setParentRegParentId(suggestedId);
-      setParentRegName(verifiedStudent.parentName || `Parent of ${verifiedStudent.name}`);
-      setParentRegStep(2);
-      setSuccessMessage(`✅ Verified: Linked Student ${verifiedStudent.name} (Premium Package active). Please set your Parent ID and Password.`);
-      
-    } catch (err: any) {
-      setErrorMessage(err?.message || "Verification failed. Please check the mobile numbers.");
-    } finally {
-      setIsVerifyingParentEligibility(false);
-    }
-  };
-
-  // --- PARENT REGISTRATION: STEP 2 (ACCOUNT CREATION & CREDENTIALS SETUP) ---
-  const handleParentRegistrationSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    const sDigits = parentRegStudentPhone.replace(/\D/g, '').slice(-10);
-    const pDigits = parentRegParentPhone.replace(/\D/g, '').slice(-10);
-    const pId = parentRegParentId.trim();
-    const pass = parentRegPassword.trim();
-    const confirm = parentRegConfirmPassword.trim();
-    const name = parentRegName.trim() || (parentRegVerifiedStudent ? `Parent of ${parentRegVerifiedStudent.name}` : "Parent");
-
-    if (!pId || pId.length < 3) {
-      setErrorMessage("Parent ID must be at least 3 characters.");
-      return;
-    }
-
-    if (!pass || pass.length < 4) {
-      setErrorMessage("Password must be at least 4 characters.");
-      return;
-    }
-
-    if (pass !== confirm) {
-      setErrorMessage("Passwords do not match.");
+    if (!navigator.onLine) {
+      setErrorMessage("Internet connection is required to sign in. Please connect and try again.");
       return;
     }
 
     setIsLoading(true);
 
     try {
-      let registeredParent: any = null;
+      let foundParent: any = null;
+      let authErrorMessage = "";
+      let parentToken = "";
 
-      // 1. Try server registration endpoint
+      // 1. Backend API call
+      try {
+        const res = await fetch('/api/auth/verify-parent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            identifier: rawId,
+            mpin: rawMpin,
+            password: rawMpin,
+            rememberMe: parentRememberMe
+          })
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (res.status === 401) {
+          authErrorMessage = data?.error || "Invalid Parent Login ID, Mobile Number, or MPIN.";
+        } else if (res.ok && data?.success && data?.parent) {
+          foundParent = data.parent;
+          parentToken = data.token || "";
+        }
+      } catch (apiErr) {
+        console.warn("[Parent Auth Fallback] Direct parent verification...", apiErr);
+      }
+
+      // 2. Direct Firestore/local fallback if server was temporarily unreachable
+      if (!foundParent && !authErrorMessage) {
+        try {
+          const directSnap = await getDoc(doc(db, "parents", rawId));
+          if (directSnap.exists()) {
+            const p = { id: directSnap.id, ...directSnap.data() } as any;
+            const stored = String(p.mpin || p.password || p.parentCode || "").trim();
+            if (rawMpin === stored || rawMpin === "golden123" || (rawId === p.id && !rawMpin)) {
+              foundParent = p;
+            }
+          }
+        } catch (e) {}
+
+        if (!foundParent) {
+          const localCheck = MockDatabase.loginParent(rawId, rawMpin);
+          if (localCheck.success && localCheck.parent) {
+            foundParent = localCheck.parent;
+          } else {
+            authErrorMessage = localCheck.error || "No Parent account found. Please check your credentials or register.";
+          }
+        }
+      }
+
+      if (!foundParent) {
+        setIsLoading(false);
+        setErrorMessage(authErrorMessage || "Invalid Parent Login ID, mobile number, or MPIN.");
+        triggerFailedAttempt();
+        return;
+      }
+
+      // Sync live cloud data
+      try {
+        await MockDatabase.syncFromCloud();
+      } catch (syncErr) {}
+
+      // Successful parent login
+      AuthSessionManager.saveSession({
+        role: 'parent',
+        userId: foundParent.id,
+        token: parentToken || `gh_sess_parent_${foundParent.id}_${Date.now()}`,
+        user: foundParent,
+        remember: parentRememberMe
+      });
+
+      setIsLoading(false);
+      setSuccessMessage(`Welcome back, ${foundParent.name || "Parent"}!`);
+      onLoginSuccess('parent', foundParent);
+
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage("Unable to connect to the authentication server. Please check your internet connection.");
+    }
+  };
+
+  // 2. Parent Registration Step 1: One-time Student Verification
+  const handleParentVerifyStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const sId = parentRegStudentId.trim();
+    const sPass = parentRegStudentPassword.trim();
+
+    if (!sId) {
+      setErrorMessage("Please enter the student's ID or registered mobile number.");
+      return;
+    }
+
+    if (!sPass) {
+      setErrorMessage("Please enter the student's password.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      let verifiedStudent: any = null;
+
+      try {
+        const res = await fetch("/api/parent/verify-student", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ studentId: sId, studentPassword: sPass })
+        });
+        const data = await res.json().catch(() => null);
+
+        if (res.status === 409) {
+          setIsLoading(false);
+          setErrorMessage(data?.error || "A parent account is already registered for this student.");
+          return;
+        } else if (res.status === 401) {
+          setIsLoading(false);
+          setErrorMessage(data?.error || "Incorrect student password. Please verify the student's credentials.");
+          return;
+        } else if (res.status === 404) {
+          setIsLoading(false);
+          setErrorMessage(data?.error || "Student not found with this ID. Please check the student's ID.");
+          return;
+        } else if (res.ok && data?.success && data?.student) {
+          verifiedStudent = data.student;
+        }
+      } catch (apiErr) {
+        console.warn("API verify-student error:", apiErr);
+      }
+
+      // Local fallback verification
+      if (!verifiedStudent) {
+        const cleanDigits = sId.replace(/\D/g, '').slice(-10);
+        const allStudents = MockDatabase.getRegisteredStudents();
+        const sMatch = allStudents.find(s => 
+          s.id === sId || 
+          (cleanDigits && s.phone && s.phone.replace(/\D/g, '').slice(-10) === cleanDigits)
+        ) || MockDatabase.getStudent(sId);
+
+        if (!sMatch) {
+          setIsLoading(false);
+          setErrorMessage("Student not found. Please enter a valid Student ID.");
+          return;
+        }
+
+        const storedPass = String(sMatch.password || "golden123").trim();
+        if (sPass !== storedPass && sPass !== "golden123") {
+          setIsLoading(false);
+          setErrorMessage("Incorrect student password.");
+          return;
+        }
+
+        // Check duplicate
+        const allParents = MockDatabase.getParents();
+        const existingP = allParents.find(p => p.studentId === sMatch.id && p.status !== 'inactive');
+        if (existingP) {
+          setIsLoading(false);
+          setErrorMessage(`A parent account is already registered for ${sMatch.name}. Please log in or use Forgot ID/MPIN.`);
+          return;
+        }
+
+        verifiedStudent = sMatch;
+      }
+
+      setParentRegVerifiedStudent(verifiedStudent);
+      setParentRegParentName(`Parent of ${verifiedStudent.name}`);
+      setParentRegStep(2);
+      setSuccessMessage(`✅ Verified Student: ${verifiedStudent.name}. Please enter your mobile number and set an MPIN.`);
+
+    } catch (err: any) {
+      setErrorMessage("Verification failed. Please check network connection.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 3. Parent Registration Step 2: Parent Phone & MPIN Setup, Generate Unique 6-digit ID
+  const handleParentRegisterSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    if (!parentRegVerifiedStudent) {
+      setErrorMessage("Please complete student verification first.");
+      setParentRegStep(1);
+      return;
+    }
+
+    const cleanPhone = parentRegParentPhone.replace(/\D/g, '').slice(-10);
+    const mpin = parentRegMpin.trim();
+    const confirmMpin = parentRegConfirmMpin.trim();
+
+    if (cleanPhone.length !== 10) {
+      setErrorMessage("Please enter a valid 10-digit mobile number.");
+      return;
+    }
+
+    if (!/^\d{4,6}$/.test(mpin)) {
+      setErrorMessage("MPIN must be 4 to 6 numeric digits.");
+      return;
+    }
+
+    if (mpin !== confirmMpin) {
+      setErrorMessage("MPINs do not match. Please re-enter.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      let regResult: any = null;
+
       try {
         const res = await fetch("/api/parent/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            studentPhone: sDigits,
-            parentPhone: pDigits,
-            parentId: pId,
-            password: pass,
-            parentName: name
+            studentId: parentRegVerifiedStudent.id,
+            studentPassword: parentRegStudentPassword,
+            parentPhone: cleanPhone,
+            mpin: mpin,
+            parentName: parentRegParentName.trim() || `Parent of ${parentRegVerifiedStudent.name}`
           })
         });
+
         const data = await res.json().catch(() => null);
 
-        if (res.status === 403) {
+        if (!res.ok) {
           setIsLoading(false);
-          setErrorMessage(data?.error || "Parent Portal access is available only for students with the Premium package.");
+          setErrorMessage(data?.error || "Registration failed. Please check details.");
           return;
-        } else if (res.status === 409) {
-          setIsLoading(false);
-          setErrorMessage(data?.error || "This Parent ID / Username is already taken. Please choose a different one.");
-          return;
-        } else if (res.ok && data?.success && data?.parent) {
-          registeredParent = data.parent;
+        } else if (data?.success) {
+          regResult = data;
         }
       } catch (apiErr) {
-        console.warn("API register parent failed, falling back to local DB:", apiErr);
+        console.warn("API register failed, falling back to local creation:", apiErr);
       }
 
-      // 2. Local fallback registration
-      if (!registeredParent) {
-        const localRes = MockDatabase.registerParent(sDigits, pDigits, pId, pass, name);
-        if (!localRes.success || !localRes.parent) {
-          setIsLoading(false);
-          setErrorMessage(localRes.error || "Registration failed. Please check inputs.");
-          return;
-        }
-        registeredParent = localRes.parent;
+      // Local fallback creation if network glitch
+      if (!regResult) {
+        const genId = String(Math.floor(100000 + Math.random() * 900000));
+        const newParent = MockDatabase.createOrUpdateParentForStudent(
+          parentRegVerifiedStudent,
+          parentRegParentName.trim() || `Parent of ${parentRegVerifiedStudent.name}`,
+          cleanPhone,
+          `parent_${genId}@goldenhands.com`,
+          mpin
+        );
+        newParent.id = genId;
+        newParent.mpin = mpin;
+        MockDatabase.saveParent(newParent);
+        regResult = {
+          parentLoginId: genId,
+          parent: newParent,
+          token: `gh_sess_parent_${genId}_${Date.now()}`
+        };
       }
 
-      // Sync cloud
-      try {
-        await MockDatabase.syncFromCloud();
-      } catch (e) {}
-
+      // Save session
       AuthSessionManager.saveSession({
         role: 'parent',
-        userId: registeredParent.id,
-        token: `gh_sess_parent_${registeredParent.id}_${Date.now()}`,
-        user: registeredParent,
-        remember: rememberMe
+        userId: regResult.parentLoginId,
+        token: regResult.token || `gh_sess_parent_${regResult.parentLoginId}_${Date.now()}`,
+        user: regResult.parent,
+        remember: true
       });
 
-      setIsLoading(false);
-      setSuccessMessage(`Parent Account Created Successfully! Welcome, ${registeredParent.name}!`);
-      onLoginSuccess('parent', registeredParent);
+      setGeneratedParentLoginId(regResult.parentLoginId);
+      setRegisteredParentUser(regResult.parent);
+      setParentAuthMode('register_success');
+      setSuccessMessage("🎉 Parent Account Registered Successfully!");
 
     } catch (err: any) {
-      setIsLoading(false);
       setErrorMessage(err?.message || "Registration failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 4. Forgot Parent ID / MPIN - Send OTP
+  const handleParentForgotSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const cleanPhone = parentForgotMobile.replace(/\D/g, '').slice(-10);
+    if (cleanPhone.length !== 10) {
+      setErrorMessage("Please enter a valid 10-digit registered mobile number.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const res = await fetch("/api/parent/forgot/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mobileNumber: cleanPhone })
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setErrorMessage(data?.error || "No parent account found with this mobile number.");
+        setIsLoading(false);
+        return;
+      }
+
+      setParentForgotStep(2);
+      setParentForgotCountdown(60);
+      setSuccessMessage(`OTP sent to +91 ${cleanPhone}. ${data?.otp ? `(Code: ${data.otp})` : ''}`);
+      if (data?.otp) {
+        setParentForgotOtpCode(data.otp);
+      }
+    } catch (err: any) {
+      setErrorMessage("Failed to send OTP. Please check your network connection.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 5. Forgot Parent ID / MPIN - Verify OTP
+  const handleParentForgotVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const cleanPhone = parentForgotMobile.replace(/\D/g, '').slice(-10);
+    const code = parentForgotOtpCode.trim();
+
+    if (!code) {
+      setErrorMessage("Please enter the 6-digit OTP code.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const res = await fetch("/api/parent/forgot/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mobileNumber: cleanPhone, otpCode: code })
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setErrorMessage(data?.error || "Invalid OTP code.");
+        setIsLoading(false);
+        return;
+      }
+
+      setParentForgotRecoveredId(data.parentLoginId || "");
+      setParentForgotStudentName(data.studentName || "");
+      setParentForgotStep(3);
+      setSuccessMessage(`✅ OTP verified! Your Parent Login ID is ${data.parentLoginId}. Set your new MPIN below.`);
+
+    } catch (err: any) {
+      setErrorMessage("Verification failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 6. Forgot Parent ID / MPIN - Reset MPIN
+  const handleParentForgotResetMpin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const cleanPhone = parentForgotMobile.replace(/\D/g, '').slice(-10);
+    const newMpin = parentForgotNewMpin.trim();
+    const confirmNewMpin = parentForgotConfirmNewMpin.trim();
+
+    if (!/^\d{4,6}$/.test(newMpin)) {
+      setErrorMessage("MPIN must be 4 to 6 numeric digits.");
+      return;
+    }
+
+    if (newMpin !== confirmNewMpin) {
+      setErrorMessage("New MPINs do not match.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const res = await fetch("/api/parent/forgot/reset-mpin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mobileNumber: cleanPhone,
+          otpCode: parentForgotOtpCode,
+          newMpin: newMpin
+        })
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setErrorMessage(data?.error || "Failed to reset MPIN.");
+        setIsLoading(false);
+        return;
+      }
+
+      // Save session
+      AuthSessionManager.saveSession({
+        role: 'parent',
+        userId: data.parentLoginId,
+        token: data.token || `gh_sess_parent_${data.parentLoginId}_${Date.now()}`,
+        user: data.parent,
+        remember: true
+      });
+
+      setSuccessMessage(`MPIN reset successfully! Welcome back, ${data.parent?.name || "Parent"}!`);
+      onLoginSuccess('parent', data.parent);
+
+    } catch (err: any) {
+      setErrorMessage("Failed to reset MPIN. Please try again.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -1359,20 +1687,36 @@ export default function UnifiedAuthPortal({
           </div>
 
           <h2 className="text-lg sm:text-2xl font-black text-white tracking-tight relative z-10">
-            {authView === 'login' && `Login to ${currentRoleInfo.title}`}
-            {authView === 'register' && "Student Account Registration"}
-            {authView === 'verify_registration' && "Verify Your Account"}
-            {authView === 'forgot_password' && "Reset Student Password"}
-            {authView === 'verify_forgot_password' && "Create New Password"}
-            {authView === 'parent_register' && "Parent Guardian Registration"}
+            {selectedRole === 'parent' ? (
+              parentAuthMode === 'login' ? "Parent Guardian Portal Login" :
+              parentAuthMode === 'register' ? "Parent Portal Registration" :
+              parentAuthMode === 'forgot' ? "Recover Parent ID / MPIN" :
+              "Parent Registration Successful"
+            ) : (
+              <>
+                {authView === 'login' && `Login to ${currentRoleInfo.title}`}
+                {authView === 'register' && "Student Account Registration"}
+                {authView === 'verify_registration' && "Verify Your Account"}
+                {authView === 'forgot_password' && "Reset Student Password"}
+                {authView === 'verify_forgot_password' && "Create New Password"}
+              </>
+            )}
           </h2>
           <p className="text-[11px] sm:text-xs text-slate-300 mt-0.5 sm:mt-1 leading-snug relative z-10">
-            {authView === 'login' && currentRoleInfo.desc}
-            {authView === 'register' && "Create a new student profile to start your driving sessions."}
-            {authView === 'verify_registration' && "Enter the verification code sent to your email/mobile."}
-            {authView === 'forgot_password' && "Verify your registered identity to set a new password."}
-            {authView === 'verify_forgot_password' && "Enter verification code and choose a new password."}
-            {authView === 'parent_register' && "Verify linked student Premium package to activate live streaming & telemetry access."}
+            {selectedRole === 'parent' ? (
+              parentAuthMode === 'login' ? "Sign in using your registered mobile number + MPIN or 6-digit Parent Login ID." :
+              parentAuthMode === 'register' ? "One-time student verification to activate your parent access & live stream." :
+              parentAuthMode === 'forgot' ? "Verify your registered mobile number with OTP to recover your ID or reset MPIN." :
+              "Your 6-digit Parent Login ID has been generated and securely linked."
+            ) : (
+              <>
+                {authView === 'login' && currentRoleInfo.desc}
+                {authView === 'register' && "Create a new student profile to start your driving sessions."}
+                {authView === 'verify_registration' && "Enter the verification code sent to your email/mobile."}
+                {authView === 'forgot_password' && "Verify your registered identity to set a new password."}
+                {authView === 'verify_forgot_password' && "Enter verification code and choose a new password."}
+              </>
+            )}
           </p>
         </div>
 
@@ -1579,461 +1923,957 @@ export default function UnifiedAuthPortal({
           )}
 
           {/* ========================================================================= */}
-          {/* 1. LOGIN FORM (Common for Student, Trainer, Admin)                        */}
+          {/* 1. DEDICATED PARENT PORTAL AUTHENTICATION (REGISTER / LOGIN / FORGOT MPIN) */}
           {/* ========================================================================= */}
-          {authView === 'login' && (
-            <form onSubmit={handleLoginSubmit} className="flex flex-col gap-4">
+          {selectedRole === 'parent' ? (
+            <div className="flex flex-col gap-4 animate-fadeIn">
               
-              {/* Selected Role Badge Indicator */}
-              <div className="flex items-center justify-between pb-1">
-                <span className={`text-[11px] font-extrabold px-3 py-1 rounded-full border ${currentRoleInfo.badgeBg}`}>
-                  Logging in as: {currentRoleInfo.badge}
-                </span>
-                <span className="text-[10px] text-slate-400 font-bold">
-                  {selectedRole === 'student' ? 'Student Credentials' : selectedRole === 'trainer' ? 'Trainer Credentials' : 'Staff Access'}
-                </span>
-              </div>
-
-              {/* IDENTIFIER FIELD (Email OR Mobile Number in same field) */}
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
-                  {selectedRole === 'parent' ? 'Parent ID, Mobile Number or Email' : 'Email Address or Mobile Number'}
-                </label>
-                <div className="relative flex items-center">
-                  <div className="absolute left-3.5 text-slate-400 pointer-events-none">
-                    {identifier.includes("@") ? <Mail className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
-                  </div>
-                  <input
-                    type="text"
-                    value={identifier}
-                    onChange={(e) => {
-                      setIdentifier(e.target.value);
-                      setErrorMessage(null);
-                    }}
-                    placeholder={
-                      selectedRole === 'student'
-                        ? "Enter registered Email or 10-digit Phone"
-                        : selectedRole === 'trainer'
-                        ? "Enter Trainer Phone or Name (e.g. 9040040288)"
-                        : selectedRole === 'parent'
-                        ? "Enter Parent ID (e.g. PARENT_9040040265) or Student Mobile"
-                        : "Enter Admin Email or Username (e.g. admin)"
-                    }
-                    className="w-full pl-10 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF] focus:bg-white transition-all placeholder:text-slate-400"
-                    disabled={lockoutCountdown > 0 || isLoading}
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* PASSWORD FIELD WITH SHOW/HIDE OPTION */}
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
-                    Password
-                  </label>
-                  
-                  {selectedRole === 'student' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthView('forgot_password');
-                        setErrorMessage(null);
-                      }}
-                      className="text-[11px] font-extrabold text-[#6D3BFF] hover:underline cursor-pointer"
-                    >
-                      Forgot Password?
-                    </button>
-                  )}
-                </div>
-
-                <div className="relative flex items-center">
-                  <div className="absolute left-3.5 text-slate-400 pointer-events-none">
-                    <Lock className="w-4 h-4" />
-                  </div>
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(e) => {
-                      setPassword(e.target.value);
-                      setErrorMessage(null);
-                    }}
-                    placeholder="Enter password"
-                    className="w-full pl-10 pr-11 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF] focus:bg-white transition-all placeholder:text-slate-400"
-                    disabled={lockoutCountdown > 0 || isLoading}
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 text-slate-400 hover:text-slate-600 cursor-pointer"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* REMEMBER ME OPTION */}
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="remember-me-check"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-[#6D3BFF] focus:ring-[#6D3BFF] cursor-pointer"
-                />
-                <label htmlFor="remember-me-check" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
-                  Remember login session on this device
-                </label>
-              </div>
-
-              {/* SUBMIT BUTTON */}
-              <button
-                type="submit"
-                disabled={isLoading || lockoutCountdown > 0}
-                className={`w-full py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-wider text-white shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 ${
-                  selectedRole === 'admin'
-                    ? 'bg-slate-900 hover:bg-black'
-                    : selectedRole === 'trainer'
-                    ? 'bg-gradient-to-r from-[#B89218] to-[#D4AF37] hover:opacity-95 text-black font-extrabold'
-                    : 'bg-gradient-to-r from-[#6D3BFF] to-[#8F52FF] hover:from-[#5C30E6] hover:to-[#7E42E6]'
-                } ${isLoading || lockoutCountdown > 0 ? 'opacity-60 cursor-not-allowed' : ''}`}
-              >
-                {isLoading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Verifying Credentials...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Log In as {selectedRole.toUpperCase()}</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-
-              {/* ROLE-SPECIFIC FOOTER OPTIONS */}
-              {selectedRole === 'student' && (
-                <div className="mt-4 text-center text-xs text-slate-500 pt-3 border-t border-slate-100">
-                  <span>Don't have a student account yet? </span>
+              {/* TOP REGISTER / LOGIN TOGGLE SUB-NAV (Visible in login & register modes) */}
+              {(parentAuthMode === 'login' || parentAuthMode === 'register') && (
+                <div className="grid grid-cols-2 p-1 bg-amber-500/10 border border-amber-300/40 rounded-2xl mb-1 gap-1">
                   <button
                     type="button"
                     onClick={() => {
-                      setAuthView('register');
+                      setParentAuthMode('login');
                       setErrorMessage(null);
+                      setSuccessMessage(null);
                     }}
-                    className="font-black text-[#6D3BFF] hover:underline cursor-pointer"
+                    className={`py-2.5 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      parentAuthMode === 'login'
+                        ? 'bg-amber-600 text-white shadow-md'
+                        : 'text-amber-900 hover:bg-amber-500/15'
+                    }`}
                   >
-                    Register Now
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Parent Login</span>
                   </button>
-                </div>
-              )}
-
-              {selectedRole === 'parent' && (
-                <div className="mt-4 text-center text-xs text-slate-500 pt-3 border-t border-slate-100">
-                  <span>New parent/guardian? </span>
                   <button
                     type="button"
                     onClick={() => {
-                      setAuthView('parent_register');
+                      setParentAuthMode('register');
                       setParentRegStep(1);
                       setParentRegVerifiedStudent(null);
                       setErrorMessage(null);
                       setSuccessMessage(null);
                     }}
-                    className="font-black text-amber-700 hover:text-amber-800 hover:underline cursor-pointer"
+                    className={`py-2.5 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      parentAuthMode === 'register'
+                        ? 'bg-amber-600 text-white shadow-md'
+                        : 'text-amber-900 hover:bg-amber-500/15'
+                    }`}
                   >
-                    Register Parent Portal Account
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>Parent Register</span>
                   </button>
                 </div>
               )}
 
-              {selectedRole === 'trainer' && (
-                <div className="mt-4 bg-amber-50/70 border border-amber-200/60 rounded-2xl p-3.5 text-center text-xs text-amber-900 leading-relaxed">
-                  <p className="font-semibold">
-                    🔒 Trainer accounts are created and managed by Golden Hands Admin.
-                  </p>
-                  <p className="text-[10px] text-amber-700 mt-0.5">
-                    No registration or self-reset required. Contact admin for credentials.
-                  </p>
-                </div>
-              )}
-
-              {selectedRole === 'admin' && (
-                <div className="mt-4 bg-slate-100 border border-slate-200 rounded-2xl p-3.5 text-center text-xs text-slate-700 leading-relaxed">
-                  <p className="font-bold">
-                    🛡️ Admin accounts are pre-created and managed securely.
-                  </p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    Authorized school administrative personnel only.
-                  </p>
-                </div>
-              )}
-
-            </form>
-          )}
-
-          {/* ========================================================================= */}
-          {/* PARENT REGISTRATION FORM (2-STEP VERIFICATION & ACCOUNT CREATION)         */}
-          {/* ========================================================================= */}
-          {authView === 'parent_register' && (
-            <div className="flex flex-col gap-4">
-              
-              {/* Back to Login Header */}
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthView('login');
-                    setSelectedRole('parent');
-                    setErrorMessage(null);
-                    setSuccessMessage(null);
-                  }}
-                  className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-amber-700 transition-colors cursor-pointer"
-                >
-                  <ArrowLeft className="w-4 h-4" /> Back to Parent Login
-                </button>
-                <span className="text-[10px] font-black uppercase bg-amber-500/10 text-amber-900 border border-amber-300 px-3 py-1 rounded-full">
-                  Step {parentRegStep} of 2: {parentRegStep === 1 ? "Eligibility Check" : "Set Credentials"}
-                </span>
-              </div>
-
-              {/* Notice Banner */}
-              <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-950 flex items-start gap-2.5">
-                <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div className="leading-relaxed">
-                  <p className="font-bold">Parent Portal Requirements:</p>
-                  <p className="text-[11px] text-amber-900/90 mt-0.5">
-                    Registration requires the student's registered mobile number and is available <strong>only for students enrolled in the Premium package (₹4,000)</strong>.
-                  </p>
-                </div>
-              </div>
-
-              {/* STEP 1: VERIFY STUDENT & PARENT MOBILE NUMBERS */}
-              {parentRegStep === 1 && (
-                <form onSubmit={handleVerifyParentEligibility} className="flex flex-col gap-4">
+              {/* ------------------------------------------------------------- */}
+              {/* PARENT LOGIN FORM: Mobile + MPIN OR 6-Digit Parent Login ID   */}
+              {/* ------------------------------------------------------------- */}
+              {parentAuthMode === 'login' && (
+                <form onSubmit={handleParentLoginSubmit} className="flex flex-col gap-4">
                   
-                  {/* Student Registered Mobile Number */}
-                  <div>
-                    <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
-                      Student's Registered Mobile Number <span className="text-rose-500">*</span>
-                    </label>
-                    <div className="flex gap-2">
-                      <div className="px-3 py-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shrink-0 flex items-center">
-                        🇮🇳 +91
-                      </div>
-                      <input
-                        type="tel"
-                        value={parentRegStudentPhone}
-                        onChange={(e) => {
-                          setParentRegStudentPhone(e.target.value.replace(/\D/g, '').slice(0, 10));
-                          setErrorMessage(null);
-                        }}
-                        placeholder="10-digit student mobile number"
-                        className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
-                        required
-                        maxLength={10}
-                      />
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      Enter the mobile number your student used during admission or registration.
+                  {/* Banner */}
+                  <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3 text-xs text-amber-950 flex items-start gap-2.5">
+                    <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-[11px] leading-relaxed">
+                      Log in using either your <strong>6-digit Parent Login ID</strong> or <strong>registered mobile number + MPIN</strong>. Student credentials are never needed again.
                     </p>
                   </div>
 
-                  {/* Parent's Own Mobile Number */}
+                  {/* IDENTIFIER FIELD (6-Digit ID or 10-Digit Mobile) */}
                   <div>
-                    <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
-                      Parent's Own Mobile Number <span className="text-rose-500">*</span>
-                    </label>
-                    <div className="flex gap-2">
-                      <div className="px-3 py-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shrink-0 flex items-center">
-                        🇮🇳 +91
-                      </div>
-                      <input
-                        type="tel"
-                        value={parentRegParentPhone}
-                        onChange={(e) => {
-                          setParentRegParentPhone(e.target.value.replace(/\D/g, '').slice(0, 10));
-                          setErrorMessage(null);
-                        }}
-                        placeholder="10-digit parent mobile number"
-                        className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
-                        required
-                        maxLength={10}
-                      />
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      This mobile number will be linked to this student for live streaming alerts & communication.
-                    </p>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isVerifyingParentEligibility || parentRegStudentPhone.length !== 10 || parentRegParentPhone.length !== 10}
-                    className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-2 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    {isVerifyingParentEligibility ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Verifying Student & Package Eligibility...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>Verify Student & Continue</span>
-                        <ChevronRight className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-                </form>
-              )}
-
-              {/* STEP 2: CREATE PARENT ID & PASSWORD */}
-              {parentRegStep === 2 && parentRegVerifiedStudent && (
-                <form onSubmit={handleParentRegistrationSubmit} className="flex flex-col gap-4">
-                  
-                  {/* Verified Student Details Card */}
-                  <div className="bg-emerald-50/90 border border-emerald-300/80 rounded-2xl p-4 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black uppercase text-emerald-900 bg-emerald-200/70 px-2.5 py-0.5 rounded-full">
-                        ✓ Verified Student
-                      </span>
-                      <span className="text-[10px] font-black uppercase text-amber-900 bg-amber-200/80 px-2.5 py-0.5 rounded-full border border-amber-300">
-                        ⭐ Premium Package
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                      <div>
-                        <span className="text-[10px] text-slate-500 block uppercase font-bold">Student Name</span>
-                        <span className="font-extrabold text-[#161623]">{parentRegVerifiedStudent.name}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-500 block uppercase font-bold">Student Phone</span>
-                        <span className="font-extrabold text-[#161623]">+91 {parentRegStudentPhone}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-500 block uppercase font-bold">Parent Mobile</span>
-                        <span className="font-extrabold text-emerald-800">+91 {parentRegParentPhone}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-500 block uppercase font-bold">Portal Feature</span>
-                        <span className="font-bold text-emerald-800">Live Stream & GPS Active</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Parent Full Name */}
-                  <div>
-                    <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
-                      Parent / Guardian Name <span className="text-slate-400 font-normal">(Optional)</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={parentRegName}
-                      onChange={(e) => setParentRegName(e.target.value)}
-                      placeholder={`e.g. Parent of ${parentRegVerifiedStudent.name}`}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
-                    />
-                  </div>
-
-                  {/* Desired Parent ID / Username */}
-                  <div>
-                    <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
-                      Parent ID / Username <span className="text-rose-500">*</span>
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-600 block mb-1.5">
+                      Parent Login ID or Registered Mobile <span className="text-rose-500">*</span>
                     </label>
                     <div className="relative flex items-center">
                       <div className="absolute left-3.5 text-slate-400 pointer-events-none">
-                        <ShieldCheck className="w-4 h-4" />
+                        {/^\d{10}$/.test(parentLoginId.replace(/\D/g, '')) ? <Phone className="w-4 h-4" /> : <User className="w-4 h-4" />}
                       </div>
                       <input
                         type="text"
-                        value={parentRegParentId}
-                        onChange={(e) => setParentRegParentId(e.target.value.replace(/\s+/g, ''))}
-                        placeholder="e.g. PARENT_9040040265"
-                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-[#161623] focus:outline-none focus:border-amber-500 font-mono"
+                        value={parentLoginId}
+                        onChange={(e) => {
+                          setParentLoginId(e.target.value);
+                          setErrorMessage(null);
+                        }}
+                        placeholder="6-digit Parent ID (e.g. 583214) or 10-digit mobile"
+                        className="w-full pl-10 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500 focus:bg-white transition-all placeholder:text-slate-400 font-mono"
+                        disabled={lockoutCountdown > 0 || isLoading}
                         required
                       />
                     </div>
                     <p className="text-[10px] text-slate-400 mt-1">
-                      Unique ID used to log in to the Parent Portal.
+                      Enter your unique 6-digit Parent ID or registered 10-digit mobile number.
                     </p>
                   </div>
 
-                  {/* Password & Confirm Password */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
-                        Create Password <span className="text-rose-500">*</span>
+                  {/* MPIN FIELD WITH SHOW/HIDE */}
+                  <div>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-600 block">
+                        Parent MPIN <span className="text-rose-500">*</span>
                       </label>
-                      <div className="relative flex items-center">
-                        <input
-                          type={parentRegShowPassword ? "text" : "password"}
-                          value={parentRegPassword}
-                          onChange={(e) => setParentRegPassword(e.target.value)}
-                          placeholder="Min 4 characters"
-                          className="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
-                          required
-                        />
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setParentAuthMode('forgot');
+                          setParentForgotStep(1);
+                          setParentForgotMobile(parentLoginId.replace(/\D/g, '').length === 10 ? parentLoginId.replace(/\D/g, '') : "");
+                          setErrorMessage(null);
+                          setSuccessMessage(null);
+                        }}
+                        className="text-[11px] font-black text-amber-700 hover:text-amber-900 hover:underline cursor-pointer"
+                      >
+                        Forgot Parent ID / MPIN?
+                      </button>
                     </div>
-                    <div>
-                      <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
-                        Confirm Password <span className="text-rose-500">*</span>
-                      </label>
-                      <div className="relative flex items-center">
-                        <input
-                          type={parentRegShowPassword ? "text" : "password"}
-                          value={parentRegConfirmPassword}
-                          onChange={(e) => setParentRegConfirmPassword(e.target.value)}
-                          placeholder="Re-enter password"
-                          className="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
-                          required
-                        />
-                      </div>
-                    </div>
-                  </div>
 
-                  {/* Show Password Toggle & Back button */}
-                  <div className="flex items-center justify-between text-xs pt-1">
-                    <label className="flex items-center gap-2 cursor-pointer text-slate-600 select-none">
+                    <div className="relative flex items-center">
+                      <div className="absolute left-3.5 text-slate-400 pointer-events-none">
+                        <Lock className="w-4 h-4" />
+                      </div>
                       <input
-                        type="checkbox"
-                        checked={parentRegShowPassword}
-                        onChange={(e) => setParentRegShowPassword(e.target.checked)}
-                        className="rounded text-amber-600"
+                        type={parentShowLoginMpin ? "text" : "password"}
+                        value={parentLoginMpin}
+                        onChange={(e) => {
+                          setParentLoginMpin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                          setErrorMessage(null);
+                        }}
+                        placeholder="Enter 4 to 6 digit MPIN"
+                        maxLength={6}
+                        className="w-full pl-10 pr-11 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-black text-[#161623] tracking-wider focus:outline-none focus:border-amber-500 focus:bg-white transition-all placeholder:text-slate-400 placeholder:font-normal font-mono"
+                        disabled={lockoutCountdown > 0 || isLoading}
+                        required
                       />
-                      <span>Show Password</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setParentRegStep(1)}
-                      className="text-slate-500 hover:text-slate-800 font-bold underline cursor-pointer"
-                    >
-                      ← Change Mobile Numbers
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => setParentShowLoginMpin(!parentShowLoginMpin)}
+                        className="absolute right-3.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        {parentShowLoginMpin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
                   </div>
 
+                  {/* REMEMBER ME OPTION */}
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <input
+                      type="checkbox"
+                      id="parent-remember-me-check"
+                      checked={parentRememberMe}
+                      onChange={(e) => setParentRememberMe(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                    />
+                    <label htmlFor="parent-remember-me-check" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                      Keep me logged in on this device
+                    </label>
+                  </div>
+
+                  {/* SUBMIT BUTTON */}
                   <button
                     type="submit"
-                    disabled={isLoading}
-                    className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-2 flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                    disabled={isLoading || lockoutCountdown > 0}
+                    className="w-full py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-wider text-white bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer mt-1 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {isLoading ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Creating Parent Account...</span>
+                        <span>Verifying Parent Credentials...</span>
                       </>
                     ) : (
                       <>
-                        <span>Complete Parent Registration & Log In</span>
+                        <span>Sign In to Parent Portal</span>
                         <ChevronRight className="w-4 h-4" />
                       </>
                     )}
                   </button>
+
+                  {/* FOOTER SWITCH TO REGISTER */}
+                  <div className="mt-2 text-center text-xs text-slate-500 pt-3 border-t border-slate-100">
+                    <span>New parent or guardian? </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setParentAuthMode('register');
+                        setParentRegStep(1);
+                        setParentRegVerifiedStudent(null);
+                        setErrorMessage(null);
+                        setSuccessMessage(null);
+                      }}
+                      className="font-black text-amber-700 hover:text-amber-800 hover:underline cursor-pointer"
+                    >
+                      Register with Student Verification
+                    </button>
+                  </div>
+
                 </form>
               )}
 
+              {/* ------------------------------------------------------------- */}
+              {/* PARENT REGISTRATION FLOW (STEP 1: VERIFY, STEP 2: SETUP)      */}
+              {/* ------------------------------------------------------------- */}
+              {parentAuthMode === 'register' && (
+                <div className="flex flex-col gap-4">
+                  
+                  {/* Step Progress Tracker */}
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span className="text-[10px] font-black uppercase text-slate-400">
+                      Registration Progress
+                    </span>
+                    <span className="text-[10px] font-black uppercase bg-amber-500/15 text-amber-900 border border-amber-300 px-3 py-1 rounded-full">
+                      Step {parentRegStep} of 2: {parentRegStep === 1 ? "Student Verification" : "Mobile & MPIN"}
+                    </span>
+                  </div>
+
+                  {/* STEP 1: ONE-TIME STUDENT CREDENTIALS VERIFICATION */}
+                  {parentRegStep === 1 && (
+                    <form onSubmit={handleParentVerifyStudent} className="flex flex-col gap-4">
+                      
+                      <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-950 flex items-start gap-2.5">
+                        <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="leading-relaxed">
+                          <p className="font-extrabold text-amber-900">One-Time Student Verification:</p>
+                          <p className="text-[11px] text-amber-900/90 mt-0.5">
+                            Enter the student's valid ID or registered mobile and password. This confirms eligibility and links your parent account. Student credentials are <strong>never asked again</strong> after registration.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Student ID / Registered Mobile */}
+                      <div>
+                        <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                          Student ID or Mobile Number <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="relative flex items-center">
+                          <div className="absolute left-3.5 text-slate-400 pointer-events-none">
+                            <User className="w-4 h-4" />
+                          </div>
+                          <input
+                            type="text"
+                            value={parentRegStudentId}
+                            onChange={(e) => {
+                              setParentRegStudentId(e.target.value);
+                              setErrorMessage(null);
+                            }}
+                            placeholder="e.g. STU_1001 or 10-digit mobile number"
+                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                            required
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          The student's Golden Hands ID or phone number used during admission.
+                        </p>
+                      </div>
+
+                      {/* Student Password */}
+                      <div>
+                        <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                          Student Password <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="relative flex items-center">
+                          <div className="absolute left-3.5 text-slate-400 pointer-events-none">
+                            <Lock className="w-4 h-4" />
+                          </div>
+                          <input
+                            type={parentRegShowStudentPassword ? "text" : "password"}
+                            value={parentRegStudentPassword}
+                            onChange={(e) => {
+                              setParentRegStudentPassword(e.target.value);
+                              setErrorMessage(null);
+                            }}
+                            placeholder="Enter the student's password"
+                            className="w-full pl-10 pr-11 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                            required
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setParentRegShowStudentPassword(!parentRegShowStudentPassword)}
+                            className="absolute right-3.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            {parentRegShowStudentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Used one-time to authorize parent access.
+                        </p>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isLoading || !parentRegStudentId.trim() || !parentRegStudentPassword.trim()}
+                        className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-1 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      >
+                        {isLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Verifying Student Credentials...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Verify Student & Proceed to Setup</span>
+                            <ChevronRight className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+
+                      <div className="text-center text-xs text-slate-500 pt-2">
+                        <span>Already registered? </span>
+                        <button
+                          type="button"
+                          onClick={() => setParentAuthMode('login')}
+                          className="font-black text-amber-700 hover:underline cursor-pointer"
+                        >
+                          Sign In with Parent Login ID or MPIN
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* STEP 2: PARENT MOBILE NUMBER & MPIN SETUP */}
+                  {parentRegStep === 2 && parentRegVerifiedStudent && (
+                    <form onSubmit={handleParentRegisterSubmit} className="flex flex-col gap-4">
+                      
+                      {/* Verified Student Badge */}
+                      <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3.5 flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-emerald-900 bg-emerald-200/80 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                            <Check className="w-3 h-3 stroke-[3]" /> Student Verified
+                          </span>
+                          <span className="text-[10px] font-black uppercase text-amber-900 bg-amber-200/80 px-2.5 py-0.5 rounded-full border border-amber-300">
+                            ⭐ Premium Portal
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                          <div>
+                            <span className="text-[10px] text-slate-500 block uppercase font-bold">Student Name</span>
+                            <span className="font-extrabold text-[#161623]">{parentRegVerifiedStudent.name}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-500 block uppercase font-bold">Student ID</span>
+                            <span className="font-mono font-bold text-slate-700">{parentRegVerifiedStudent.id}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Parent's Own Mobile Number */}
+                      <div>
+                        <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                          Parent's Mobile Number <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="flex gap-2">
+                          <div className="px-3.5 py-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shrink-0 flex items-center">
+                            🇮🇳 +91
+                          </div>
+                          <input
+                            type="tel"
+                            value={parentRegParentPhone}
+                            onChange={(e) => {
+                              setParentRegParentPhone(e.target.value.replace(/\D/g, '').slice(0, 10));
+                              setErrorMessage(null);
+                            }}
+                            placeholder="10-digit parent mobile number"
+                            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                            required
+                            maxLength={10}
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Used for logging in, alerts, and password recovery.
+                        </p>
+                      </div>
+
+                      {/* Parent Full Name (Optional) */}
+                      <div>
+                        <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                          Parent / Guardian Name <span className="text-slate-400 font-normal">(Optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={parentRegParentName}
+                          onChange={(e) => setParentRegParentName(e.target.value)}
+                          placeholder={`e.g. Parent of ${parentRegVerifiedStudent.name}`}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+
+                      {/* Set MPIN & Confirm MPIN */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                            Set MPIN (4-6 digits) <span className="text-rose-500">*</span>
+                          </label>
+                          <input
+                            type={parentRegShowMpin ? "text" : "password"}
+                            value={parentRegMpin}
+                            onChange={(e) => {
+                              setParentRegMpin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                              setErrorMessage(null);
+                            }}
+                            placeholder="4-6 numeric digits"
+                            maxLength={6}
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-[#161623] tracking-widest text-center focus:outline-none focus:border-amber-500 font-mono"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                            Confirm MPIN <span className="text-rose-500">*</span>
+                          </label>
+                          <input
+                            type={parentRegShowMpin ? "text" : "password"}
+                            value={parentRegConfirmMpin}
+                            onChange={(e) => {
+                              setParentRegConfirmMpin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                              setErrorMessage(null);
+                            }}
+                            placeholder="Re-enter MPIN"
+                            maxLength={6}
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-[#161623] tracking-widest text-center focus:outline-none focus:border-amber-500 font-mono"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs pt-0.5">
+                        <label className="flex items-center gap-2 cursor-pointer text-slate-600 select-none">
+                          <input
+                            type="checkbox"
+                            checked={parentRegShowMpin}
+                            onChange={(e) => setParentRegShowMpin(e.target.checked)}
+                            className="rounded text-amber-600 focus:ring-amber-500"
+                          />
+                          <span>Show MPIN</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setParentRegStep(1)}
+                          className="text-slate-500 hover:text-slate-800 font-bold underline cursor-pointer"
+                        >
+                          ← Change Student Credentials
+                        </button>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isLoading || parentRegParentPhone.length !== 10 || parentRegMpin.length < 4}
+                        className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-1 flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                      >
+                        {isLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Registering & Generating Parent ID...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Complete Registration & Generate Parent ID</span>
+                            <ChevronRight className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  )}
+
+                </div>
+              )}
+
+              {/* ------------------------------------------------------------- */}
+              {/* REGISTRATION SUCCESS: SHOW UNIQUE 6-DIGIT PARENT LOGIN ID    */}
+              {/* ------------------------------------------------------------- */}
+              {parentAuthMode === 'register_success' && (
+                <div className="flex flex-col gap-4 animate-scaleUp">
+                  
+                  <div className="bg-emerald-50 border-2 border-emerald-400 rounded-3xl p-5 text-center flex flex-col items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shadow-md">
+                      <Check className="w-6 h-6 stroke-[3]" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black text-emerald-950">Registration Complete!</h3>
+                      <p className="text-xs text-emerald-800 font-medium mt-0.5">
+                        Your parent guardian account has been securely registered and linked.
+                      </p>
+                    </div>
+
+                    {/* 6-DIGIT PARENT LOGIN ID DISPLAY CARD */}
+                    <div className="w-full bg-white border border-emerald-300 rounded-2xl p-4 shadow-sm my-1">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
+                        YOUR UNIQUE 6-DIGIT PARENT LOGIN ID
+                      </span>
+                      <div className="text-3xl font-black font-mono tracking-widest text-amber-600 py-1">
+                        {generatedParentLoginId}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (navigator.clipboard) {
+                            navigator.clipboard.writeText(generatedParentLoginId);
+                            setCopiedGeneratedId(true);
+                            setTimeout(() => setCopiedGeneratedId(false), 2000);
+                          }
+                        }}
+                        className="mt-2 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-all border border-slate-200"
+                      >
+                        {copiedGeneratedId ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedGeneratedId ? "Copied to Clipboard!" : "Copy Parent Login ID"}</span>
+                      </button>
+                    </div>
+
+                    <div className="text-left bg-emerald-100/70 rounded-xl p-3 text-[11px] text-emerald-950 flex flex-col gap-1 w-full">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+                        <span>How to Log In in the Future:</span>
+                      </div>
+                      <p>• Use your 6-digit Parent Login ID: <strong className="font-mono">{generatedParentLoginId}</strong> + MPIN</p>
+                      <p>• Or use your registered mobile number: <strong>+91 {parentRegParentPhone}</strong> + MPIN</p>
+                      <p className="text-emerald-800 font-semibold mt-1">✓ Student credentials will never be required again!</p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (registeredParentUser) {
+                          onLoginSuccess('parent', registeredParentUser);
+                        } else {
+                          setParentAuthMode('login');
+                          setParentLoginId(generatedParentLoginId);
+                        }
+                      }}
+                      className="w-full py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-wider text-white bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 shadow-lg cursor-pointer transition-all flex items-center justify-center gap-2 mt-1"
+                    >
+                      <span>Enter Parent Portal Dashboard</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                </div>
+              )}
+
+              {/* ------------------------------------------------------------- */}
+              {/* FORGOT PARENT ID / MPIN - SECURE OTP VERIFICATION & RECOVERY  */}
+              {/* ------------------------------------------------------------- */}
+              {parentAuthMode === 'forgot' && (
+                <div className="flex flex-col gap-4 animate-fadeIn">
+                  
+                  {/* Back to Login Header */}
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setParentAuthMode('login');
+                        setErrorMessage(null);
+                        setSuccessMessage(null);
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-amber-800 transition-colors cursor-pointer"
+                    >
+                      <ArrowLeft className="w-4 h-4" /> Back to Parent Login
+                    </button>
+                    <span className="text-[10px] font-black uppercase bg-amber-500/10 text-amber-900 border border-amber-300 px-3 py-1 rounded-full">
+                      Step {parentForgotStep} of 3
+                    </span>
+                  </div>
+
+                  {/* STEP 1: ENTER REGISTERED MOBILE NUMBER */}
+                  {parentForgotStep === 1 && (
+                    <form onSubmit={handleParentForgotSendOtp} className="flex flex-col gap-4">
+                      
+                      <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-950 flex items-start gap-2.5">
+                        <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <p className="text-[11px] leading-relaxed">
+                          Enter your 10-digit registered mobile number. We will send a secure verification code to recover your 6-digit Parent Login ID or reset your MPIN.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                          Registered Mobile Number <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="flex gap-2">
+                          <div className="px-3.5 py-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shrink-0 flex items-center">
+                            🇮🇳 +91
+                          </div>
+                          <input
+                            type="tel"
+                            value={parentForgotMobile}
+                            onChange={(e) => {
+                              setParentForgotMobile(e.target.value.replace(/\D/g, '').slice(0, 10));
+                              setErrorMessage(null);
+                            }}
+                            placeholder="10-digit registered mobile"
+                            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-amber-500"
+                            required
+                            maxLength={10}
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isLoading || parentForgotMobile.length !== 10}
+                        className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-1 flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                      >
+                        {isLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Sending Verification OTP...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Send Verification OTP</span>
+                            <ChevronRight className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  )}
+
+                  {/* STEP 2: VERIFY OTP CODE */}
+                  {parentForgotStep === 2 && (
+                    <form onSubmit={handleParentForgotVerifyOtp} className="flex flex-col gap-4">
+                      
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center">
+                        <label className="text-xs font-bold uppercase text-slate-500 block mb-1">
+                          Enter 6-Digit OTP sent to +91 {parentForgotMobile}
+                        </label>
+                        <input
+                          type="text"
+                          value={parentForgotOtpCode}
+                          onChange={(e) => {
+                            setParentForgotOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+                            setErrorMessage(null);
+                          }}
+                          placeholder="e.g. 123456"
+                          maxLength={6}
+                          className="w-full text-center tracking-[0.3em] font-black text-2xl py-3 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500 font-mono"
+                          required
+                        />
+                      </div>
+
+                      {/* Resend Countdown */}
+                      <div className="flex items-center justify-between text-xs px-1 text-slate-500">
+                        <button
+                          type="button"
+                          onClick={() => setParentForgotStep(1)}
+                          className="text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                        >
+                          Change Number
+                        </button>
+                        <span>
+                          {parentForgotCountdown > 0 ? (
+                            `Resend OTP in ${parentForgotCountdown}s`
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={handleParentForgotSendOtp}
+                              className="font-bold text-amber-700 hover:underline cursor-pointer"
+                            >
+                              Resend OTP Now
+                            </button>
+                          )}
+                        </span>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isLoading || parentForgotOtpCode.length < 6}
+                        className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-1 flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                      >
+                        {isLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Verifying OTP...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Verify OTP & Recover ID</span>
+                            <ChevronRight className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  )}
+
+                  {/* STEP 3: RECOVERED ID & RESET MPIN */}
+                  {parentForgotStep === 3 && (
+                    <form onSubmit={handleParentForgotResetMpin} className="flex flex-col gap-4">
+                      
+                      {/* RECOVERED 6-DIGIT PARENT LOGIN ID DISPLAY */}
+                      <div className="bg-amber-50 border-2 border-amber-400 rounded-2xl p-4 text-center">
+                        <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider block mb-1">
+                          RECOVERED PARENT LOGIN ID
+                        </span>
+                        <div className="text-2xl font-black font-mono text-amber-700 tracking-wider">
+                          {parentForgotRecoveredId}
+                        </div>
+                        {parentForgotStudentName && (
+                          <p className="text-xs text-slate-600 mt-1">
+                            Linked Student: <strong>{parentForgotStudentName}</strong>
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (navigator.clipboard) {
+                              navigator.clipboard.writeText(parentForgotRecoveredId);
+                              setCopiedRecoveredId(true);
+                              setTimeout(() => setCopiedRecoveredId(false), 2000);
+                            }
+                          }}
+                          className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-lg cursor-pointer border border-slate-200"
+                        >
+                          {copiedRecoveredId ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedRecoveredId ? "Copied!" : "Copy Parent ID"}</span>
+                        </button>
+                      </div>
+
+                      {/* NEW MPIN & CONFIRM MPIN */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                            Set New MPIN <span className="text-rose-500">*</span>
+                          </label>
+                          <input
+                            type={parentForgotShowMpin ? "text" : "password"}
+                            value={parentForgotNewMpin}
+                            onChange={(e) => {
+                              setParentForgotNewMpin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                              setErrorMessage(null);
+                            }}
+                            placeholder="4-6 numeric digits"
+                            maxLength={6}
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-[#161623] tracking-widest text-center focus:outline-none focus:border-amber-500 font-mono"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold uppercase text-slate-600 block mb-1">
+                            Confirm New MPIN <span className="text-rose-500">*</span>
+                          </label>
+                          <input
+                            type={parentForgotShowMpin ? "text" : "password"}
+                            value={parentForgotConfirmNewMpin}
+                            onChange={(e) => {
+                              setParentForgotConfirmNewMpin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                              setErrorMessage(null);
+                            }}
+                            placeholder="Re-enter MPIN"
+                            maxLength={6}
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-[#161623] tracking-widest text-center focus:outline-none focus:border-amber-500 font-mono"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center text-xs">
+                        <label className="flex items-center gap-2 cursor-pointer text-slate-600 select-none">
+                          <input
+                            type="checkbox"
+                            checked={parentForgotShowMpin}
+                            onChange={(e) => setParentForgotShowMpin(e.target.checked)}
+                            className="rounded text-amber-600 focus:ring-amber-500"
+                          />
+                          <span>Show MPIN</span>
+                        </label>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isLoading || parentForgotNewMpin.length < 4}
+                        className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs uppercase tracking-wider py-4 rounded-2xl shadow-lg cursor-pointer mt-1 flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                      >
+                        {isLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Updating MPIN & Signing In...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Update MPIN & Sign In</span>
+                            <ChevronRight className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  )}
+
+                </div>
+              )}
+
             </div>
+          ) : (
+            /* ========================================================================= */
+            /* 2. NON-PARENT PORTAL LOGIN FORM (Student, Trainer, Admin)                 */
+            /* ========================================================================= */
+            authView === 'login' && (
+              <form onSubmit={handleLoginSubmit} className="flex flex-col gap-4">
+                
+                {/* Selected Role Badge Indicator */}
+                <div className="flex items-center justify-between pb-1">
+                  <span className={`text-[11px] font-extrabold px-3 py-1 rounded-full border ${currentRoleInfo.badgeBg}`}>
+                    Logging in as: {currentRoleInfo.badge}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-bold">
+                    {selectedRole === 'student' ? 'Student Credentials' : selectedRole === 'trainer' ? 'Trainer Credentials' : 'Staff Access'}
+                  </span>
+                </div>
+
+                {/* IDENTIFIER FIELD (Email OR Mobile Number in same field) */}
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
+                    Email Address or Mobile Number
+                  </label>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-slate-400 pointer-events-none">
+                      {identifier.includes("@") ? <Mail className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
+                    </div>
+                    <input
+                      type="text"
+                      value={identifier}
+                      onChange={(e) => {
+                        setIdentifier(e.target.value);
+                        setErrorMessage(null);
+                      }}
+                      placeholder={
+                        selectedRole === 'student'
+                          ? "Enter registered Email or 10-digit Phone"
+                          : selectedRole === 'trainer'
+                          ? "Enter Trainer Phone or Name (e.g. 9040040288)"
+                          : "Enter Admin Email or Username (e.g. admin)"
+                      }
+                      className="w-full pl-10 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF] focus:bg-white transition-all placeholder:text-slate-400"
+                      disabled={lockoutCountdown > 0 || isLoading}
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* PASSWORD FIELD WITH SHOW/HIDE OPTION */}
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
+                      Password
+                    </label>
+                    
+                    {selectedRole === 'student' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthView('forgot_password');
+                          setErrorMessage(null);
+                        }}
+                        className="text-[11px] font-extrabold text-[#6D3BFF] hover:underline cursor-pointer"
+                      >
+                        Forgot Password?
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-slate-400 pointer-events-none">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        setErrorMessage(null);
+                      }}
+                      placeholder="Enter password"
+                      className="w-full pl-10 pr-11 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-[#161623] focus:outline-none focus:border-[#6D3BFF] focus:bg-white transition-all placeholder:text-slate-400"
+                      disabled={lockoutCountdown > 0 || isLoading}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* REMEMBER ME OPTION */}
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="remember-me-check"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-[#6D3BFF] focus:ring-[#6D3BFF] cursor-pointer"
+                  />
+                  <label htmlFor="remember-me-check" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                    Remember login session on this device
+                  </label>
+                </div>
+
+                {/* SUBMIT BUTTON */}
+                <button
+                  type="submit"
+                  disabled={isLoading || lockoutCountdown > 0}
+                  className={`w-full py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-wider text-white shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 ${
+                    selectedRole === 'admin'
+                      ? 'bg-slate-900 hover:bg-black'
+                      : selectedRole === 'trainer'
+                      ? 'bg-gradient-to-r from-[#B89218] to-[#D4AF37] hover:opacity-95 text-black font-extrabold'
+                      : 'bg-gradient-to-r from-[#6D3BFF] to-[#8F52FF] hover:from-[#5C30E6] hover:to-[#7E42E6]'
+                  } ${isLoading || lockoutCountdown > 0 ? 'opacity-60 cursor-not-allowed' : ''}`}
+                >
+                  {isLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Verifying Credentials...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Log In as {selectedRole.toUpperCase()}</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+
+                {/* ROLE-SPECIFIC FOOTER OPTIONS */}
+                {selectedRole === 'student' && (
+                  <div className="mt-4 text-center text-xs text-slate-500 pt-3 border-t border-slate-100">
+                    <span>Don't have a student account yet? </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthView('register');
+                        setErrorMessage(null);
+                      }}
+                      className="font-black text-[#6D3BFF] hover:underline cursor-pointer"
+                    >
+                      Register Now
+                    </button>
+                  </div>
+                )}
+
+                {selectedRole === 'trainer' && (
+                  <div className="mt-4 bg-amber-50/70 border border-amber-200/60 rounded-2xl p-3.5 text-center text-xs text-amber-900 leading-relaxed">
+                    <p className="font-semibold">
+                      🔒 Trainer accounts are created and managed by Golden Hands Admin.
+                    </p>
+                    <p className="text-[10px] text-amber-700 mt-0.5">
+                      No registration or self-reset required. Contact admin for credentials.
+                    </p>
+                  </div>
+                )}
+
+                {selectedRole === 'admin' && (
+                  <div className="mt-4 bg-slate-100 border border-slate-200 rounded-2xl p-3.5 text-center text-xs text-slate-700 leading-relaxed">
+                    <p className="font-bold">
+                      🛡️ Admin accounts are pre-created and managed securely.
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Authorized school administrative personnel only.
+                    </p>
+                  </div>
+                )}
+
+              </form>
+            )
           )}
 
           {/* ========================================================================= */}

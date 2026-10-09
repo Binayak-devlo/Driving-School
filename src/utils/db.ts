@@ -1,4 +1,4 @@
-import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay, TrackingSession, TrainerSession, DrivingLicenceApplication, DrivingLicenceDocumentItem, Parent, LiveStreamSession, SecurityLockConfig, SecurityLockType } from "../types";
+import { Student, Trainer, Booking, SkillProgress, Document, Payment, Review, ChatMessage, MockTestQuestion, MockTestAttempt, SlotDay, TrackingSession, TrainerSession, DrivingLicenceApplication, DrivingLicenceDocumentItem, Parent, LiveStreamSession } from "../types";
 import { saveToCloud, deleteFromCloud, loadCollectionFromCloud } from "./firebase";
 
 
@@ -988,11 +988,14 @@ export class MockDatabase {
       };
     }
 
-    if (passwordInput && passwordInput.trim()) {
-      const storedPass = found.password || "golden123";
-      if (passwordInput.trim() !== storedPass && passwordInput.trim() !== "golden123" && passwordInput.trim() !== "admin123") {
-        return { success: false, error: "Incorrect password. Please try again." };
+    const cleanPass = (passwordInput || "").trim();
+    if (cleanPass) {
+      const storedMpin = String(found.mpin || found.password || found.parentCode || "golden123").trim();
+      if (cleanPass !== storedMpin && cleanPass !== "golden123" && cleanPass !== "admin123") {
+        return { success: false, error: "Incorrect MPIN. Please try again or use 'Forgot Parent ID / MPIN'." };
       }
+    } else if (cleanInput !== found.id) {
+      return { success: false, error: "Please enter your MPIN to log in." };
     }
 
     found.lastLoginAt = new Date().toISOString();
@@ -1221,34 +1224,6 @@ export class MockDatabase {
       list.push(student);
     }
     this.saveRegisteredStudents(list);
-  }
-
-  static getSecurityLock(studentId?: string): SecurityLockConfig {
-    const sId = studentId || this.getCurrentStudentId();
-    return this.getStored<SecurityLockConfig>(`security_lock_${sId}`, {
-      enabled: false,
-      lockType: 'fingerprint',
-      pinCode: '',
-      requireOnResume: true,
-      configuredAt: undefined,
-      targetPlatform: 'android',
-      androidBiometricClass: 'androidx.biometric.BiometricPrompt'
-    });
-  }
-
-  static saveSecurityLock(config: SecurityLockConfig, studentId?: string) {
-    const sId = studentId || this.getCurrentStudentId();
-    this.setStored(`security_lock_${sId}`, config);
-    if (sId) {
-      const student = this.getStudent(sId);
-      if (student) {
-        student.securityLockEnabled = config.enabled;
-        student.securityLockType = config.lockType;
-        student.securityLockPin = config.pinCode;
-        student.securityLockConfiguredAt = config.configuredAt;
-        this.saveStudent(student, sId);
-      }
-    }
   }
 
   static getTrainers(): Trainer[] {
